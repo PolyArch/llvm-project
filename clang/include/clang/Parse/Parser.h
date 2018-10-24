@@ -21,7 +21,9 @@
 #include "clang/Basic/Specifiers.h"
 #include "clang/Lex/CodeCompletionHandler.h"
 #include "clang/Lex/Preprocessor.h"
+#include "clang/Parse/LoopHint.h"
 #include "clang/Sema/DeclSpec.h"
+#include "clang/Sema/SSHint.h"
 #include "clang/Sema/Sema.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Compiler.h"
@@ -203,6 +205,7 @@ class Parser : public CodeCompletionHandler {
   std::unique_ptr<PragmaHandler> AttributePragmaHandler;
   std::unique_ptr<PragmaHandler> MaxTokensHerePragmaHandler;
   std::unique_ptr<PragmaHandler> MaxTokensTotalPragmaHandler;
+  std::unique_ptr<PragmaHandler> StreamSpecializeHandler;
 
   std::unique_ptr<CommentHandler> CommentSemaHandler;
 
@@ -736,6 +739,10 @@ private:
   /// Handle the annotation token produced for
   /// #pragma clang loop and #pragma unroll.
   bool HandlePragmaLoopHint(LoopHint &Hint);
+
+  /// Handle the annotation token produced for
+  /// #pragma ss xxx
+  bool HandlePragmaStreamSpecialize(SSHint &Hint);
 
   bool ParsePragmaAttributeSubjectMatchRuleSet(
       attr::ParsedSubjectMatchRuleSet &SubjectMatchRules,
@@ -2039,6 +2046,10 @@ private:
                                  ParsedStmtContext StmtCtx,
                                  SourceLocation *TrailingElseLoc,
                                  ParsedAttributesWithRange &Attrs);
+  StmtResult ParsePragmaStreamSpecialize(StmtVector &Stmts,
+                                         ParsedStmtContext StmtCtx,
+                                         SourceLocation *TrailingElseLoc,
+                                         ParsedAttributesWithRange &Attrs);
 
   /// Describes the behavior that should be taken for an __if_exists
   /// block.

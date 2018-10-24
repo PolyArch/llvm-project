@@ -1700,6 +1700,8 @@ def fno_openmp_optimistic_collapse : Flag<["-"], "fno-openmp-optimistic-collapse
   Flags<[NoArgumentUnused, HelpHidden]>;
 def static_openmp: Flag<["-"], "static-openmp">,
   HelpText<"Use the static host OpenMP runtime while linking.">;
+def stream_specialize : Flag<["-"], "stream-specialize">, Group<f_Group>, Flags<[CC1Option, NoArgumentUnused]>,
+  HelpText<"Parse stream-specialized pragmas.">;
 def fno_optimize_sibling_calls : Flag<["-"], "fno-optimize-sibling-calls">, Group<f_Group>;
 def foptimize_sibling_calls : Flag<["-"], "foptimize-sibling-calls">, Group<f_Group>;
 def fno_escaping_block_tail_calls : Flag<["-"], "fno-escaping-block-tail-calls">, Group<f_Group>, Flags<[CC1Option]>;
@@ -2899,6 +2901,7 @@ def working_directory : JoinedOrSeparate<["-"], "working-directory">, Flags<[CC1
   HelpText<"Resolve file paths relative to the specified directory">;
 def working_directory_EQ : Joined<["-"], "working-directory=">, Flags<[CC1Option]>,
   Alias<working_directory>;
+
 
 // Double dash options, which are usually an alias for one of the previous
 // options.
