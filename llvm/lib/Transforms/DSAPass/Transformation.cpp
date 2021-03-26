@@ -56,9 +56,9 @@ InjectLinearStream(IRBuilder<> *IB, int PortNum, const AnalyzedStream &Stream,
     Value *N = std::get<1>(Stream.Dimensions[0]);
     int Stretch = std::get<2>(Stream.Dimensions[0]);
     DIE.INSTANTIATE_2D_STREAM(Start,
-                              DIE.DIV(Stride, DTyValue),
                               DIE.DIV(Bytes, DTyValue),
-                              DIE.DIV(Stretch, DTyValue),
+                              DIE.DIV(Stride, DTyValue),
+                              IB->getInt64(Stretch / DType),
                               N, PortNum, PP, DSA_Access, MO, MT, 1, DType, 0);
     return DMT_DMA;
   }
@@ -334,7 +334,10 @@ Instruction *DfgBase::InjectRepeat(Value *Prime, Value *Wrapper, int64_t Stretch
 
   dsa::inject::DSAIntrinsicEmitter DIE(Parent->Query->IBPtr);
   if (Val ==  nullptr) {
-    DIE.SS_CONFIG_PORT(Port, DPF_PortRepeat, Prime);
+    auto Repeat = IB.CreateAdd(
+      IB.CreateSDiv(IB.CreateSub(Prime, IB.getInt64(1)), UnrollConstant()),
+      IB.getInt64(1));
+    DIE.SS_CONFIG_PORT(Port, DPF_PortRepeat, Repeat);
     return DIE.res.back();
   } else {
     LLVM_DEBUG(dbgs() << "Inject Repeat: "; Val->dump();
