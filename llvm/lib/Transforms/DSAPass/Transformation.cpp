@@ -333,11 +333,17 @@ Instruction *DfgBase::InjectRepeat(Value *Prime, Value *Wrapper, int64_t Stretch
   (void) ActualStretch;
 
   dsa::inject::DSAIntrinsicEmitter DIE(Parent->Query->IBPtr);
-  if (Val ==  nullptr) {
+  if (Val == nullptr) {
     auto Repeat = IB.CreateAdd(
       IB.CreateSDiv(IB.CreateSub(Prime, IB.getInt64(1)), UnrollConstant()),
       IB.getInt64(1));
     DIE.SS_CONFIG_PORT(Port, DPF_PortRepeat, Repeat);
+    if (Stretch) {
+      if (getUnroll() > 1) {
+        DIE.SS_CONFIG_PORT(Port, DPF_PortPeriod, getUnroll());
+      }
+      DIE.SS_CONFIG_PORT(Port, DPF_PortRepeatStretch, Stretch);
+    }
     return DIE.res.back();
   } else {
     LLVM_DEBUG(dbgs() << "Inject Repeat: "; Val->dump();

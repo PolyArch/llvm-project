@@ -1082,7 +1082,7 @@ bool MemPort::InjectUpdateStream(IRBuilder<> *IB) {
       assert(!Analyzed.Dimensions.empty());
       LLVM_DEBUG(dbgs() << "Inject a initial stream!\n");
       dsa::inject::InjectLinearStream(Parent->Parent->Query->IBPtr, MP->SoftPortNum, Analyzed,
-                                      DMO_Write, DP_NoPadding, DMT_DMA,
+                                      DMO_Read, DP_NoPadding, DMT_DMA,
                                       MP->Load->getType()->getScalarSizeInBits() / 8);
 
       /// {
@@ -1090,12 +1090,13 @@ bool MemPort::InjectUpdateStream(IRBuilder<> *IB) {
       auto NumElements = IB->CreateUDiv(Analyzed.BytesFromMemory(IB),
                                         IB->getInt64(PM->PortWidth() / 8));
       auto Recurrenced = IB->CreateMul(MinusOne, NumElements);
+      llvm::errs() << *MinusOne << " " << *NumElements << " " << *Recurrenced << "\n";
       /// }
 
-      LLVM_DEBUG(dbgs() << "Inject a initial stream!\n");
       dsa::inject::DSAIntrinsicEmitter DIE(IB);
       DIE.SS_RECURRENCE(PM->SoftPortNum, MP->SoftPortNum, Recurrenced,
                         MP->Load->getType()->getScalarSizeInBits() / 8);
+
       int II = 1;
       int Conc = -1;
       if (auto CI = dyn_cast<ConstantInt>(std::get<1>(Analyzed.Dimensions.back()))) {
