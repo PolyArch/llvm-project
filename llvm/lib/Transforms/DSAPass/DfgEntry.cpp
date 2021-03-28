@@ -1015,8 +1015,6 @@ bool MemPort::InjectUpdateStream(IRBuilder<> *IB) {
   // Wrappers
   auto MP = this;
 
-  IB->SetInsertPoint(Parent->DefaultIP());
-
   LLVM_DEBUG(dbgs() << "Injecting update streams!\n");
 
   for (auto &PM : DFG->EntryFilter<PortMem>()) {
@@ -1090,7 +1088,6 @@ bool MemPort::InjectUpdateStream(IRBuilder<> *IB) {
       auto NumElements = IB->CreateUDiv(Analyzed.BytesFromMemory(IB),
                                         IB->getInt64(PM->PortWidth() / 8));
       auto Recurrenced = IB->CreateMul(MinusOne, NumElements);
-      llvm::errs() << *MinusOne << " " << *NumElements << " " << *Recurrenced << "\n";
       /// }
 
       dsa::inject::DSAIntrinsicEmitter DIE(IB);
@@ -1136,6 +1133,8 @@ bool MemPort::InjectUpdateStream(IRBuilder<> *IB) {
 }
 
 void MemPort::InjectStreamIntrinsic(IRBuilder<> *IB) {
+  IB->SetInsertPoint(this->Parent->DefaultIP());
+
   if (IntrinInjected)
     return;
 
@@ -1164,7 +1163,9 @@ void MemPort::InjectStreamIntrinsic(IRBuilder<> *IB) {
     MP->Load->getType()->getScalarType()->getScalarSizeInBits() / 8);
 
   if (Analyzed.Dimensions.empty()) {
-    DFG->InjectRepeat(Analyzed.AR, MP->Load, MP->SoftPortNum);
+    auto RepeatedConst = IB->CreateBitCast(
+      IB->CreateLoad(MP->Load->getPointerOperand()), IB->getInt64Ty());
+    DFG->InjectRepeat(Analyzed.AR, RepeatedConst, MP->SoftPortNum);
   } else {
 
     auto Fill = MP->FillMode();
@@ -1175,7 +1176,6 @@ void MemPort::InjectStreamIntrinsic(IRBuilder<> *IB) {
     Meta.set("src", dsa::dfg::MetaPort::DataText[(int) Src]);
     Meta.set("op", "read");
   }
-
 
   IntrinInjected = true;
 }

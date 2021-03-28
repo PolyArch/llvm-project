@@ -61,6 +61,8 @@ InjectLinearStream(IRBuilder<> *IB, int PortNum, const AnalyzedStream &Stream,
                               IB->getInt64(Stretch / DType),
                               N, PortNum, PP, DSA_Access, MO, MT, 1, DType, 0);
     return DMT_DMA;
+  } else {
+    llvm::errs() << Stream.Dimensions.size();
   }
   llvm_unreachable("Unsupported stream dimension");
 }
