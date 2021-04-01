@@ -196,6 +196,8 @@ public:
   friend struct DfgEntry;
   friend struct StreamOutPort;
   friend struct MemPort;
+  friend struct PortMem;
+  friend struct OutputPort;
   friend struct IndMemPort;
   friend struct Predicate;
   friend struct ComputeBody;
@@ -405,12 +407,14 @@ namespace inject {
  * \param DType The data type of each element in the injected stream.
  */
 MemoryType
-InjectLinearStream(IRBuilder<> *IB, int PortNum, const AnalyzedStream &Stream,
+InjectLinearStream(IRBuilder<> *IB, const std::vector<Value*> &Regs,
+                   int PortNum, const AnalyzedStream &Stream,
                    MemoryOperation MO, Padding PP, MemoryType MT, int DType);
 
 struct DSAIntrinsicEmitter {
   IRBuilder<> *IB;
   std::vector<CallInst*> res;
+  std::vector<Value*> Regs;
 
   struct REG {
     static std::stack<IRBuilder<>*> IBStack;
@@ -424,7 +428,7 @@ struct DSAIntrinsicEmitter {
     operator Value*&() { return value; }
   };
 
-  DSAIntrinsicEmitter(IRBuilder<> *IB_) : IB(IB_) {
+  DSAIntrinsicEmitter(IRBuilder<> *IB_, const std::vector<Value*> &Regs_) : IB(IB_), Regs(Regs_) {
     REG::IBStack.push(IB_);
   }
 
@@ -467,6 +471,8 @@ struct DSAIntrinsicEmitter {
   }
 
   void INTRINSIC_RRI(std::string Mnemonic, REG a, REG b, int c) {
+    if (Mnemonic == "ss_cfg_param") {
+    }
     IntrinsicImpl(Mnemonic, "r,r,i", {a.value, b.value, IB->getInt64(c)}, IB->getVoidTy());
   }
 

@@ -16,6 +16,7 @@
 #include "Transformation.h"
 #include "Util.h"
 #include "Pass.h"
+#include "dsa/rf.h"
 
 using namespace llvm;
 
@@ -67,6 +68,14 @@ GatherIntrinPairs(Function &F, llvm::Intrinsic::ID Kind) {
 }
 
 bool StreamSpecialize::runOnFunction(Function &F) {
+
+  std::string TyName("reg.type");
+  IBPtr->SetInsertPoint(&F.getEntryBlock().front());
+  auto RegType = StructType::create(TyName, IBPtr->getInt64Ty(), IBPtr->getInt1Ty());
+  for (int i = 0; i < DSARF::TOTAL_REG; ++i) {
+    auto Reg = IBPtr->CreateAlloca(RegType, nullptr, REG_NAMES[i]);
+    DSARegs.push_back(Reg);
+  }
 
   if (!MF.TEMPORAL) {
     EliminateTemporal(F);
@@ -145,9 +154,9 @@ void StreamSpecialize::HandleMemIntrin(Function &F) {
 
     IntrinDfg Dfg(Dummy, Intrin);
     IBPtr->SetInsertPoint(Dfg.DefaultIP());
-    dsa::inject::InjectLinearStream(IBPtr, MemScrPort, AS1, DMO_Read, DP_NoPadding, DMT_DMA, 1);
-    dsa::inject::InjectLinearStream(IBPtr, MemScrPort, AS1, DMO_Read, DP_NoPadding, DMT_SPAD, 1);
-    dsa::inject::DSAIntrinsicEmitter(IBPtr).SS_WAIT(~0ull);
+    dsa::inject::InjectLinearStream(IBPtr, DSARegs, MemScrPort, AS1, DMO_Read, DP_NoPadding, DMT_DMA, 1);
+    dsa::inject::InjectLinearStream(IBPtr, DSARegs, MemScrPort, AS1, DMO_Read, DP_NoPadding, DMT_SPAD, 1);
+    dsa::inject::DSAIntrinsicEmitter(IBPtr, DSARegs).SS_WAIT(~0ull);
     Intrin->eraseFromParent();
   }
 

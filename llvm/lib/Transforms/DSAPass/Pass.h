@@ -61,6 +61,8 @@ struct StreamSpecialize : public FunctionPass {
 
   IRBuilder<> *IBPtr{nullptr};
 
+  std::vector<Value*> DSARegs;
+
   static char ID;
 
   StreamSpecialize() : FunctionPass(ID) {
