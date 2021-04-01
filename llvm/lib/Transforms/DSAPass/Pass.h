@@ -61,7 +61,13 @@ struct StreamSpecialize : public FunctionPass {
 
   IRBuilder<> *IBPtr{nullptr};
 
-  std::vector<Value*> DSARegs;
+  struct StickyRegister {
+    Value *Alloca;
+    Value *Reg;
+    Value *Sticky;
+    StickyRegister(Value *A, Value *R, Value *S) : Alloca(A), Reg(R), Sticky(S) {}
+  };
+  std::vector<StickyRegister> DSARegs;
 
   static char ID;
 

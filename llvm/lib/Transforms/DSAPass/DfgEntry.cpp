@@ -1379,7 +1379,6 @@ void StreamOutPort::InjectStreamIntrinsic(IRBuilder<> *IB) {
     int Bytes = SOP->Output->getType()->getScalarType()->getScalarSizeInBits() / 8;
     auto Analyzed = DD->AnalyzeDataStream(SOP->Output, Bytes, true, Parent->DefaultIP());
     /// FIXME: Will this cause other problem?
-    llvm::errs() << "stream out " << *SOP->Output;
     DD->InjectRepeat(Analyzed.AR, nullptr, SIP->SoftPortNum);
     assert(Analyzed.OuterRepeat);
     assert(IB);

@@ -67,15 +67,23 @@ GatherIntrinPairs(Function &F, llvm::Intrinsic::ID Kind) {
   return Res;
 }
 
-bool StreamSpecialize::runOnFunction(Function &F) {
-
+std::vector<StreamSpecialize::StickyRegister>
+InjectRegisterFile(IRBuilder<> *IB) {
+  std::vector<StreamSpecialize::StickyRegister> Res;
   std::string TyName("reg.type");
-  IBPtr->SetInsertPoint(&F.getEntryBlock().front());
-  auto RegType = StructType::create(TyName, IBPtr->getInt64Ty(), IBPtr->getInt1Ty());
+  auto RegType = StructType::create(TyName, IB->getInt64Ty(), IB->getInt8Ty());
   for (int i = 0; i < DSARF::TOTAL_REG; ++i) {
-    auto Reg = IBPtr->CreateAlloca(RegType, nullptr, REG_NAMES[i]);
-    DSARegs.push_back(Reg);
+    auto A = IB->CreateAlloca(RegType, nullptr, REG_NAMES[i]);
+    auto R = IB->CreateInBoundsGEP(A, {IB->getInt32(0), IB->getInt32(0)});
+    auto S = IB->CreateInBoundsGEP(A, {IB->getInt32(0), IB->getInt32(1)});
+    IB->CreateStore(IB->getInt64(0), R);
+    IB->CreateStore(IB->getInt8(0), S);
+    Res.emplace_back(A, R, S);
   }
+  return Res;
+}
+
+bool StreamSpecialize::runOnFunction(Function &F) {
 
   if (!MF.TEMPORAL) {
     EliminateTemporal(F);
@@ -96,6 +104,10 @@ bool StreamSpecialize::runOnFunction(Function &F) {
   {
     int Cnt = 0;
     auto ScopePairs = GatherIntrinPairs(F, Intrinsic::ss_config_start);
+    if (!ScopePairs.empty()) {
+      IB.SetInsertPoint(&F.getEntryBlock().back());
+      DSARegs = InjectRegisterFile(&IB);
+    }
     for (auto &Pair : ScopePairs) {
       std::ostringstream OSS;
       OSS << F.getName().bytes_begin() << "_dfg_" << Cnt++ << ".dfg";

@@ -41,7 +41,8 @@ namespace inject {
 std::stack<IRBuilder<>*> DSAIntrinsicEmitter::REG::IBStack;
 
 MemoryType
-InjectLinearStream(IRBuilder<> *IB, const std::vector<Value*> &Regs,
+InjectLinearStream(IRBuilder<> *IB,
+                   const std::vector<StreamSpecialize::StickyRegister> &Regs,
                    int PortNum, const AnalyzedStream &Stream,
                    MemoryOperation MO, Padding PP, MemoryType MT, int DType) {
   DSAIntrinsicEmitter DIE(IB, Regs);

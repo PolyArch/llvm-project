@@ -407,14 +407,15 @@ namespace inject {
  * \param DType The data type of each element in the injected stream.
  */
 MemoryType
-InjectLinearStream(IRBuilder<> *IB, const std::vector<Value*> &Regs,
+InjectLinearStream(IRBuilder<> *IB,
+                   const std::vector<StreamSpecialize::StickyRegister> &Regs,
                    int PortNum, const AnalyzedStream &Stream,
                    MemoryOperation MO, Padding PP, MemoryType MT, int DType);
 
 struct DSAIntrinsicEmitter {
   IRBuilder<> *IB;
   std::vector<CallInst*> res;
-  std::vector<Value*> Regs;
+  std::vector<StreamSpecialize::StickyRegister> Regs;
 
   struct REG {
     static std::stack<IRBuilder<>*> IBStack;
@@ -428,7 +429,8 @@ struct DSAIntrinsicEmitter {
     operator Value*&() { return value; }
   };
 
-  DSAIntrinsicEmitter(IRBuilder<> *IB_, const std::vector<Value*> &Regs_) : IB(IB_), Regs(Regs_) {
+  DSAIntrinsicEmitter(IRBuilder<> *IB_,
+                      const std::vector<StreamSpecialize::StickyRegister> &Regs_) : IB(IB_), Regs(Regs_) {
     REG::IBStack.push(IB_);
   }
 
@@ -463,6 +465,17 @@ struct DSAIntrinsicEmitter {
     auto FTy = FunctionType::get(ResTy, Types, false);
     auto IA = InlineAsm::get(FTy, MOSS.str(), OpConstrain, true);
     res.push_back(IB->CreateCall(IA, Args));
+    if (Mnemonic == "ss_lin_strm" ||
+        Mnemonic == "ss_ind_strm" ||
+        Mnemonic == "ss_recv" ||
+        Mnemonic == "ss_wr_rd") {
+      for (int i = 0; i < DSARF::TOTAL_REG; ++i) {
+        auto C = IB->CreateTrunc(IB->CreateLoad(Regs[i].Sticky), IB->getInt1Ty());
+        auto SV = IB->CreateLoad(Regs[i].Reg);
+        auto Reset = IB->CreateSelect(C, SV, IB->getInt64(0));
+        IB->CreateStore(Reset, Regs[i].Reg);
+      }
+    }
   }
 
   void INTRINSIC_DRI(std::string Mnemonic, REG &a, REG b, int c) {
@@ -470,8 +483,36 @@ struct DSAIntrinsicEmitter {
     a.value = res.back();
   }
 
+  Value *MakeValue(Value *Val) {
+    if (Val->getType()->isPointerTy()) {
+      return IB->CreatePtrToInt(Val, IB->getInt64Ty());
+    }
+    auto Ty = IB->getIntNTy(Val->getType()->getScalarSizeInBits());
+    auto RI = IB->CreateBitCast(Val, Ty);
+    if (RI->getType()->getScalarSizeInBits() < 64) {
+      RI = IB->CreateSExt(RI, IB->getInt64Ty());
+    }
+    return RI;
+  }
+
   void INTRINSIC_RRI(std::string Mnemonic, REG a, REG b, int c) {
-    if (Mnemonic == "ss_cfg_param") {
+    if (Mnemonic == "ss_cfg_param" && c != 98) {
+      int idx1 = c & 31;
+      int s1 = (c >> 10) & 1;
+      int idx2 = (c >> 5) & 31;
+      int s2 = (c >> 11) & 1;
+      if (idx1) {
+        IB->CreateStore(MakeValue(a.value), Regs[idx1].Reg);
+        IB->CreateStore(IB->getInt8(s1), Regs[idx1].Sticky);
+      }
+      if (idx2) {
+        IB->CreateStore(MakeValue(b.value), Regs[idx2].Reg);
+        IB->CreateStore(IB->getInt8(s2), Regs[idx2].Sticky);
+      }
+      auto A = IB->CreateLoad(Regs[idx1].Reg);
+      auto B = IB->CreateLoad(Regs[idx2].Reg);
+      IntrinsicImpl(Mnemonic, "r,r,i", {A, B, IB->getInt64(c)}, IB->getVoidTy());
+      return;
     }
     IntrinsicImpl(Mnemonic, "r,r,i", {a.value, b.value, IB->getInt64(c)}, IB->getVoidTy());
   }
