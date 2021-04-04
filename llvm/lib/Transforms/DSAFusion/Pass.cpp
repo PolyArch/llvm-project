@@ -258,17 +258,39 @@ void FuseZeroConfigs(Function &F, DominatorTree *DT) {
             int Idx[2] = {(int)(Imm & 31), (int)((Imm >> 5) & 31)};
             int S[2] = {(int)((Imm >> 10) & 1), (int)((Imm >> 11) & 1)};
             if (Idx[0] == 0 || Idx[1] == 0) {
+              llvm::errs() << "Single slot!\n";
               for (int i = 0; i < 2; ++i) {
                 if (Idx[i]) {
                   Slots.emplace_back(Idx[i], S[i], Call->getOperand(i), Call);
                 }
               }
             }
+            if (Slots.size() == 2) {
+              if (auto V = dyn_cast<Instruction>(Slots[1].V)) {
+                if (!DT->dominates(V, Slots[0].Inst)) {
+                  Slots.erase(Slots.begin());
+                  continue;
+                }
+              }
+              auto S2_ = Slots[1].Sticky ? ~((1 << 11) - 1) : 0;
+              int64_t Imm = S2_ | (Slots[0].Sticky << 10) | (Slots[1].Idx << 5) | Slots[0].Idx;
+              IB.SetInsertPoint(Slots[0].Inst);
+              IB.CreateCall(IA, {Slots[0].V, Slots[1].V, IB.getInt64(Imm)});
+              ToErase.push_back(Slots[0].Inst);
+              ToErase.push_back(Slots[1].Inst);
+              Slots.clear();
+            }
+          } else if (IA->getAsmString().find("ss_lin_strm") == 0 ||
+                     IA->getAsmString().find("ss_ind_strm") == 0 ||
+                     IA->getAsmString().find("ss_wr_rd") == 0 ||
+                     IA->getAsmString().find("ss_recv") == 0) {
+            Slots.clear();
           }
         }
       }
     }
     for (auto Inst : ToErase) {
+      llvm::errs() << "Erase " << *Inst << "\n";
       Inst->eraseFromParent();
     }
   }
@@ -277,26 +299,8 @@ void FuseZeroConfigs(Function &F, DominatorTree *DT) {
 
 bool DSAFusion::runOnFunction(Function &F) {
   EliminateEquals(F);
-  // auto DT = &getAnalysis<DominatorTreeWrapperPass>().getDomTree();
-  // FuseZeroConfigs(F, DT);
-  // struct ParameterSlot {
-  //   int Idx{-1};
-  //   Value *Val{nullptr};
-  //   int Stick{-1};
-  //   Instruction *Inst{nullptr};
-  // };
-  // std::vector<ParameterSlot> Slots;
-  // if (!Idx1 || !Idx2) {
-  //   int Idx = Idx1 ? Idx1 : Idx2;
-  //   auto Val = Idx1 ? Call->getOperand(0) : Call->getOperand(1);
-  //   auto S = Idx1 ? S1 : S2;
-  //   Slots.emplace_back();
-  //   Slots.back().Idx = Idx;
-  //   Slots.back().Val = Val;
-  //   Slots.back().Stick = S;
-  //   Slots.back().Inst = Call;
-  // }
-
+  auto DT = &getAnalysis<DominatorTreeWrapperPass>().getDomTree();
+  FuseZeroConfigs(F, DT);
   return false;
 }
 

@@ -413,6 +413,7 @@ InjectLinearStream(IRBuilder<> *IB,
                    MemoryOperation MO, Padding PP, MemoryType MT, int DType);
 
 struct DSAIntrinsicEmitter {
+  bool Prepass{true};
   IRBuilder<> *IB;
   std::vector<CallInst*> res;
   std::vector<StreamSpecialize::StickyRegister> Regs;
@@ -496,7 +497,7 @@ struct DSAIntrinsicEmitter {
   }
 
   void INTRINSIC_RRI(std::string Mnemonic, REG a, REG b, int c) {
-    if (Mnemonic == "ss_cfg_param" && c != 98) {
+    if (Prepass && (Mnemonic == "ss_cfg_param" && c != 98)) {
       int idx1 = c & 31;
       int s1 = (c >> 10) & 1;
       int idx2 = (c >> 5) & 31;
