@@ -472,7 +472,7 @@ struct DSAIntrinsicEmitter {
       for (int i = 0; i < DSARF::TOTAL_REG; ++i) {
         auto C = IB->CreateTrunc(IB->CreateLoad(Regs[i].Sticky), IB->getInt1Ty());
         auto SV = IB->CreateLoad(Regs[i].Reg);
-        auto Reset = IB->CreateSelect(C, SV, IB->getInt64(0));
+        auto Reset = IB->CreateSelect(C, SV, IB->getInt64(REG_STICKY[i]));
         IB->CreateStore(Reset, Regs[i].Reg);
       }
     }
@@ -501,17 +501,36 @@ struct DSAIntrinsicEmitter {
       int s1 = (c >> 10) & 1;
       int idx2 = (c >> 5) & 31;
       int s2 = (c >> 11) & 1;
+      Value *IV1 = IB->getInt64(idx1);
       if (idx1) {
-        IB->CreateStore(MakeValue(a.value), Regs[idx1].Reg);
+        auto AA = IB->CreateLoad(Regs[idx1].Reg);
+        auto AS = IB->CreateLoad(Regs[idx1].Sticky);
+        auto AV = MakeValue(a.value);
+        IB->CreateStore(AV, Regs[idx1].Reg);
         IB->CreateStore(IB->getInt8(s1), Regs[idx1].Sticky);
+        if (getenv("FUSION")) {
+          IntrinsicImpl("equal.hint.v1", "r", {IB->CreateICmpEQ(AA, AV)}, IB->getVoidTy());
+          IntrinsicImpl("equal.hint.s1", "r", {IB->CreateICmpEQ(AS, IB->getInt8(s1))}, IB->getVoidTy());
+        }
       }
+      Value *IV2 = IB->getInt64(idx2);
       if (idx2) {
-        IB->CreateStore(MakeValue(b.value), Regs[idx2].Reg);
+        auto BB = IB->CreateLoad(Regs[idx2].Reg);
+        auto BS = IB->CreateLoad(Regs[idx2].Sticky);
+        auto BV = MakeValue(b.value);
+        IB->CreateStore(BV, Regs[idx2].Reg);
         IB->CreateStore(IB->getInt8(s2), Regs[idx2].Sticky);
+        if (getenv("FUSION")) {
+          IntrinsicImpl("equal.hint.v2", "r", {IB->CreateICmpEQ(BB, BV)}, IB->getVoidTy());
+          IntrinsicImpl("equal.hint.s2", "r", {IB->CreateICmpEQ(BS, IB->getInt8(s2))}, IB->getVoidTy());
+        }
       }
       auto A = IB->CreateLoad(Regs[idx1].Reg);
       auto B = IB->CreateLoad(Regs[idx2].Reg);
-      IntrinsicImpl(Mnemonic, "r,r,i", {A, B, IB->getInt64(c)}, IB->getVoidTy());
+      auto S1 = IB->getInt64(s1 << 10);
+      auto S2 = s2 ? IB->getInt64(~((1 << 11) - 1)) : IB->getInt64(0);
+      auto Imm = IB->CreateOr(IB->CreateOr(IB->CreateOr(IV1, IB->CreateShl(IV2, 5)), S1), S2);
+      IntrinsicImpl(Mnemonic, "r,r,i", {A, B, Imm}, IB->getVoidTy());
       return;
     }
     IntrinsicImpl(Mnemonic, "r,r,i", {a.value, b.value, IB->getInt64(c)}, IB->getVoidTy());

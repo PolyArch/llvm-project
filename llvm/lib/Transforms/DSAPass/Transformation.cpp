@@ -1251,7 +1251,7 @@ void DfgFile::EmitAndScheduleDfg() {
     if (Query->MF.EXTRACT) {
       Verbose += " --max-iters 1";
     }
-    auto Cmd = formatv("ss_sched {0} {1} {2} > /dev/null", Verbose, SBCONFIG, FileName);
+    auto Cmd = formatv("ss_sched {0} {1} {2} -e 0 > /dev/null", Verbose, SBCONFIG, FileName);
     LLVM_DEBUG(dbgs() << Cmd);
     if (system(Cmd.str().c_str()) != 0) {
       // TODO(@were): throw exception here.

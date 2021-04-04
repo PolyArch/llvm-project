@@ -76,8 +76,8 @@ InjectRegisterFile(IRBuilder<> *IB) {
     auto A = IB->CreateAlloca(RegType, nullptr, REG_NAMES[i]);
     auto R = IB->CreateInBoundsGEP(A, {IB->getInt32(0), IB->getInt32(0)});
     auto S = IB->CreateInBoundsGEP(A, {IB->getInt32(0), IB->getInt32(1)});
-    IB->CreateStore(IB->getInt64(0), R);
-    IB->CreateStore(IB->getInt8(0), S);
+    IB->CreateStore(IB->getInt64(REG_STICKY[i]), R);
+    IB->CreateStore(IB->getInt8(i == DSARF::TBC), S);
     Res.emplace_back(A, R, S);
   }
   return Res;
