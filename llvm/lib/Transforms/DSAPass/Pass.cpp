@@ -144,9 +144,8 @@ bool StreamSpecialize::runOnFunction(Function &F) {
   llvm::legacy::FunctionPassManager fpass(F.getParent());
   PMB.populateFunctionPassManager(fpass);
   PMB.Inliner = llvm::createFunctionInliningPass(3, 0, false);
-
-  fpass.doFinalization();
   fpass.run(F);
+  fpass.doFinalization();
 
   return false;
 }
