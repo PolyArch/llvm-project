@@ -917,7 +917,8 @@ void DedicatedDfg::InitEntries() {
       size_t j = Entries.size();
       InspectConsumers(Load);
       // FIXME: For now we only support one consumer.
-      assert(j + 1 == Entries.size() && "A load without usage?");
+      llvm::errs() << *Load << "\n";
+      CHECK(j + 1 == Entries.size()) << "A load without usage?";
       for (; j < Entries.size(); ++j) {
         auto Entry = Entries[j];
         if (auto PM = dyn_cast<PortMem>(Entry)) {
@@ -1231,7 +1232,7 @@ void DfgFile::EmitAndScheduleDfg() {
     NameOnly = SCHEDString.substr(From, Len);
   } else {
     auto SBCONFIG = getenv("SBCONFIG");
-    assert(SBCONFIG && "Please specify CGRA config environment variable $SBCONFIG");
+    CHECK(SBCONFIG) << "Please specify CGRA config environment variable $SBCONFIG";
     LLVM_DEBUG(
       dbgs() << "Emitted DFG:\n";
       CHECK(system(formatv("cat {0} 1>&2", FileName).str().c_str()) == 0);

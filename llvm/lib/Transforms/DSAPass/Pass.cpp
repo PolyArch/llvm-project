@@ -8,7 +8,10 @@
 #include "llvm/Analysis/LoopAccessAnalysis.h"
 #include "llvm/Analysis/LoopAnalysisManager.h"
 #include "llvm/Analysis/OptimizationRemarkEmitter.h"
+#include "llvm/IR/LegacyPassManager.h"
 #include "llvm/Support/Format.h"
+#include "llvm/Transforms/IPO.h"
+#include "llvm/Transforms/IPO/PassManagerBuilder.h"
 #include "llvm/Transforms/Utils/LoopUtils.h"
 #include "llvm/Transforms/Utils/UnrollLoop.h"
 
@@ -134,6 +137,16 @@ bool StreamSpecialize::runOnFunction(Function &F) {
     llvm::errs() << "After transformation:\n";
     F.dump()
   );
+
+  llvm::PassManagerBuilder PMB;
+  PMB.OptLevel = 3;
+  PMB.Inliner = nullptr;
+  llvm::legacy::FunctionPassManager fpass(F.getParent());
+  PMB.populateFunctionPassManager(fpass);
+  PMB.Inliner = llvm::createFunctionInliningPass(3, 0, false);
+
+  fpass.doFinalization();
+  fpass.run(F);
 
   return false;
 }
