@@ -138,16 +138,16 @@ bool StreamSpecialize::runOnFunction(Function &F) {
     F.dump()
   );
 
-  llvm::PassManagerBuilder PMB;
-  PMB.OptLevel = 3;
-  llvm::legacy::FunctionPassManager fpass(F.getParent());
-  llvm::legacy::PassManager mpass;
-  PMB.populateFunctionPassManager(fpass);
-  PMB.populateModulePassManager(mpass);
-  PMB.Inliner = llvm::createFunctionInliningPass(3, 0, false);
-  fpass.run(F);
-  fpass.doFinalization();
-  mpass.run(*F.getParent());
+  // llvm::PassManagerBuilder PMB;
+  // PMB.OptLevel = 3;
+  // llvm::legacy::FunctionPassManager fpass(F.getParent());
+  // llvm::legacy::PassManager mpass;
+  // PMB.populateFunctionPassManager(fpass);
+  // PMB.populateModulePassManager(mpass);
+  // PMB.Inliner = llvm::createFunctionInliningPass(3, 0, false);
+  // fpass.run(F);
+  // fpass.doFinalization();
+  // mpass.run(*F.getParent());
 
   return false;
 }

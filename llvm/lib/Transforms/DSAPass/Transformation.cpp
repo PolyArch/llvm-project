@@ -41,94 +41,6 @@ namespace inject {
 
 std::stack<IRBuilder<>*> DSAIntrinsicEmitter::REG::IBStack;
 
-struct AffinedInjector {
-  IRBuilder<> *IB;
-  SCEVExpander *SEE;
-  DSAIntrinsicEmitter DIE;
-  AffinedInjector(IRBuilder<> *IB_, SCEVExpander *SEE_,
-                  const std::vector<StreamSpecialize::StickyRegister> &Regs) : IB(IB_), SEE(SEE_), DIE(IB_, Regs) {
-    IB->GetInsertPoint().getNodePtr();
-    // auto IIP = dyn_cast<Instruction>(IB->GetInsertPoint().getNodePtr());
-    // CHECK(IIP) << "The IB insert point is not an instruction!";
-    // SEE->setInsertPoint(IIP);
-  }
-};
-
-struct RepeatInjector : AffinedInjector {
-  RepeatInjector(
-    IRBuilder<> *IB, SCEVExpander *SEE,
-    const std::vector<StreamSpecialize::StickyRegister> &Regs) : AffinedInjector(IB, SEE, Regs) {}
-
-  int Inject(analysis::LinearInfo *LI, const std::vector<analysis::LinearInfo*> &Loops, int Port, int Unroll) {
-    CHECK(Loops.size() == LI->Coef.size() || LI->Coef.empty());
-    Value *Repeat = IB->getInt64(1);
-    for (int i = 0, N = Loops.size(); i < N; ++i) {
-      auto Coef = LI->Coef[i]->ConstInt();
-      if (Coef && *Coef == 0) {
-        if (!Loops[i]->Coef.empty()) {
-          CHECK(i == 0) << "Only the inner most dimension supports repeat stretch.";
-          for (int j = 0; j < N; ++j) {
-            if (j == 1) {
-              continue;
-            }
-            auto CI = Loops[i]->Coef[j]->ConstInt();
-            CHECK(CI && *CI == 0);
-          }
-          DIE.SS_CONFIG_PORT(Port, DPF_PortPeriod, Unroll);
-          DIE.SS_CONFIG_PORT(Port, DPF_PortRepeatStretch, SEE->expandCodeFor(LI->Coef[i]->Coef[1]->Base));
-        }
-        auto Current = SEE->expandCodeFor(Loops[i]->Base);
-        if (i == 0 && Unroll != 1) {
-          Current = IB->CreateSub(Current, IB->getInt64(1));
-          Current = IB->CreateSDiv(Current, IB->getInt64(Unroll));
-          Current = IB->CreateAdd(Current, IB->getInt64(1));
-        }
-        Repeat = IB->CreateMul(Repeat, Current);
-      } else {
-        return i;
-      }
-    }
-    return Loops.size();
-  }
-};
-
-struct LinearInjector : AffinedInjector {
-
-  LinearInjector(
-    IRBuilder<> *IB, SCEVExpander *SEE,
-    const std::vector<StreamSpecialize::StickyRegister> &Regs) : AffinedInjector(IB, SEE, Regs) {}
-
-  void Inject(analysis::LinearInfo *LI, std::vector<analysis::LinearInfo*> Loops, int i,
-              int Port, MemoryOperation MO, Padding PP, MemoryType MT, int DType) {
-    CHECK(Loops.size() == LI->Coef.size());
-    int Dim = Loops.size() - i;
-    CHECK(1 <= Dim && Dim <= 3);
-    auto Start = SEE->expandCodeFor(LI->Base);
-    switch (Dim) {
-      case 1: {
-        CHECK(Loops[i]->Invariant()) << "No stretch should be in 1d stream!";
-        auto Stride = LI->Coef[i]->ConstInt();
-        auto N = SEE->expandCodeFor(Loops[i]->Invariant());
-        if (Stride && *Stride == DType) {
-          DIE.INSTANTIATE_1D_STREAM(Start, N, Port, PP, DSA_Access, MO, MT, 1, DType, 0);
-        } else {
-          CHECK(LI->Coef[i]->Invariant()) << "No stride stretch should be in 1d stream!";
-          DIE.INSTANTIATE_2D_STREAM(Start, IB->getInt64(1), SEE->expandCodeFor(LI->Coef[i]->Invariant()),
-                                    IB->getInt64(0), N, Port, PP, DSA_Access, MO, MT, 1, DType, 0);
-        }
-      }
-      case 2: {
-
-      }
-      case 3: {
-
-      }
-      default:
-        CHECK(false) << "Unsupported dimension: " << Dim;
-    }
-  }
-};
-
 MemoryType
 InjectLinearStream(IRBuilder<> *IB,
                    const std::vector<StreamSpecialize::StickyRegister> &Regs,
@@ -139,8 +51,8 @@ InjectLinearStream(IRBuilder<> *IB,
   Value *Bytes = std::get<1>(Stream.Dimensions.back());
   Value *DTyValue = IB->getInt64(DType);
   if (Stream.Dimensions.size() == 1) {
-    DIE.INSTANTIATE_1D_STREAM(Start, DIE.DIV(Bytes, DTyValue),
-                              PortNum, PP, DSA_Access, MO, MT, 1, DType, 0);
+    DIE.INSTANTIATE_1D_STREAM(Start, DType, DIE.DIV(Bytes, DTyValue),
+                              PortNum, PP, DSA_Access, MO, MT, DType, 0);
     return DMT_DMA;
   } else if (Stream.Dimensions.size() == 2) {
     Value *Stride = std::get<0>(Stream.Dimensions[0]);
@@ -329,10 +241,7 @@ void DfgFile::InjectStreamIntrinsics() {
 
   for (auto &DD : DFGs) {
     for (auto &PB : DD->EntryFilter<PortBase>()) {
-      if (!PB->IntrinInjected) {
-        PB->dump();
-        assert(false && "All the ports should be fed");
-      }
+      CHECK(PB->IntrinInjected);
     }
   }
 

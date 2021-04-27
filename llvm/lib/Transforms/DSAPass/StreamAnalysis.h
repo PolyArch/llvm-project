@@ -12,7 +12,6 @@
 #include "llvm/IR/Instruction.h"
 #include "llvm/Support/Casting.h"
 #include "Util.h"
-#include "DfgEntry.h"
 #include "Pass.h"
 
 namespace dsa {
@@ -49,6 +48,10 @@ struct LinearInfo {
    * \brief If this value is a loop invariant, return the SCEV for expansion. O.w. return nullptr.
    */
   const SCEV *Invariant() const;
+  /*!
+   * \brief Return the loop level from which, this value is no longer a loop nest invariant.
+   */
+  int PatialInvariant() const;
 };
 
 LinearInfo*

@@ -6,6 +6,7 @@
 #include "Util.h"
 #include "DfgEntry.h"
 #include "Transformation.h"
+#include "StreamAnalysis.h"
 
 #define DEBUG_TYPE "stream-specialize"
 
@@ -1186,7 +1187,30 @@ void PortMem::InjectStreamIntrinsic(IRBuilder<> *IB) {
   auto DFG = Parent;
   if (PM->IntrinInjected)
     return;
+
   IB->SetInsertPoint(Parent->DefaultIP());
+  if (auto DD = dyn_cast<DedicatedDfg>(Parent)) {
+    SCEVExpander SEE(*Parent->Parent->Query->SE,
+                     Parent->Parent->Func.getParent()->getDataLayout(), "");
+    SEE.setInsertPoint(Parent->DefaultIP());
+    dsa::inject::RepeatInjector RI(IB, &SEE, Parent->Parent->Query->DSARegs);
+    dsa::inject::LinearInjector LI(IB, &SEE, Parent->Parent->Query->DSARegs);
+    std::vector<Loop*> LoopNest(DD->LoopNest.begin(), DD->LoopNest.end());
+    auto SE = Parent->Parent->Query->SE;
+    auto SCEVIdx = SE->getSCEV(PM->Store->getPointerOperand());
+    auto IdxLI = dsa::analysis::AnalyzeIndexExpr(SE, SCEVIdx, LoopNest);
+    std::vector<dsa::analysis::LinearInfo*> LoopLI;
+    for (int i = 0, N = LoopNest.size(); i < N; ++i) {
+      auto CurDim = dsa::analysis::AnalyzeIndexExpr(SE, SE->getBackedgeTakenCount(LoopNest[i]), LoopNest);
+      LoopLI.push_back(CurDim);
+    }
+    RI.Inject(IdxLI, LoopLI, PM->SoftPortNum, Parent->getUnroll());
+    int DType = PM->Store->getValueOperand()->getType()->getScalarSizeInBits() / 8;
+    LI.Inject(IdxLI, LoopLI, PM->SoftPortNum, DMO_Write, DP_NoPadding, DMT_DMA, DType);
+    PM->IntrinInjected = true;
+    return;
+  }
+
   LLVM_DEBUG(dbgs() << "Injecting intrin for PM: "; PM->UnderlyingInst()->dump());
   int Bytes = PM->Store->getValueOperand()->getType()->getScalarType()->getScalarSizeInBits() / 8;
   auto Analyzed = DFG->AnalyzeDataStream(PM->Store->getPointerOperand(), Bytes);

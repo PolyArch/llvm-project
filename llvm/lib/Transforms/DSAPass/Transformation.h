@@ -14,6 +14,7 @@
 #include "Util.h"
 #include "DfgEntry.h"
 #include "Pass.h"
+#include "StreamAnalysis.h"
 
 #include "dsa/rf.h"
 #include "dsa/spec.h"
@@ -547,6 +548,88 @@ struct DSAIntrinsicEmitter {
 
 #include "intrin_impl.h"
 
+};
+
+struct AffinedInjector {
+  IRBuilder<> *IB;
+  SCEVExpander *SEE;
+  DSAIntrinsicEmitter DIE;
+  AffinedInjector(IRBuilder<> *IB_, SCEVExpander *SEE_,
+                  const std::vector<StreamSpecialize::StickyRegister> &Regs) : IB(IB_), SEE(SEE_), DIE(IB_, Regs) {}
+};
+
+struct RepeatInjector : AffinedInjector {
+  RepeatInjector(
+    IRBuilder<> *IB, SCEVExpander *SEE,
+    const std::vector<StreamSpecialize::StickyRegister> &Regs) : AffinedInjector(IB, SEE, Regs) {}
+
+  void Inject(analysis::LinearInfo *LI, const std::vector<analysis::LinearInfo*> &Loops, int Port, int Unroll) {
+    CHECK(Loops.size() == LI->Coef.size() || LI->Coef.empty());
+    Value *Repeat = IB->getInt64(1);
+    for (int i = 0, N = LI->PatialInvariant(); i < N; ++i) {
+      auto Coef = LI->Coef[i]->ConstInt();
+      CHECK(Coef && *Coef == 0);
+      if (!Loops[i]->Coef.empty()) {
+        CHECK(i == 0) << "Only the inner most dimension supports repeat stretch.";
+        for (int j = 0; j < N; ++j) {
+          if (j == 1) {
+            continue;
+          }
+          auto CI = Loops[i]->Coef[j]->ConstInt();
+          CHECK(CI && *CI == 0);
+        }
+        DIE.SS_CONFIG_PORT(Port, DPF_PortPeriod, Unroll);
+        DIE.SS_CONFIG_PORT(Port, DPF_PortRepeatStretch, SEE->expandCodeFor(LI->Coef[i]->Coef[1]->Base));
+      }
+      auto Current = SEE->expandCodeFor(Loops[i]->Base);
+      if (i == 0 && Unroll != 1) {
+          Current = IB->CreateSub(Current, IB->getInt64(1));
+          Current = IB->CreateSDiv(Current, IB->getInt64(Unroll));
+          Current = IB->CreateAdd(Current, IB->getInt64(1));
+        }
+        Repeat = IB->CreateMul(Repeat, Current);
+      }
+  }
+};
+
+struct LinearInjector : AffinedInjector {
+
+  LinearInjector(
+    IRBuilder<> *IB, SCEVExpander *SEE,
+    const std::vector<StreamSpecialize::StickyRegister> &Regs) : AffinedInjector(IB, SEE, Regs) {}
+
+  void Inject(analysis::LinearInfo *LI, const std::vector<analysis::LinearInfo*> &Loops,
+              int Port, MemoryOperation MO, Padding PP, MemoryType MT, int DType) {
+    CHECK(Loops.size() == LI->Coef.size());
+    int Dim = Loops.size() - LI->PatialInvariant();
+    CHECK(1 <= Dim && Dim <= 3);
+    auto Start = SEE->expandCodeFor(LI->Base);
+    switch (Dim) {
+      case 1: {
+        int i = LI->PatialInvariant();
+        auto N = Loops[i]->Invariant();
+        CHECK(N) << "No stretch should be in 1d stream!";
+        auto Stride = LI->Coef[i]->Invariant();
+        CHECK(Stride) << "Stride should not be stretched!";
+        llvm::errs() << "Inject stream for: " << Port << "\n";
+        DIE.INSTANTIATE_1D_STREAM(
+          Start, SEE->expandCodeFor(LI->Coef[i]->Invariant()),
+          IB->CreateAdd(SEE->expandCodeFor(Loops[i]->Invariant()), IB->getInt64(1)),
+          Port, PP, DSA_Access, MO, MT, DType, 0);
+        break;
+      }
+      case 2: {
+        CHECK(false) << "Unsupported dimension: " << Dim;
+        break;
+      }
+      case 3: {
+        CHECK(false) << "Unsupported dimension: " << Dim;
+        break;
+      }
+      default:
+        CHECK(false) << "Unsupported dimension: " << Dim;
+    }
+  }
 };
 
 }

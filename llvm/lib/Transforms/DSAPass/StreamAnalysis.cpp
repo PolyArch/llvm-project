@@ -64,6 +64,17 @@ std::string LinearInfo::toString(const std::vector<Loop*> &Loops) {
   return RSO.str();
 }
 
+int LinearInfo::PatialInvariant() const {
+  for (int i = 0, N = Coef.size(); i < N; ++i) {
+    auto CI = Coef[i]->ConstInt();
+    if (CI && *CI == 0) {
+      continue;
+    }
+    return i;
+  }
+  return Coef.size();
+}
+
 
 LinearInfo*
 AnalyzeIndexExpr(ScalarEvolution *SE, const SCEV *Raw, const std::vector<Loop*> &Loops) {
