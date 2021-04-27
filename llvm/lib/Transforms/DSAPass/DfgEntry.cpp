@@ -984,7 +984,7 @@ void IndMemPort::InjectStreamIntrinsic(IRBuilder<> *IB) {
                               createConstant(Ctx, IBits / 8));
     auto GEP = dyn_cast<GetElementPtrInst>(Cur->Load->getPointerOperand());
     DIE.SS_INDIRECT_READ(this->SoftPortNum, this->IndexOutPort, GEP->getOperand(0),
-                         Cur->Load->getType()->getScalarSizeInBits() / 8, Num, DMT_DMA, 0, 0);
+                         Cur->Load->getType()->getScalarSizeInBits() / 8, Num, DMT_DMA);
 
     // TODO: Support indirect read on the SPAD(?)
     Cur->Meta.set("src", dsa::dfg::MetaPort::DataText[(int) ActualSrc]);
