@@ -581,14 +581,15 @@ struct RepeatInjector : AffinedInjector {
         DIE.SS_CONFIG_PORT(Port, DPF_PortPeriod, Unroll);
         DIE.SS_CONFIG_PORT(Port, DPF_PortRepeatStretch, SEE->expandCodeFor(LI->Coef[i]->Coef[1]->Base));
       }
-      auto Current = SEE->expandCodeFor(Loops[i]->Base);
+      auto Current = IB->CreateAdd(SEE->expandCodeFor(Loops[i]->Base), IB->getInt64(1));
       if (i == 0 && Unroll != 1) {
-          Current = IB->CreateSub(Current, IB->getInt64(1));
-          Current = IB->CreateSDiv(Current, IB->getInt64(Unroll));
-          Current = IB->CreateAdd(Current, IB->getInt64(1));
-        }
-        Repeat = IB->CreateMul(Repeat, Current);
+        Current = IB->CreateSub(Current, IB->getInt64(1));
+        Current = IB->CreateSDiv(Current, IB->getInt64(Unroll));
+        Current = IB->CreateAdd(Current, IB->getInt64(1));
       }
+      Repeat = IB->CreateMul(Repeat, Current);
+    }
+    DIE.SS_CONFIG_PORT(Port, DPF_PortRepeat, Repeat);
   }
 };
 
@@ -604,14 +605,13 @@ struct LinearInjector : AffinedInjector {
     int Dim = Loops.size() - LI->PatialInvariant();
     CHECK(1 <= Dim && Dim <= 3);
     auto Start = SEE->expandCodeFor(LI->Base);
+    int i = LI->PatialInvariant();
     switch (Dim) {
       case 1: {
-        int i = LI->PatialInvariant();
         auto N = Loops[i]->Invariant();
         CHECK(N) << "No stretch should be in 1d stream!";
         auto Stride = LI->Coef[i]->Invariant();
         CHECK(Stride) << "Stride should not be stretched!";
-        llvm::errs() << "Inject stream for: " << Port << "\n";
         DIE.INSTANTIATE_1D_STREAM(
           Start, SEE->expandCodeFor(LI->Coef[i]->Invariant()),
           IB->CreateAdd(SEE->expandCodeFor(Loops[i]->Invariant()), IB->getInt64(1)),
@@ -619,7 +619,21 @@ struct LinearInjector : AffinedInjector {
         break;
       }
       case 2: {
-        CHECK(false) << "Unsupported dimension: " << Dim;
+        // TODO(@were): Make assumption check!
+        auto Length1D =
+          IB->CreateAdd(SEE->expandCodeFor(Loops[i]->Base), IB->getInt64(1));
+        Value* Stretch = IB->getInt64(0);
+        if (!Loops[i]->Coef.empty()) {
+          Stretch = IB->CreateSDiv(SEE->expandCodeFor(Loops[i]->Coef[i + 1]->Base), IB->getInt64(DType));
+        }
+        auto Length2D =
+          IB->CreateAdd(SEE->expandCodeFor(Loops[i + 1]->Base), IB->getInt64(1));
+        auto Stride1D =
+          SEE->expandCodeFor(LI->Coef[i]->Invariant());
+        auto Stride2D =
+          IB->CreateSDiv(SEE->expandCodeFor(LI->Coef[i + 1]->Invariant()), IB->getInt64(DType));
+        DIE.INSTANTIATE_2D_STREAM(Start, Stride1D, Length1D, Stride2D, Stretch, Length2D,
+                                  Port, PP, DSA_Access, MO, MT, DType, 0);
         break;
       }
       case 3: {

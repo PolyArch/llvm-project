@@ -1133,6 +1133,23 @@ bool MemPort::InjectUpdateStream(IRBuilder<> *IB) {
 
 }
 
+void InjectLinearStreamImpl(ScalarEvolution *SE, SCEVExpander &SEE, IRBuilder<> *IB,
+                            const SCEV *Idx, std::vector<Loop*> LoopNest,
+                            dsa::inject::RepeatInjector &RI,
+                            dsa::inject::LinearInjector &LI,
+                            int Port, int Unroll, int DType,
+                            MemoryOperation MO, Padding Padding, MemoryType MT) {
+  auto IdxLI = dsa::analysis::AnalyzeIndexExpr(SE, Idx, LoopNest);
+  std::vector<dsa::analysis::LinearInfo*> LoopLI;
+  for (int i = 0, N = LoopNest.size(); i < N; ++i) {
+    auto CurDim = dsa::analysis::AnalyzeIndexExpr(SE, SE->getBackedgeTakenCount(LoopNest[i]), LoopNest);
+    LoopLI.push_back(CurDim);
+  }
+  RI.Inject(IdxLI, LoopLI, Port, Unroll);
+  LI.Inject(IdxLI, LoopLI, Port, MO, Padding, MT, DType);
+}
+
+
 void MemPort::InjectStreamIntrinsic(IRBuilder<> *IB) {
   IB->SetInsertPoint(this->Parent->DefaultIP());
 
@@ -1159,6 +1176,24 @@ void MemPort::InjectStreamIntrinsic(IRBuilder<> *IB) {
     assert(false && "Predicated stream should be handled in CtrlMemPort.");
   }
 
+  if (auto DD = dyn_cast<DedicatedDfg>(DFG)) {
+    // FIXME(@were): Make this more unified.
+    SCEVExpander SEE(*Parent->Parent->Query->SE,
+                     Parent->Parent->Func.getParent()->getDataLayout(), "");
+    SEE.setInsertPoint(Parent->DefaultIP());
+    dsa::inject::RepeatInjector RI(IB, &SEE, Parent->Parent->Query->DSARegs);
+    dsa::inject::LinearInjector LI(IB, &SEE, Parent->Parent->Query->DSARegs);
+    std::vector<Loop*> LoopNest(DD->LoopNest.begin(), DD->LoopNest.end());
+    auto SE = Parent->Parent->Query->SE;
+    auto SCEVIdx = SE->getSCEV(MP->Load->getPointerOperand());
+    int DType = MP->Load->getType()->getScalarSizeInBits() / 8;
+    InjectLinearStreamImpl(SE, SEE, IB, SCEVIdx, LoopNest, RI, LI, MP->SoftPortNum,
+                           Parent->getUnroll(), DType, DMO_Read,
+                           (Padding) MP->FillMode(), DMT_DMA);
+    MP->IntrinInjected = true;
+    return;
+  }
+
   auto Analyzed = DFG->AnalyzeDataStream(
     MP->Load->getPointerOperand(),
     MP->Load->getType()->getScalarType()->getScalarSizeInBits() / 8);
@@ -1168,7 +1203,6 @@ void MemPort::InjectStreamIntrinsic(IRBuilder<> *IB) {
       IB->CreateLoad(MP->Load->getPointerOperand()), IB->getInt64Ty());
     DFG->InjectRepeat(Analyzed.AR, RepeatedConst, MP->SoftPortNum);
   } else {
-
     auto Fill = MP->FillMode();
     DFG->InjectRepeat(Analyzed.AR, nullptr, this->SoftPortNum);
     auto Src =
@@ -1198,15 +1232,9 @@ void PortMem::InjectStreamIntrinsic(IRBuilder<> *IB) {
     std::vector<Loop*> LoopNest(DD->LoopNest.begin(), DD->LoopNest.end());
     auto SE = Parent->Parent->Query->SE;
     auto SCEVIdx = SE->getSCEV(PM->Store->getPointerOperand());
-    auto IdxLI = dsa::analysis::AnalyzeIndexExpr(SE, SCEVIdx, LoopNest);
-    std::vector<dsa::analysis::LinearInfo*> LoopLI;
-    for (int i = 0, N = LoopNest.size(); i < N; ++i) {
-      auto CurDim = dsa::analysis::AnalyzeIndexExpr(SE, SE->getBackedgeTakenCount(LoopNest[i]), LoopNest);
-      LoopLI.push_back(CurDim);
-    }
-    RI.Inject(IdxLI, LoopLI, PM->SoftPortNum, Parent->getUnroll());
     int DType = PM->Store->getValueOperand()->getType()->getScalarSizeInBits() / 8;
-    LI.Inject(IdxLI, LoopLI, PM->SoftPortNum, DMO_Write, DP_NoPadding, DMT_DMA, DType);
+    InjectLinearStreamImpl(SE, SEE, IB, SCEVIdx, LoopNest, RI, LI, PM->SoftPortNum,
+                           Parent->getUnroll(), DType, DMO_Write, DP_NoPadding, DMT_DMA);
     PM->IntrinInjected = true;
     return;
   }
