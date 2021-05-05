@@ -50,12 +50,12 @@ void EliminateTemporal(Function &F) {
 }
 
 std::vector<std::pair<IntrinsicInst*, IntrinsicInst*>>
-GatherIntrinPairs(Function &F, llvm::Intrinsic::ID Kind) {
+GatherConfigScope(Function &F) {
   std::vector<std::pair<IntrinsicInst*, IntrinsicInst*>> Res;
   for (auto &BB : F) {
     for (auto &I : BB) {
       auto Start = dyn_cast<IntrinsicInst>(&I);
-      if (!Start || Start->getIntrinsicID() != Kind)
+      if (!Start || Start->getIntrinsicID() != Intrinsic::ss_config_start)
         continue;
       for (auto &AnotherBB : F) {
         for (auto &AntherI : AnotherBB) {
@@ -86,6 +86,39 @@ InjectRegisterFile(IRBuilder<> *IB) {
   return Res;
 }
 
+bool StreamSpecialize::runOnModule(Module &M) {
+
+  for (auto &F : M) {
+    if (F.isDeclaration()) {
+      continue;
+    }
+    ACT = &getAnalysis<AssumptionCacheTracker>(F).getAssumptionCache(F);
+    LI = &getAnalysis<LoopInfoWrapperPass>(F).getLoopInfo();
+    SE = &getAnalysis<ScalarEvolutionWrapperPass>(F).getSE();
+    DT = &getAnalysis<DominatorTreeWrapperPass>(F).getDomTree();
+    AAR = &getAnalysis<AAResultsWrapperPass>(F).getAAResults();
+    BFI = &getAnalysis<BlockFrequencyInfoWrapperPass>(F).getBFI();
+    MSSA = &getAnalysis<MemorySSAWrapperPass>(F).getMSSA();
+    runOnFunction(F);
+  }
+
+  // Clean up the code generated.
+  llvm::PassManagerBuilder PMB;
+  PMB.OptLevel = 3;
+  llvm::legacy::FunctionPassManager fpass(&M);
+  llvm::legacy::PassManager mpass;
+  PMB.populateFunctionPassManager(fpass);
+  PMB.populateModulePassManager(mpass);
+  PMB.Inliner = llvm::createFunctionInliningPass(3, 0, false);
+  for (auto &F : M) {
+    runOnFunction(F);
+  }
+  fpass.doFinalization();
+  mpass.run(M);
+
+  return false;
+}
+
 bool StreamSpecialize::runOnFunction(Function &F) {
 
   if (!MF.TEMPORAL) {
@@ -93,20 +126,13 @@ bool StreamSpecialize::runOnFunction(Function &F) {
   }
 
   LLVM_DEBUG(dbgs() << "Working on " << F.getName() << "\n");
-  ACT = &getAnalysis<AssumptionCacheTracker>().getAssumptionCache(F);
-  LI = &getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
-  SE = &getAnalysis<ScalarEvolutionWrapperPass>().getSE();
-  DT = &getAnalysis<DominatorTreeWrapperPass>().getDomTree();
-  AAR = &getAnalysis<AAResultsWrapperPass>().getAAResults();
-  BFI = &getAnalysis<BlockFrequencyInfoWrapperPass>().getBFI();
-  MSSA = &getAnalysis<MemorySSAWrapperPass>().getMSSA();
 
   IRBuilder<> IB(F.getContext());
   IBPtr = &IB;
 
   {
     int Cnt = 0;
-    auto ScopePairs = GatherIntrinPairs(F, Intrinsic::ss_config_start);
+    auto ScopePairs = GatherConfigScope(F);
     if (!ScopePairs.empty()) {
       IB.SetInsertPoint(&F.getEntryBlock().back());
       DSARegs = InjectRegisterFile(&IB);
@@ -137,17 +163,6 @@ bool StreamSpecialize::runOnFunction(Function &F) {
     llvm::errs() << "After transformation:\n";
     F.dump()
   );
-
-  // llvm::PassManagerBuilder PMB;
-  // PMB.OptLevel = 3;
-  // llvm::legacy::FunctionPassManager fpass(F.getParent());
-  // llvm::legacy::PassManager mpass;
-  // PMB.populateFunctionPassManager(fpass);
-  // PMB.populateModulePassManager(mpass);
-  // PMB.Inliner = llvm::createFunctionInliningPass(3, 0, false);
-  // fpass.run(F);
-  // fpass.doFinalization();
-  // mpass.run(*F.getParent());
 
   return false;
 }
@@ -198,16 +213,11 @@ void StreamSpecialize::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<TargetTransformInfoWrapperPass>();
   AU.addRequired<AAResultsWrapperPass>();
   AU.addRequired<LoopAccessLegacyAnalysis>();
-  //AU.addRequired<DemandedBitsWrapperPass>();
   AU.addRequired<OptimizationRemarkEmitterWrapperPass>();
   AU.addRequired<TargetLibraryInfoWrapperPass>();
   AU.addRequired<MemorySSAWrapperPass>();
-  AU.addPreserved<LoopInfoWrapperPass>();
-  //AU.addPreserved<BasicAAWrapperPass>();
-  //AU.addPreserved<GlobalsAAWrapperPass>();
-  AU.addPreserved<DependenceAnalysisWrapperPass>();
 }
 
 char StreamSpecialize::ID = 0;
 
-static RegisterPass<StreamSpecialize> X("stream-specialize", "Stream specialize the program...");
+static RegisterPass<StreamSpecialize> X("stream-specialize", "Decoupld-Spatial Specialized Transformation");

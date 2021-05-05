@@ -45,7 +45,7 @@ struct ModuleFlags {
 
 #undef DEFINE_FLAG
 
-struct StreamSpecialize : public FunctionPass {
+struct StreamSpecialize : public ModulePass {
 
   ModuleFlags MF;
 
@@ -71,12 +71,14 @@ struct StreamSpecialize : public FunctionPass {
 
   static char ID;
 
-  StreamSpecialize() : FunctionPass(ID) {
+  StreamSpecialize() : ModulePass(ID) {
     MF.InitFlags();
   }
 
+  bool runOnFunction(Function &F);
+
   // {
-  bool runOnFunction(Function &F) override;
+  bool runOnModule(Module &M) override;
   void getAnalysisUsage(AnalysisUsage &AU) const override;
   // }
 

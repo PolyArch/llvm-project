@@ -90,7 +90,7 @@ AnalyzeIndexExpr(ScalarEvolution *SE, const SCEV *Raw, const std::vector<Loop*> 
     }
     AppendZero();
   }
-  if (!isa<SCEVAddRecExpr>(Raw)) {
+  if (!isa<SCEVAddRecExpr>(Raw) || i == (int) Loops.size()) {
     CHECK(i == (int) Loops.size()) << i << " != " << Loops.size();
     LI->Coef.clear();
     LI->Coef.shrink_to_fit();

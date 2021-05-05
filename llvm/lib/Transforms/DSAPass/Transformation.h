@@ -566,7 +566,8 @@ struct RepeatInjector : AffinedInjector {
   void Inject(analysis::LinearInfo *LI, const std::vector<analysis::LinearInfo*> &Loops, int Port, int Unroll) {
     CHECK(Loops.size() == LI->Coef.size() || LI->Coef.empty());
     Value *Repeat = IB->getInt64(1);
-    for (int i = 0, N = LI->PatialInvariant(); i < N; ++i) {
+    int N = LI->Coef.empty() ? Loops.size() : LI->PatialInvariant();
+    for (int i = 0; i < N; ++i) {
       auto Coef = LI->Coef[i]->ConstInt();
       CHECK(Coef && *Coef == 0);
       if (!Loops[i]->Coef.empty()) {
@@ -601,15 +602,29 @@ struct LinearInjector : AffinedInjector {
 
   void Inject(analysis::LinearInfo *LI, const std::vector<analysis::LinearInfo*> &Loops,
               int Port, MemoryOperation MO, Padding PP, MemoryType MT, int DType) {
-    CHECK(Loops.size() == LI->Coef.size());
+    if (auto LII = LI->Invariant()) {
+      DIE.INSTANTIATE_1D_STREAM(
+        SEE->expandCodeFor(LII), IB->getInt64(0), IB->getInt64(1),
+        Port, PP, DSA_Access, MO, MT, DType, 0);
+      return;
+    }
+    CHECK(Loops.size() == LI->Coef.size()) << Loops.size() << " != " << LI->Coef.size();
     int Dim = Loops.size() - LI->PatialInvariant();
-    CHECK(1 <= Dim && Dim <= 3);
+    CHECK(0 <= Dim && Dim <= 3) << Dim;
     auto Start = SEE->expandCodeFor(LI->Base);
     int i = LI->PatialInvariant();
     switch (Dim) {
+      case 0: {
+        DIE.INSTANTIATE_1D_STREAM(
+          Start, IB->getInt64(0), IB->getInt64(1),
+          Port, PP, DSA_Access, MO, MT, DType, 0);
+        break;
+      }
       case 1: {
         auto N = Loops[i]->Invariant();
-        CHECK(N) << "No stretch should be in 1d stream!";
+        llvm::errs() << Loops[i]->Coef.size() << "\n";
+        llvm::errs() << Loops[i]->PatialInvariant() << "\n";
+        CHECK(N) << "No stretch should be in 1d stream! " << Loops[i]->toString();
         auto Stride = LI->Coef[i]->Invariant();
         CHECK(Stride) << "Stride should not be stretched!";
         DIE.INSTANTIATE_1D_STREAM(

@@ -58,11 +58,11 @@ InjectLinearStream(IRBuilder<> *IB,
     Value *Stride = std::get<0>(Stream.Dimensions[0]);
     Value *N = std::get<1>(Stream.Dimensions[0]);
     int Stretch = std::get<2>(Stream.Dimensions[0]);
-    DIE.INSTANTIATE_2D_STREAM(Start,
+    DIE.INSTANTIATE_2D_STREAM(Start, DType,
                               DIE.DIV(Bytes, DTyValue),
                               DIE.DIV(Stride, DTyValue),
                               IB->getInt64(Stretch / DType),
-                              N, PortNum, PP, DSA_Access, MO, MT, 1, DType, 0);
+                              N, PortNum, PP, DSA_Access, MO, MT, DType, 0);
     return DMT_DMA;
   } else {
     llvm::errs() << Stream.Dimensions.size();
@@ -1255,6 +1255,7 @@ void DfgFile::EmitAndScheduleDfg() {
     }
     auto Cmd = formatv("ss_sched {0} {1} {2} -e 0 > /dev/null", Verbose, SBCONFIG, FileName);
     LLVM_DEBUG(dbgs() << Cmd);
+    llvm::errs() << Cmd;
     if (system(Cmd.str().c_str()) != 0) {
       // TODO(@were): throw exception here.
     }
@@ -1264,7 +1265,7 @@ void DfgFile::EmitAndScheduleDfg() {
   std::ifstream ifs(SCHEDULED ? std::string(SCHEDULED) : formatv("{0}.h", FileName).str());
 
   if (!ifs.is_open()) {
-    assert(Query->MF.EXTRACT);
+    CHECK(Query->MF.EXTRACT);
     return;
   }
 

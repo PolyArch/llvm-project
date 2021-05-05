@@ -1140,12 +1140,15 @@ void InjectLinearStreamImpl(ScalarEvolution *SE, SCEVExpander &SEE, IRBuilder<> 
                             int Port, int Unroll, int DType,
                             MemoryOperation MO, Padding Padding, MemoryType MT) {
   auto IdxLI = dsa::analysis::AnalyzeIndexExpr(SE, Idx, LoopNest);
+  llvm::errs() << IdxLI->toString() << "\n";
   std::vector<dsa::analysis::LinearInfo*> LoopLI;
   for (int i = 0, N = LoopNest.size(); i < N; ++i) {
     auto CurDim = dsa::analysis::AnalyzeIndexExpr(SE, SE->getBackedgeTakenCount(LoopNest[i]), LoopNest);
     LoopLI.push_back(CurDim);
   }
-  RI.Inject(IdxLI, LoopLI, Port, Unroll);
+  if (MO == MemoryOperation::DMO_Read) {
+    RI.Inject(IdxLI, LoopLI, Port, Unroll);
+  }
   LI.Inject(IdxLI, LoopLI, Port, MO, Padding, MT, DType);
 }
 
@@ -1306,7 +1309,6 @@ void CtrlSignal::InjectStreamIntrinsic(IRBuilder<> *IB) {
   auto Two = IB->getInt64(2);
 
   dsa::inject::DSAIntrinsicEmitter DIE(IB, Parent->Parent->Query->DSARegs);
-
 
   if (CS->Controlled->getPredicate()) {
     if (Parent->Parent->Query->MF.PRED) {
