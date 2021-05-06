@@ -409,7 +409,7 @@ namespace inject {
  */
 MemoryType
 InjectLinearStream(IRBuilder<> *IB,
-                   const std::vector<StreamSpecialize::StickyRegister> &Regs,
+                   const std::vector<dsa::utils::StickyRegister> &Regs,
                    int PortNum, const AnalyzedStream &Stream,
                    MemoryOperation MO, Padding PP, MemoryType MT, int DType);
 
@@ -417,7 +417,7 @@ struct DSAIntrinsicEmitter {
   bool Prepass{true};
   IRBuilder<> *IB;
   std::vector<CallInst*> res;
-  std::vector<StreamSpecialize::StickyRegister> Regs;
+  std::vector<dsa::utils::StickyRegister> Regs;
 
   struct REG {
     static std::stack<IRBuilder<>*> IBStack;
@@ -432,7 +432,7 @@ struct DSAIntrinsicEmitter {
   };
 
   DSAIntrinsicEmitter(IRBuilder<> *IB_,
-                      const std::vector<StreamSpecialize::StickyRegister> &Regs_) : IB(IB_), Regs(Regs_) {
+                      const std::vector<dsa::utils::StickyRegister> &Regs_) : IB(IB_), Regs(Regs_) {
     REG::IBStack.push(IB_);
   }
 
@@ -555,13 +555,13 @@ struct AffinedInjector {
   SCEVExpander *SEE;
   DSAIntrinsicEmitter DIE;
   AffinedInjector(IRBuilder<> *IB_, SCEVExpander *SEE_,
-                  const std::vector<StreamSpecialize::StickyRegister> &Regs) : IB(IB_), SEE(SEE_), DIE(IB_, Regs) {}
+                  const std::vector<dsa::utils::StickyRegister> &Regs) : IB(IB_), SEE(SEE_), DIE(IB_, Regs) {}
 };
 
 struct RepeatInjector : AffinedInjector {
   RepeatInjector(
     IRBuilder<> *IB, SCEVExpander *SEE,
-    const std::vector<StreamSpecialize::StickyRegister> &Regs) : AffinedInjector(IB, SEE, Regs) {}
+    const std::vector<dsa::utils::StickyRegister> &Regs) : AffinedInjector(IB, SEE, Regs) {}
 
   void Inject(analysis::LinearInfo *LI, const std::vector<analysis::LinearInfo*> &Loops, int Port, int Unroll) {
     CHECK(Loops.size() == LI->Coef.size() || LI->Coef.empty());
@@ -598,7 +598,7 @@ struct LinearInjector : AffinedInjector {
 
   LinearInjector(
     IRBuilder<> *IB, SCEVExpander *SEE,
-    const std::vector<StreamSpecialize::StickyRegister> &Regs) : AffinedInjector(IB, SEE, Regs) {}
+    const std::vector<dsa::utils::StickyRegister> &Regs) : AffinedInjector(IB, SEE, Regs) {}
 
   void Inject(analysis::LinearInfo *LI, const std::vector<analysis::LinearInfo*> &Loops,
               int Port, MemoryOperation MO, Padding PP, MemoryType MT, int DType) {

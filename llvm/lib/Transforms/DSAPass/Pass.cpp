@@ -1,3 +1,5 @@
+#include "llvm_common.h"
+
 #include <cstdlib>
 #include <sstream>
 #include <fstream>
@@ -15,6 +17,8 @@
 #include "llvm/Transforms/Utils/LoopUtils.h"
 #include "llvm/Transforms/Utils/UnrollLoop.h"
 
+#include "CodeXform.h"
+#include "DfgAnalysis.h"
 #include "DfgEntry.h"
 #include "Transformation.h"
 #include "Util.h"
@@ -25,66 +29,6 @@ using namespace llvm;
 
 #define DEBUG_TYPE "stream-specialize"
 
-void EliminateTemporal(Function &F) {
-  std::vector<Instruction*> ToRemove;
-  for (auto &BB : F) {
-    for (auto &I : BB) {
-      auto Intrin = dyn_cast<IntrinsicInst>(&I);
-      if (!Intrin)
-        continue;
-      switch (Intrin->getIntrinsicID()) {
-        case Intrinsic::ss_temporal_region_start:
-        case Intrinsic::ss_temporal_region_end:
-          ToRemove.push_back(Intrin);
-          break;
-        default:
-          break;
-      }
-    }
-  }
-
-  for (auto I : ToRemove) {
-    I->replaceAllUsesWith(UndefValue::get(I->getType()));
-    I->eraseFromParent();
-  }
-}
-
-std::vector<std::pair<IntrinsicInst*, IntrinsicInst*>>
-GatherConfigScope(Function &F) {
-  std::vector<std::pair<IntrinsicInst*, IntrinsicInst*>> Res;
-  for (auto &BB : F) {
-    for (auto &I : BB) {
-      auto Start = dyn_cast<IntrinsicInst>(&I);
-      if (!Start || Start->getIntrinsicID() != Intrinsic::ss_config_start)
-        continue;
-      for (auto &AnotherBB : F) {
-        for (auto &AntherI : AnotherBB) {
-          auto End = dyn_cast<IntrinsicInst>(&AntherI);
-          if (!End || End->getOperand(0) != Start)
-            continue;
-          Res.emplace_back(Start, End);
-        }
-      }
-    }
-  }
-  return Res;
-}
-
-std::vector<StreamSpecialize::StickyRegister>
-InjectRegisterFile(IRBuilder<> *IB) {
-  std::vector<StreamSpecialize::StickyRegister> Res;
-  std::string TyName("reg.type");
-  auto RegType = StructType::create(TyName, IB->getInt64Ty(), IB->getInt8Ty());
-  for (int i = 0; i < DSARF::TOTAL_REG; ++i) {
-    auto A = IB->CreateAlloca(RegType, nullptr, REG_NAMES[i]);
-    auto R = IB->CreateInBoundsGEP(A, {IB->getInt32(0), IB->getInt32(0)});
-    auto S = IB->CreateInBoundsGEP(A, {IB->getInt32(0), IB->getInt32(1)});
-    IB->CreateStore(IB->getInt64(REG_STICKY[i]), R);
-    IB->CreateStore(IB->getInt8(i == DSARF::TBC), S);
-    Res.emplace_back(A, R, S);
-  }
-  return Res;
-}
 
 bool StreamSpecialize::runOnModule(Module &M) {
 
@@ -122,7 +66,7 @@ bool StreamSpecialize::runOnModule(Module &M) {
 bool StreamSpecialize::runOnFunction(Function &F) {
 
   if (!MF.TEMPORAL) {
-    EliminateTemporal(F);
+    dsa::xform::EliminateTemporal(F);
   }
 
   LLVM_DEBUG(dbgs() << "Working on " << F.getName() << "\n");
@@ -132,10 +76,9 @@ bool StreamSpecialize::runOnFunction(Function &F) {
 
   {
     int Cnt = 0;
-    auto ScopePairs = GatherConfigScope(F);
+    auto ScopePairs = dsa::analysis::GatherConfigScope(F);
     if (!ScopePairs.empty()) {
-      IB.SetInsertPoint(&F.getEntryBlock().back());
-      DSARegs = InjectRegisterFile(&IB);
+      DSARegs = dsa::xform::InjectDSARegisterFile(F);
     }
     for (auto &Pair : ScopePairs) {
       std::ostringstream OSS;

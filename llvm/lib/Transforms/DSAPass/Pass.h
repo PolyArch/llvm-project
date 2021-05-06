@@ -13,41 +13,14 @@
 #include "llvm/Analysis/DDG.h"
 #include "llvm/Analysis/MemorySSA.h"
 
+#include "Util.h"
+
 using namespace llvm;
 
-#define DEFINE_FLAG(x, default_) \
-  int64_t x{default_};           \
-  void getFlag##x() {            \
-    char *env = getenv(#x);      \
-    if (env)                     \
-      x = std::stol(env);        \
-  }
-
-struct ModuleFlags {
-
-  DEFINE_FLAG(IND, 1)
-  DEFINE_FLAG(REC, 1)
-  DEFINE_FLAG(PRED, 1)
-  DEFINE_FLAG(TEMPORAL, 1)
-  DEFINE_FLAG(TRIGGER, 0)
-  DEFINE_FLAG(EXTRACT, 0)
-
-  void InitFlags() {
-    getFlagIND();
-    getFlagREC();
-    getFlagPRED();
-    getFlagTEMPORAL();
-    getFlagTRIGGER();
-    getFlagEXTRACT();
-  }
-
-};
-
-#undef DEFINE_FLAG
 
 struct StreamSpecialize : public ModulePass {
 
-  ModuleFlags MF;
+  dsa::utils::ModuleFlags MF;
 
   AssumptionCache *ACT;
   LoopInfo *LI;
@@ -60,20 +33,11 @@ struct StreamSpecialize : public ModulePass {
   MemorySSA *MSSA;
 
   IRBuilder<> *IBPtr{nullptr};
-
-  struct StickyRegister {
-    Value *Alloca;
-    Value *Reg;
-    Value *Sticky;
-    StickyRegister(Value *A, Value *R, Value *S) : Alloca(A), Reg(R), Sticky(S) {}
-  };
-  std::vector<StickyRegister> DSARegs;
+  std::vector<dsa::utils::StickyRegister> DSARegs;
 
   static char ID;
 
-  StreamSpecialize() : ModulePass(ID) {
-    MF.InitFlags();
-  }
+  StreamSpecialize() : ModulePass(ID) {}
 
   bool runOnFunction(Function &F);
 
