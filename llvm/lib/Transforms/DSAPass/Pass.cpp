@@ -75,15 +75,16 @@ bool StreamSpecialize::runOnFunction(Function &F) {
   IBPtr = &IB;
 
   {
-    int Cnt = 0;
     auto ScopePairs = dsa::analysis::GatherConfigScope(F);
     if (!ScopePairs.empty()) {
       DSARegs = dsa::xform::InjectDSARegisterFile(F);
     }
-    for (auto &Pair : ScopePairs) {
-      std::ostringstream OSS;
-      OSS << F.getName().bytes_begin() << "_dfg_" << Cnt++ << ".dfg";
-      DfgFile DFG(OSS.str(), F, Pair.first, Pair.second, this);
+    for (int i = 0, n = ScopePairs.size(); i < n; ++i) {
+      std::string Name = F.getName().str() + "_dfg_" + std::to_string(i) + ".dfg";
+      auto Start = ScopePairs[i].first;
+      auto End = ScopePairs[i].second;
+      DFGFile DFG(Name, Start, End, this);
+      dsa::analysis::ExtractDFGFromScope(DFG, Start, End, DT, LI);
       DFG.InspectSPADs();
       DFG.InitAllDfgs();
       DFG.EmitAndScheduleDfg();
@@ -100,7 +101,7 @@ bool StreamSpecialize::runOnFunction(Function &F) {
     }
   }
 
-  HandleMemIntrin(F);
+  // HandleMemIntrin(F);
 
   LLVM_DEBUG(
     llvm::errs() << "After transformation:\n";
@@ -111,7 +112,7 @@ bool StreamSpecialize::runOnFunction(Function &F) {
 }
 
 void StreamSpecialize::HandleMemIntrin(Function &F) {
-  DfgFile Dummy("dummy", F, nullptr, nullptr, this);
+  DFGFile Dummy("dummy", nullptr, nullptr, this);
   std::vector<IntrinsicInst*> ToInject;
 
   for (auto &BB : F) {

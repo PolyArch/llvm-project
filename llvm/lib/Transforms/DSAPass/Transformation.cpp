@@ -222,7 +222,7 @@ int ScalarBits2T(int Bits) {
   assert(false);
 }
 
-void DfgFile::InjectStreamIntrinsics() {
+void DFGFile::InjectStreamIntrinsics() {
   auto IB = Query->IBPtr;
 
   for (auto &DFG : DFGs) {
@@ -751,7 +751,7 @@ Value *DedicatedDfg::ProdTripCount(int x, Instruction *InsertBefore) {
   return ProdTripCount(0, x, InsertBefore);
 }
 
-DedicatedDfg::DedicatedDfg(DfgFile *Parent_, Loop *LI, int Unroll)
+DedicatedDfg::DedicatedDfg(DFGFile *Parent_, Loop *LI, int Unroll)
   : DfgBase(Parent_), UnrollFactor(std::max(1, Unroll)) {
 
   Kind = DfgBase::Dedicated;
@@ -1189,12 +1189,12 @@ void DfgBase::dump(std::ostringstream &os) {
 
 }
 
-void DfgFile::addDfg(DfgBase *DB) {
+void DFGFile::addDfg(DfgBase *DB) {
   assert(!AllInitialized && "You can no longer modify the dfg after scheduling");
   DFGs.push_back(DB);
 }
 
-void DfgFile::InitAllDfgs() {
+void DFGFile::InitAllDfgs() {
   assert(!AllInitialized && "You can no longer modify the dfg after scheduling");
   for (auto &Elem : DFGs) {
     LLVM_DEBUG(dbgs() << "Working on DFG[" << Elem->ID << "]\n");
@@ -1203,7 +1203,7 @@ void DfgFile::InitAllDfgs() {
   AllInitialized = true;
 }
 
-void DfgFile::EmitAndScheduleDfg() {
+void DFGFile::EmitAndScheduleDfg() {
   assert(AllInitialized && "Only after all initialized this DFG file is ready to schedule!");
 
   std::ostringstream oss;
@@ -1382,7 +1382,7 @@ void DfgFile::EmitAndScheduleDfg() {
   LLVM_DEBUG(dbgs() << "Inject config asm "; DIE.res.back()->dump());
 }
 
-void DfgFile::EraseOffloadedInstructions() {
+void DFGFile::EraseOffloadedInstructions() {
 
   std::set<Instruction*> Unique;
 
@@ -1490,7 +1490,7 @@ Loop *DedicatedDfg::OuterMost() {
   return LoopNest.back();
 }
 
-DfgBase::DfgBase(DfgFile *Parent_) :
+DfgBase::DfgBase(DFGFile *Parent_) :
   Parent(Parent_) {
   ID = Parent_->DFGs.size();
   Kind = DfgBase::Unknown;
@@ -1500,7 +1500,7 @@ DfgBase::DfgKind DfgBase::getKind() const {
   return Kind;
 }
 
-TemporalDfg::TemporalDfg(DfgFile *Parent, IntrinsicInst *Begin, IntrinsicInst *End)
+TemporalDfg::TemporalDfg(DFGFile *Parent, IntrinsicInst *Begin, IntrinsicInst *End)
   : DfgBase(Parent), Begin(Begin), End(End) {
 
   std::set<Instruction*> users;
@@ -1814,7 +1814,7 @@ Value *AnalyzedStream::BytesFromMemory(IRBuilder<> *IB) {
   return Res;
 }
 
-DataMoveDfg::DataMoveDfg(DfgFile *Parent_, Loop *LI, int Unroll) :
+DataMoveDfg::DataMoveDfg(DFGFile *Parent_, Loop *LI, int Unroll) :
   DedicatedDfg(Parent_, LI, Unroll) {
   Kind = DfgBase::DataMove;
 }
@@ -1829,12 +1829,12 @@ LLVMContext &DfgBase::getCtx() {
 }
 
 
-LLVMContext &DfgFile::getCtx() {
+LLVMContext &DFGFile::getCtx() {
   return Query->IBPtr->getContext();
 }
 
 template<typename DfgType>
-void AddDfg(DfgFile *DF, MDNode *Ptr, Loop *LI) {
+void AddDfg(DFGFile *DF, MDNode *Ptr, Loop *LI) {
   assert(Ptr->getNumOperands() == 2);
   auto MDFactor = dyn_cast<ConstantAsMetadata>(Ptr->getOperand(1));
   assert(MDFactor);
@@ -1842,71 +1842,8 @@ void AddDfg(DfgFile *DF, MDNode *Ptr, Loop *LI) {
   DF->addDfg(new DfgType(DF, LI, Factor));
 }
 
-DfgFile::DfgFile(StringRef Name, Function &F, IntrinsicInst *Start, IntrinsicInst *End,
-                 StreamSpecialize *SS) : FileName(Name), Func(F), Config(Start), Fence(End), Query(SS) {
-
-  auto LI = SS->LI;
-  auto DT = SS->DT;
-
-  if (Start && End) {
-    std::set<BasicBlock*> OutOfBound;
-    for (auto BBN : breadth_first(DT->getNode(Fence->getParent()))) {
-      if (BBN->getBlock() == Fence->getParent())
-        continue;
-      OutOfBound.insert(BBN->getBlock());
-    }
-    for (auto NestedLoop : *LI) {
-      for (auto SubLoop : breadth_first(NestedLoop)) {
-        if (!DT->dominates(Start, SubLoop->getBlocks()[0]))
-          continue;
-        if (!SubLoop->getLoopID() || SubLoop->getLoopID()->getNumOperands() == 0)
-          continue;
-        bool InBound = true;
-        for (auto BB : SubLoop->getBlocks()) {
-          if (OutOfBound.count(BB))
-            InBound = false;
-        }
-        if (!InBound)
-          continue;
-        if (MDNode *MD = GetUnrollMetadata(SubLoop->getLoopID(), "llvm.loop.ss.dedicated")) {
-          AddDfg<DedicatedDfg>(this, MD, SubLoop);
-        }
-        if (MDNode *MM = GetUnrollMetadata(SubLoop->getLoopID(), "llvm.loop.ss.datamove")) {
-          AddDfg<DataMoveDfg>(this, MM, SubLoop);
-        }
-      }
-    }
-
-    for (auto BBN : breadth_first(DT->getNode(Config->getParent()))) {
-      auto BB = BBN->getBlock();
-
-      auto range = make_range(BB != Start->getParent() ? BB->begin() : Start->getIterator(),
-                              BB != End->getParent() ? BB->end() : End->getIterator());
-      for (auto &I : range) {
-        auto TemporalStart = dyn_cast<IntrinsicInst>(&I);
-        if (!TemporalStart || TemporalStart->getIntrinsicID() != Intrinsic::ss_temporal_region_start)
-          continue;
-        // TODO: Maybe later we need control flow in the temporal regions
-        bool Found = false;
-        for (Instruction *Cur =TemporalStart; Cur != &Cur->getParent()->back();
-          Cur = Cur->getNextNode()) {
-          auto TemporalEnd = dyn_cast<IntrinsicInst>(Cur);
-          if (!TemporalEnd || TemporalEnd->getIntrinsicID() != Intrinsic::ss_temporal_region_end)
-            continue;
-          assert(TemporalEnd->getOperand(0) == TemporalStart);
-          addDfg(new TemporalDfg(this, TemporalStart, TemporalEnd));
-          Found = true;
-        }
-        assert(Found);
-      }
-
-      if (BB == Fence->getParent()) {
-        break;
-      }
-    }
-  }
-
-}
+DFGFile::DFGFile(StringRef Name, IntrinsicInst *Start, IntrinsicInst *End, StreamSpecialize *Query_)
+  : FileName(Name), Func(*Start->getParent()->getParent()), Config(Start), Fence(End), Query(Query_) {}
 
 int getPortImpl() {
   static const int Ports[] = {23, 24, 25, 26, 27, 28, 29, 30, 31};
@@ -1983,7 +1920,7 @@ bool IntrinDfg::InThisScope(Instruction *Inst) {
   return Inst == Intrin;
 }
 
-void DfgFile::InspectSPADs() {
+void DFGFile::InspectSPADs() {
 
   AddrsOnSpad.clear();
 

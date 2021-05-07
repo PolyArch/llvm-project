@@ -21,7 +21,7 @@
 
 using namespace llvm;
 
-class DfgFile;
+class DFGFile;
 class DedicatedDfg;
 class TemporalDfg;
 class DfgBase;
@@ -61,7 +61,7 @@ public:
   /// DFG #ID in the .dfg file.
   int ID{-1};
   /// The DfgFile contains this Dfg
-  DfgFile *Parent;
+  DFGFile *Parent;
   /// The instructions to be emitted as DFG
   SmallVector<DfgEntry*, 0> Entries;
   /// Find a value among the compute bodies
@@ -73,10 +73,10 @@ public:
 
   std::vector<Instruction*> InjectedCode;
 
-  DfgBase(DfgFile *);
+  DfgBase(DFGFile *);
 
 public:
-  friend class DfgFile;
+  friend class DFGFile;
   friend struct DfgEntry;
   friend struct StreamOutPort;
   friend struct ComputeBody;
@@ -178,7 +178,7 @@ public:
 };
 
 /// The class holds the DFG information
-class DfgFile {
+class DFGFile {
 
   std::string FileName;
   Function &Func;
@@ -211,8 +211,8 @@ public:
   int TempCnt{0};
 
   /// The constructor
-  DfgFile(StringRef Name, Function &F, IntrinsicInst *Start, IntrinsicInst *End,
-          StreamSpecialize *SS);
+  DFGFile(StringRef Name, IntrinsicInst *Start, IntrinsicInst *End, StreamSpecialize *Query);
+
   /// Add the given DFG to this file
   void addDfg(DfgBase *DFG);
   /// Initialize all the DFGs
@@ -243,12 +243,12 @@ class TemporalDfg : public DfgBase {
   Instruction *IP{nullptr};
 
 public:
-  friend class DfgFile;
+  friend class DFGFile;
   friend struct DfgEntry;
   friend struct StreamOutPort;
   friend struct ComputeBody;
 
-  TemporalDfg(DfgFile *Parent, IntrinsicInst *Begin, IntrinsicInst *End);
+  TemporalDfg(DFGFile *Parent, IntrinsicInst *Begin, IntrinsicInst *End);
 
   /// Initialize the dfg's instructions
   void InitEntries() override;
@@ -300,7 +300,7 @@ class DedicatedDfg : public DfgBase {
   bool ConsumedByAccumulator(MemPort *MP);
 
 public:
-  friend class DfgFile;
+  friend class DFGFile;
   friend class DfgBase;
   friend struct DfgEntry;
   friend struct MemPort;
@@ -326,7 +326,7 @@ public:
                                    Instruction *InsertBefore);
 
 
-  DedicatedDfg(DfgFile *, Loop *, int);
+  DedicatedDfg(DFGFile *, Loop *, int);
 
   /// Initialize the dfg's instructions
   void InitEntries() override;
@@ -357,7 +357,7 @@ public:
 class DataMoveDfg : public DedicatedDfg {
  public:
 
-  DataMoveDfg(DfgFile *, Loop *, int);
+  DataMoveDfg(DFGFile *, Loop *, int);
 
   /// Inputs of this DFG
   void dump(std::ostringstream &os) override;
@@ -374,7 +374,7 @@ class IntrinDfg : public DfgBase {
 
  public:
   IntrinsicInst *Intrin;
-  IntrinDfg(DfgFile &DF, IntrinsicInst *Intrin_) : DfgBase(&DF), Intrin(Intrin_) {}
+  IntrinDfg(DFGFile &DF, IntrinsicInst *Intrin_) : DfgBase(&DF), Intrin(Intrin_) {}
 
   Instruction *DefaultIP() override {
     return Intrin;
