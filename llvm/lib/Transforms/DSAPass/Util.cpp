@@ -152,3 +152,14 @@ bool isOne(Value *Val) {
   return CI->getSExtValue() == 1;
 }
 
+namespace dsa {
+namespace utils {
+
+ModuleFlags &ModuleContext() {
+  static ModuleFlags Instance;
+  return Instance;
+}
+
+}
+}
+

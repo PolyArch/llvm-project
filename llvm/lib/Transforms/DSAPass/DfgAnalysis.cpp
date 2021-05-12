@@ -67,10 +67,8 @@ struct DFGEntryAnalyzer : DFGVisitor {
     }
 
     LLVM_DEBUG(
-      errs() << "equiv of "; Inst->dump();
-      for (auto I : Equiv) {
-        I->dump();
-      }
+      INFO << "equiv of " << *Inst;
+      for (auto I : Equiv) { INFO << *I; }
     );
   }
 
@@ -95,7 +93,7 @@ struct DFGEntryAnalyzer : DFGVisitor {
         LoadInst *IdxLoad = nullptr;
         for (auto Elem : BFSBack.first) {
           if (auto ThisLoad = dyn_cast<LoadInst>(Elem)) {
-            assert(!IdxLoad && "For now only one level indirect supported!");
+            CHECK(!IdxLoad) << "For now only one level indirect supported!";
             IdxLoad = ThisLoad;
           }
         }
@@ -220,6 +218,7 @@ struct DFGEntryAnalyzer : DFGVisitor {
         return nullptr;
       };
 
+      // TODO(@were): Can I hoist BFSOperands out here?
       for (size_t i = 1; i < GEP->getNumOperands(); ++i) {
         if (auto Res = fLoad(GEP->getOperand(i)))
           return Res;
@@ -236,6 +235,12 @@ struct DFGEntryAnalyzer : DFGVisitor {
     return new MemPort(&DB, Load);
   }
 
+
+  /*!
+   * \brief Starting with the given instructions, BFS out to find all instrucitons slices.
+   * \param Q The given starting instructions.
+   * \param Visited Push the found instruction.
+   */
   void GatherEntryInsts(std::queue<Instruction*> &Q, std::vector<Instruction*> &Visited) {
     auto &DB = *DBPtr;
     while (!Q.empty()) {
@@ -264,8 +269,12 @@ struct DFGEntryAnalyzer : DFGVisitor {
     }
   }
 
-
-  void AnalyzeEntryOp(Instruction *Inst) {
+  /*!
+   * \brief Inspect the operands of an instruction, and wrap them by DFG entry.
+   * \param Inst The instruction to be inspected.
+   */
+  void InspectOperands(Instruction *Inst) {
+    // TODO(@were): Make this a InstVisitor
     auto &DB = *DBPtr;
     LLVM_DEBUG(dbgs() << "Analyze Entry: "; Inst->dump());
 
@@ -304,10 +313,7 @@ struct DFGEntryAnalyzer : DFGVisitor {
 
         // FIXME: I am not sure if this will suffice. I relax the constraint
         // of detecting a accumulation by checking the BFS successors.
-        if (!isAcc) {
-          llvm::errs() << "PhiNode: "; Phi->dump();
-          assert(false && "Accumulator check goes wrong.");
-        }
+        CHECK(isAcc) << "Phi should be an accumulator! " << *Phi;
 
       } else if (auto Load = dyn_cast<LoadInst>(Operand)) {
         DB.Entries.push_back(DifferentiateMemoryStream(Load));
@@ -364,58 +370,73 @@ struct DFGEntryAnalyzer : DFGVisitor {
     CHECK(Entry);
   }
 
+  /*!
+   * \brief Inspect the ends up of an instruction, and wrap them by DFG entry.
+   * \param Inst The instruction to be inspected.
+   */
   void InspectConsumers(Instruction *Inst) {
     auto &DB = *DBPtr;
-    auto DD = dyn_cast<DedicatedDfg>(&DB);
     auto &Entries = DB.Entries;
+    std::set<Instruction*> Equiv;
+    FindEquivPHIs(Inst, Equiv);
+    for (auto Elem : Equiv) {
+      for (auto User : Elem->users()) {
+        if (auto Store = dyn_cast<StoreInst>(User)) {
+          LoadInst *Load = nullptr;
 
-    for (auto User : Inst->users()) {
-      if (auto Store = dyn_cast<StoreInst>(User)) {
-        LoadInst *Load = nullptr;
-
-        if (auto GEP = dyn_cast<GetElementPtrInst>(Store->getPointerOperand())) {
-          for (size_t i = 0; i < GEP->getNumOperands(); ++i) {
-            if ((bool) (Load = dyn_cast<LoadInst>(GEP->getOperand(i)))) {
-              break;
-            }
-          }
-        }
-
-        if (Load && DD && DB.Contains(Load)) {
-
-          if (auto BO = dyn_cast<BinaryOperator>(Store->getValueOperand())) {
-            bool isUpdate = false;
-            Value *AtomicOperand = nullptr;
-            if (BO->getOpcode() == Instruction::BinaryOps::Add) {
-              for (size_t i = 0; i < BO->getNumOperands(); ++i) {
-                auto Operand = dyn_cast<LoadInst>(BO->getOperand(i));
-                if (Operand && Operand->getPointerOperand() == Store->getPointerOperand()) {
-                  isUpdate = true;
-                } else {
-                  AtomicOperand = BO->getOperand(i);
-                }
+          if (auto GEP = dyn_cast<GetElementPtrInst>(Store->getPointerOperand())) {
+            for (size_t i = 0; i < GEP->getNumOperands(); ++i) {
+              if ((bool) (Load = dyn_cast<LoadInst>(GEP->getOperand(i)))) {
+                break;
               }
             }
-            Entries.push_back(new AtomicPortMem(&DB, Load, Store, isUpdate ? 0 : 3,
-                                                Inst, AtomicOperand));
-          } else {
-            Entries.push_back(new AtomicPortMem(&DB, Load, Store, 3, Inst, nullptr));
           }
-          LLVM_DEBUG(dbgs() << "AtomicMem: "; Inst->dump());
 
+          if (Load && DB.Contains(Load)) {
+            if (auto BO = dyn_cast<BinaryOperator>(Store->getValueOperand())) {
+              bool isUpdate = false;
+              Value *AtomicOperand = nullptr;
+              if (BO->getOpcode() == Instruction::BinaryOps::Add) {
+                for (size_t i = 0; i < BO->getNumOperands(); ++i) {
+                  auto Operand = dyn_cast<LoadInst>(BO->getOperand(i));
+                  if (Operand && Operand->getPointerOperand() == Store->getPointerOperand()) {
+                    isUpdate = true;
+                  } else {
+                    AtomicOperand = BO->getOperand(i);
+                  }
+                }
+              }
+              Entries.push_back(new AtomicPortMem(&DB, Load, Store, isUpdate ? 0 : 3,
+                                                  Inst, AtomicOperand));
+            } else {
+              Entries.push_back(new AtomicPortMem(&DB, Load, Store, 3, Inst, nullptr));
+            }
+            LLVM_DEBUG(INFO << "AtomicMem: " << *Inst);
+
+          } else {
+            auto Out = new PortMem(&DB, Store);
+            Entries.push_back(Out);
+            LLVM_DEBUG(INFO << "PortMem: " << *Inst);
+          }
+        } else if (CanBeAEntry(User)) {
+          // Understand this, why this cannot be an assertion?
+          // Support downstream data consumption
+          auto Consume = dyn_cast<Instruction>(User);
+          if (DB.BelongOtherDFG(Consume)) {
+            auto Out = new StreamOutPort(&DB, Inst);
+            Entries.push_back(Out);
+            LLVM_DEBUG(INFO << "Stream " << *Inst << " to " << *Consume);
+          }
         } else {
-          auto Out = new PortMem(&DB, Store);
-          Entries.push_back(Out);
-          LLVM_DEBUG(dbgs() << "PortMem: "; Inst->dump());
-        }
-      // Support downstream data consumption
-      } else if (CanBeAEntry(User)) {
-        auto Consume = dyn_cast<Instruction>(User);
-        LLVM_DEBUG(dbgs() << "Comsumed by: "; Consume->dump());
-        if (DB.BelongOtherDFG(Consume)) {
-          auto Out = new StreamOutPort(&DB, Inst);
-          Entries.push_back(Out);
-          LLVM_DEBUG(dbgs() << "DownStream: "; Inst->dump(); Consume->dump());
+          if (auto UserInst = dyn_cast<Instruction>(User)) {
+            if (isa<PHINode>(UserInst))
+              continue;
+            if (!DB.BelongOtherDFG(UserInst) && !DB.InThisDFG(UserInst)) {
+              Entries.push_back(new OutputPort(&DB, Inst));
+              LLVM_DEBUG(INFO << "Write to register: " << *Inst;
+                         INFO << "User: " << UserInst);
+            }
+          }
         }
       }
     }
@@ -482,12 +503,8 @@ struct DFGEntryAnalyzer : DFGVisitor {
 
     for (auto Inst : Visited) {
       if (!isa<LoadInst>(Inst)) {
-        AnalyzeEntryOp(Inst);
-        std::set<Instruction*> Equiv;
-        FindEquivPHIs(Inst, Equiv);
-        for (auto EquivInst : Equiv) {
-          InspectConsumers(EquivInst);
-        }
+        InspectOperands(Inst);
+        InspectConsumers(Inst);
       }
     }
 
@@ -543,12 +560,9 @@ struct DFGEntryAnalyzer : DFGVisitor {
 
     for (auto Inst : Visited) {
       if (!isa<LoadInst>(Inst)) {
-        AnalyzeEntryOp(Inst);
+        InspectOperands(Inst);
         std::set<Instruction*> Equiv;
-        FindEquivPHIs(Inst, Equiv);
-        for (auto EquivInst : Equiv) {
-          InspectConsumers(EquivInst);
-        }
+        InspectConsumers(Inst);
       }
     }
 
@@ -556,7 +570,9 @@ struct DFGEntryAnalyzer : DFGVisitor {
   }
 
   void CleanupEntryDependences() {
+    return;
     auto &DB = *DBPtr;
+    // TODO(@were): Move this program slicing.
     {
       std::set<DfgEntry*> ToRemove;
       for (auto Entry : DB.EntryFilter<IndMemPort>()) {
@@ -588,33 +604,26 @@ struct DFGEntryAnalyzer : DFGVisitor {
       std::vector<DfgEntry*> ToAdd;
       for (auto Entry : DB.Entries) {
         if (isa<ComputeBody>(Entry)) {
-          auto Val = Entry->UnderlyingValue();
-          std::set<Value*> ToInspect;
-          if (auto Inst = dyn_cast<Instruction>(Val)) {
-            std::set<Instruction*> Equivs;
-            FindEquivPHIs(Inst, Equivs);
-            for (auto Iter : Equivs)
-              ToInspect.insert(Iter);
-          } else {
-            ToInspect.insert(Val);
-          }
+          auto Inst = Entry->UnderlyingInst();
+          CHECK(Inst);
+          std::set<Instruction*> Equivs;
+          FindEquivPHIs(Inst, Equivs);
           bool Written = false;
-          for (auto Iter : ToInspect) {
+          for (auto Iter : Equivs) {
             for (auto User : Iter->users()) {
               if (auto UserInst = dyn_cast<Instruction>(User)) {
                 if (isa<PHINode>(UserInst))
                   continue;
                 if (!DB.BelongOtherDFG(UserInst) && !DB.InThisDFG(UserInst)) {
-                  ToAdd.push_back(new OutputPort(&DB, Val));
-                  LLVM_DEBUG(dbgs() << "Write to register: ";
-                             Iter->dump(); Val->dump(); UserInst->dump());
+                  ToAdd.push_back(new OutputPort(&DB, Inst));
+                  LLVM_DEBUG(INFO << "Write to register: " << *Inst;
+                             INFO << "User: " << UserInst);
                   Written = true;
                   break;
                 }
               }
             }
-            if (Written)
-              break;
+            CHECK(Written) << *Inst << " has no consumer!";
           }
         }
       }

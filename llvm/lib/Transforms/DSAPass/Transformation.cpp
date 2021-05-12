@@ -748,6 +748,7 @@ void DfgBase::dump(std::ostringstream &os) {
   for (auto Elem : EntryFilter<OutputPort>())
     Elem->EmitOutPort(os);
 
+  // TODO(@were): Move this to a DFG.
   for (auto Elem : EntryFilter<IndMemPort>()) {
     os << "\n\n----\n\n";
     os << "Input" << Elem->Index->Load->getType()->getScalarSizeInBits()
@@ -781,6 +782,10 @@ void DFGFile::EmitAndScheduleDfg() {
     return;
   }
 
+  if (dsa::utils::ModuleContext().EXTRACT) {
+    return;
+  }
+
   auto SCHEDULED = getenv("SCHEDULED");
   std::string NameOnly;
 
@@ -811,9 +816,6 @@ void DFGFile::EmitAndScheduleDfg() {
     //sa->setGap(0.1, 1.0);
     //Schedule *sched = sa->invoke(&model, &dfg, false);
     std::string Verbose = isCurrentDebugType(DEBUG_TYPE) ? "-v" : "";
-    if (Query->MF.EXTRACT) {
-      Verbose += " --max-iters 1";
-    }
     auto Cmd = formatv("ss_sched {0} {1} {2} -e 0 > /dev/null", Verbose, SBCONFIG, FileName);
     LLVM_DEBUG(dbgs() << Cmd);
     llvm::errs() << Cmd;
@@ -824,11 +826,6 @@ void DFGFile::EmitAndScheduleDfg() {
 
 
   std::ifstream ifs(SCHEDULED ? std::string(SCHEDULED) : formatv("{0}.h", FileName).str());
-
-  if (!ifs.is_open()) {
-    CHECK(Query->MF.EXTRACT);
-    return;
-  }
 
   std::string Stripped(SCHEDULED ? NameOnly.substr(0, NameOnly.size() - 2) : FileName);
   while (Stripped.back() != '.') Stripped.pop_back();
@@ -867,7 +864,7 @@ void DFGFile::EmitAndScheduleDfg() {
             }
             // FIXME: For now only one destination is supported
             // Later divergence will be supported
-            CHECK(OutPorts.size() == 1) << OutPorts.size();
+            CHECK(OutPorts.size() == 1) << *CB->UnderlyingInst() << " " << OutPorts.size();
             OutPorts[0]->SoftPortNum = Port;
 
             // Fill in the latency of each node.
@@ -951,13 +948,13 @@ void DFGFile::EraseOffloadedInstructions() {
     for (auto Entry: DFG->Entries) {
 
       // Skip instructions cannot be offloaded because of flags
-      if (isa<IndMemPort>(Entry) && !Query->MF.IND) {
+      if (isa<IndMemPort>(Entry) && !dsa::utils::ModuleContext().IND) {
         continue;
       }
-      if (isa<AtomicPortMem>(Entry) && !Query->MF.IND) {
+      if (isa<AtomicPortMem>(Entry) && !dsa::utils::ModuleContext().IND) {
         continue;
       }
-      if ((isa<CtrlMemPort>(Entry) || isa<Predicate>(Entry)) && !Query->MF.PRED) {
+      if ((isa<CtrlMemPort>(Entry) || isa<Predicate>(Entry)) && !dsa::utils::ModuleContext().PRED) {
         continue;
       }
 
@@ -1094,8 +1091,8 @@ void TemporalDfg::dump(std::ostringstream &os) {
 void DedicatedDfg::dump(std::ostringstream &os) {
   if (!os.str().empty())
     os << "\n----\n\n";
-  if (Parent->Query->MF.TRIGGER) {
-    assert(Parent->Query->MF.TEMPORAL && "Environment should not contradict!");
+  if (dsa::utils::ModuleContext().TRIGGER) {
+    CHECK(dsa::utils::ModuleContext().TEMPORAL) << "Trigger cannot be enabled without temporal";
     os << "#pragma group temporal\n";
   }
   DfgBase::dump(os);

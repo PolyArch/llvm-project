@@ -1,7 +1,10 @@
 #pragma once
 
+#include <iostream>
+
 #include "./llvm_common.h"
 
+#include "Transformation.h"
 #include "Util.h"
 
 namespace dsa {
@@ -22,3 +25,8 @@ std::vector<utils::StickyRegister> InjectDSARegisterFile(Function &F);
 
 }
 }
+
+/*!
+ * \brief Dump DFG to output stream.
+ */
+std::ostream &operator<<(std::ostream &os, DfgBase&);

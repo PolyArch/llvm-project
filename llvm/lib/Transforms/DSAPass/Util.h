@@ -66,6 +66,12 @@ struct ModuleFlags {
 };
 
 /*!
+ * \brief Return the features enabled.
+ */
+ModuleFlags &ModuleContext();
+
+
+/*!
  * \brief The data structure bundle for DSA registers.
  */
 struct StickyRegister {

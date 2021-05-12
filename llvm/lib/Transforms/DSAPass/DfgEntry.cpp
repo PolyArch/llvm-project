@@ -418,7 +418,7 @@ bool HasOtherUser(InputPort *IP, Value *Val) {
 
 void InputPort::EmitInPort(std::ostringstream &os) {
 
-  if (!Parent->Parent->Query->MF.PRED) {
+  if (!dsa::utils::ModuleContext().PRED) {
     bool OnlyPredicate{true};
     for (auto User : UnderlyingInst()->users()) {
       auto Entry = Parent->InThisDFG(User);
@@ -715,7 +715,7 @@ struct ControlBit {
 // TODO(@were): Do I need to support vectorized comparison?
 void Predicate::EmitCond(std::ostringstream &os) {
 
-  if (!Parent->Parent->Query->MF.PRED) {
+  if (!dsa::utils::ModuleContext().PRED) {
     return;
   }
 
@@ -819,7 +819,7 @@ void ComputeBody::EmitCB(std::ostringstream &os) {
       }
     }
 
-    if (Parent->Parent->Query->MF.PRED) {
+    if (dsa::utils::ModuleContext().PRED) {
       if (getPredicate())
         CtrlBit.updateAbstain(getAbstainBit(), false);
       if (!CtrlBit.empty()) {
@@ -862,7 +862,7 @@ void Accumulator::EmitCB(std::ostringstream &os) {
   os << NameInDfg() << " = " << getOperationStr(Inst, true, P != nullptr) << "(" << Q.front()
      << ", ";
 
-  if (Parent->Parent->Query->MF.PRED) {
+  if (dsa::utils::ModuleContext().PRED) {
     if (P || !CtrlBit.empty()) {
       CtrlBit.updateAbstain(this->getAbstainBit(), true);
       os << "ctrl=" << P->NameInDfg(-1) << "{" << CtrlBit.finalize() << "}";
@@ -890,7 +890,7 @@ void OutputPort::EmitOutPort(std::ostringstream &os) {
 }
 
 void CtrlSignal::EmitInPort(std::ostringstream &os) {
-  if (!Controlled->getPredicate() || !Parent->Parent->Query->MF.PRED) {
+  if (!Controlled->getPredicate() || !dsa::utils::ModuleContext().PRED) {
     os << "# [Control Signal]" << Controlled->dump() << "\n";
     os << "Input: " << NameInDfg() << "\n";
   }
@@ -935,7 +935,7 @@ void IndMemPort::InjectStreamIntrinsic(IRBuilder<> *IB) {
   auto &Ctx = Parent->getCtx();
   auto VoidTy = Type::getVoidTy(Ctx);
 
-  if (!Parent->Parent->Query->MF.IND) {
+  if (!dsa::utils::ModuleContext().IND) {
     createAssembleCall(VoidTy, "ss_const $0, $1, $2", "r, r, i",
                        {Load, createConstant(Ctx, 1), createConstant(Ctx, SoftPortNum)},
                        Load->getNextNode());
@@ -1002,7 +1002,7 @@ void IndMemPort::InjectStreamIntrinsic(IRBuilder<> *IB) {
 }
 
 bool MemPort::InjectUpdateStream(IRBuilder<> *IB) {
-  if (!Parent->Parent->Query->MF.REC)
+  if (!dsa::utils::ModuleContext().REC)
     return false;
 
   if (!IsInMajor())
@@ -1313,7 +1313,7 @@ void CtrlSignal::InjectStreamIntrinsic(IRBuilder<> *IB) {
   dsa::inject::DSAIntrinsicEmitter DIE(IB, Parent->Parent->Query->DSARegs);
 
   if (CS->Controlled->getPredicate()) {
-    if (Parent->Parent->Query->MF.PRED) {
+    if (dsa::utils::ModuleContext().PRED) {
       CS->IntrinInjected = true;
       LLVM_DEBUG(dbgs() << "Skipped:"; CS->dump());
     } else {
@@ -1350,7 +1350,7 @@ void CtrlMemPort::InjectStreamIntrinsic(IRBuilder<> *IB) {
   auto One = createConstant(Ctx, 1);
   auto Zero = createConstant(Ctx, 0);
 
-  if (!Parent->Parent->Query->MF.PRED) {
+  if (!dsa::utils::ModuleContext().PRED) {
     // PortNum == -1 indicates this port is omitted because of no predication support
     if (CMP->SoftPortNum != -1) {
       createAssembleCall(VoidTy, "ss_const $0, $1, $2", "r,r,i",
@@ -1465,7 +1465,7 @@ Instruction *AtomicPortMem::UnderlyingInst() {
 }
 
 void AtomicPortMem::InjectStreamIntrinsic(IRBuilder<> *IB) {
-  if (!Parent->Parent->Query->MF.IND) {
+  if (!dsa::utils::ModuleContext().IND) {
     if (auto DfgEntry = Parent->InThisDFG(Operand)) {
       assert(false && "TODO: ss_recv operand from port!");
       (void) DfgEntry;

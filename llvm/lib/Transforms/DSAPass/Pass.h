@@ -20,8 +20,6 @@ using namespace llvm;
 
 struct StreamSpecialize : public ModulePass {
 
-  dsa::utils::ModuleFlags MF;
-
   AssumptionCache *ACT;
   LoopInfo *LI;
   ScalarEvolution *SE;

@@ -61,3 +61,28 @@ InjectDSARegisterFile(Function &F) {
 
 }
 }
+
+
+
+std::ostream &operator<<(std::ostream &os, DfgBase &DB) {
+  std::ostringstream oss;
+
+  struct DFGPrinter : dsa::DFGVisitor {
+    void Visit(DedicatedDfg *DD) override {
+      if (!First) {
+        os << "----\n";
+      }
+    }
+    void Visit(TemporalDfg *DD) override {
+      if (!First) {
+        os << "----\n";
+      }
+    }
+
+    bool First{true};
+    std::ostream &os;
+  };
+
+  DB.dump(oss);
+  os << oss.str();
+}

@@ -65,7 +65,7 @@ bool StreamSpecialize::runOnModule(Module &M) {
 
 bool StreamSpecialize::runOnFunction(Function &F) {
 
-  if (!MF.TEMPORAL) {
+  if (!dsa::utils::ModuleContext().TEMPORAL) {
     dsa::xform::EliminateTemporal(F);
   }
 
@@ -74,26 +74,25 @@ bool StreamSpecialize::runOnFunction(Function &F) {
   IRBuilder<> IB(F.getContext());
   IBPtr = &IB;
 
-  {
-    auto ScopePairs = dsa::analysis::GatherConfigScope(F);
-    if (!ScopePairs.empty()) {
-      DSARegs = dsa::xform::InjectDSARegisterFile(F);
+  auto ScopePairs = dsa::analysis::GatherConfigScope(F);
+  if (!ScopePairs.empty()) {
+    DSARegs = dsa::xform::InjectDSARegisterFile(F);
+  }
+  for (int i = 0, n = ScopePairs.size(); i < n; ++i) {
+    std::string Name = F.getName().str() + "_dfg_" + std::to_string(i) + ".dfg";
+    auto Start = ScopePairs[i].first;
+    auto End = ScopePairs[i].second;
+    DFGFile DFG(Name, Start, End, this);
+    dsa::analysis::ExtractDFGFromScope(DFG, Start, End, DT, LI);
+    DFG.InspectSPADs();
+    DFG.EmitAndScheduleDfg();
+    if (dsa::utils::ModuleContext().EXTRACT) {
+      continue;
     }
-    for (int i = 0, n = ScopePairs.size(); i < n; ++i) {
-      std::string Name = F.getName().str() + "_dfg_" + std::to_string(i) + ".dfg";
-      auto Start = ScopePairs[i].first;
-      auto End = ScopePairs[i].second;
-      DFGFile DFG(Name, Start, End, this);
-      dsa::analysis::ExtractDFGFromScope(DFG, Start, End, DT, LI);
-      DFG.InspectSPADs();
-      DFG.EmitAndScheduleDfg();
-      DFG.InjectStreamIntrinsics();
-      if (MF.EXTRACT) {
-        DFG.EmitAndScheduleDfg();
-        continue;
-      }
-      DFG.EraseOffloadedInstructions();
-    }
+    DFG.InjectStreamIntrinsics();
+    DFG.EraseOffloadedInstructions();
+  }
+  if (!dsa::utils::ModuleContext().EXTRACT) {
     for (auto &Pair : ScopePairs) {
       Pair.second->eraseFromParent();
       Pair.first->eraseFromParent();
