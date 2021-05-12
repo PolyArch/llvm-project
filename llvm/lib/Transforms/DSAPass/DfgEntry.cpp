@@ -842,7 +842,7 @@ void Accumulator::EmitCB(std::ostringstream &os) {
       auto Operand = Inst->getOperand(j);
       if (!isa<PHINode>(Operand)) {
         auto Entry = Parent->InThisDFG(Operand);
-        assert(Entry);
+        CHECK(Entry);
         Q.push(Entry->NameInDfg(vec));
       }
     }
@@ -1141,7 +1141,6 @@ void InjectLinearStreamImpl(ScalarEvolution *SE, SCEVExpander &SEE, IRBuilder<> 
                             int Port, int Unroll, int DType,
                             MemoryOperation MO, Padding Padding, MemoryType MT) {
   auto IdxLI = dsa::analysis::AnalyzeIndexExpr(SE, Idx, LoopNest);
-  llvm::errs() << IdxLI->toString() << "\n";
   std::vector<dsa::analysis::LinearInfo*> LoopLI;
   for (int i = 0, N = LoopNest.size(); i < N; ++i) {
     auto CurDim = dsa::analysis::AnalyzeIndexExpr(SE, SE->getBackedgeTakenCount(LoopNest[i]), LoopNest);
@@ -1160,7 +1159,7 @@ void MemPort::InjectStreamIntrinsic(IRBuilder<> *IB) {
   if (IntrinInjected)
     return;
 
-  if (!HasOtherUser(this, UnderlyingInst()) && !isa<DataMoveDfg>(Parent)) {
+  if (!HasOtherUser(this, UnderlyingInst())) {
     IntrinInjected = true;
     return;
   }

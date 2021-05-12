@@ -6,6 +6,8 @@
 
 #include "StreamAnalysis.h"
 
+#define DEBUG_TYPE "stream-analysis"
+
 namespace dsa {
 namespace analysis {
 
@@ -141,13 +143,13 @@ struct StreamAnalysisPass : public FunctionPass {
           auto Index = Load->getPointerOperand();
           CHECK(SE->isSCEVable(Index->getType()));
           auto LI = AnalyzeIndexExpr(SE, SE->getSCEV(Index), Loops);
-          llvm::errs() << LI->toString() << "\n";
+          LLVM_DEBUG(INFO << LI->toString());
         }
       }
     }
     for (auto L : Loops) {
       auto LI = AnalyzeIndexExpr(SE, SE->getBackedgeTakenCount(L), Loops);
-      llvm::errs() << LI->toString() << "\n";
+      LLVM_DEBUG(INFO << LI->toString());
     }
   }
 

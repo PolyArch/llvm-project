@@ -236,52 +236,29 @@ struct DFGEntryAnalyzer : DFGVisitor {
     return new MemPort(&DB, Load);
   }
 
-  void InstsToEntries(iterator_range<BasicBlock::iterator> IRange, std::set<Instruction*> &Visited) {
+  void GatherEntryInsts(std::queue<Instruction*> &Q, std::set<Instruction*> &Visited) {
     auto &DB = *DBPtr;
-    std::queue<Instruction*> Q;
-    for (auto &Inst : IRange) {
-
-      if (auto Load = dyn_cast<LoadInst>(&Inst)) {
-        Q.push(Load);
-        Visited.insert(Load);
-      }
-
-      // FIXME(@were): Can I delete the Temporal DFG clause?
-      // Jian Weng on May 11th, 2021: I think it is safe to remove.
-      // if (isa<TemporalDfg>(&DB) && CanBeAEntry(&Inst)){
-      //   for (size_t i = 0; i < Inst.getNumOperands(); ++i) {
-      //     if (auto InstOperand = dyn_cast<Instruction>(Inst.getOperand(i))) {
-      //       if (!DB.Contains(InstOperand)) {
-      //         // A exteneral stream-in value
-      //         Q.push(&Inst);
-      //         Visited.insert(&Inst);
-      //       }
-      //     }
-      //   }
-      // }
-
-      while (!Q.empty()) {
-        auto Cur = Q.front();
-        Q.pop();
-        LLVM_DEBUG(dbgs() << "Analyze Users of: "; Cur->dump());
-        for (auto Elem : Cur->users()) {
-          auto Inst = dyn_cast<Instruction>(Elem);
-          if (!Inst) {
-            LLVM_DEBUG(dbgs() << "Not a inst: "; Elem->dump());
-            continue;
-          }
-          if (!DB.Contains(Inst)) {
-            LLVM_DEBUG(dbgs() << "Not in blocks: "; Elem->dump());
-            continue;
-          }
-          if (!CanBeAEntry(Inst)) {
-            LLVM_DEBUG(dbgs() << "Not a entry: "; Elem->dump());
-            continue;
-          }
-          if (Visited.find(Inst) == Visited.end()) {
-            Q.push(Inst);
-            Visited.insert(Inst);
-          }
+    while (!Q.empty()) {
+      auto Cur = Q.front();
+      Q.pop();
+      LLVM_DEBUG(INFO << "Analyze Users of: " << *Cur);
+      for (auto Elem : Cur->users()) {
+        auto Inst = dyn_cast<Instruction>(Elem);
+        if (!Inst) {
+          LLVM_DEBUG(INFO << "Not a Inst: " << *Elem);
+          continue;
+        }
+        if (!DB.Contains(Inst)) {
+          LLVM_DEBUG(INFO << "Not in blocks: " << *Elem);
+          continue;
+        }
+        if (!CanBeAEntry(Inst)) {
+          LLVM_DEBUG(INFO << "Not a entry: " << *Elem);
+          continue;
+        }
+        if (Visited.find(Inst) == Visited.end()) {
+          Q.push(Inst);
+          Visited.insert(Inst);
         }
       }
     }
@@ -479,6 +456,7 @@ struct DFGEntryAnalyzer : DFGVisitor {
     DBPtr = DDPtr;
     auto &DD = *DDPtr;
     auto &Entries = DD.Entries;
+    std::queue<Instruction*> Q;
 
     for (auto BB : DD.InnerMost()->getBlocks()) {
 
@@ -493,8 +471,13 @@ struct DFGEntryAnalyzer : DFGVisitor {
         if (BI->isConditional())
           Visited.insert(dyn_cast<Instruction>(BI));
       }
-
-      InstsToEntries(iterator_range<BasicBlock::iterator>(BB->begin(), BB->end()), Visited);
+      for (auto &Inst : *BB) {
+        if (auto Load = dyn_cast<LoadInst>(&Inst)) {
+          Visited.insert(Load);
+          Q.push(Load);
+        }
+      }
+      GatherEntryInsts(Q, Visited);
     }
 
     for (auto Inst : Visited) {
@@ -547,10 +530,17 @@ struct DFGEntryAnalyzer : DFGVisitor {
 
   void Visit(TemporalDfg *TD) override {
     DBPtr = TD;
+    std::queue<Instruction*> Q;
     std::set<Instruction*> Visited;
     CHECK(TD->getBlocks().size() == 1);
 
-    InstsToEntries(make_range(TD->Begin, TD->End), Visited);
+    for (auto I = TD->Begin->getNextNode(); I != TD->End; I = I->getNextNode()) {
+      if (CanBeAEntry(I)) {
+        Q.push(I);
+        Visited.insert(I);
+      }
+    }
+    GatherEntryInsts(Q, Visited);
 
     for (auto Inst : Visited) {
       if (!isa<LoadInst>(Inst)) {

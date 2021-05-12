@@ -125,20 +125,6 @@ public:
 
   /// TODO(@were): Decouple and remove all these.
   // {
-  /// Initialize the dfg's instructions
-  virtual void InitEntries() = 0;
-  /// After gathering all the entries, finalize their #ID
-  void FinalizeEntryID();
-  /// Gather the instructions to be converted to entries
-  void InstsToEntries(iterator_range<BasicBlock::iterator> IRange,
-                      std::set<Instruction*> &Visited);
-  /// Reorder the entries in topological order
-  void ReorderEntries();
-  /// Clean up the dependences among entries
-  /// Specifically, fill the predicate information, and add register write
-  void CleanupEntryDependences();
-  /// Add a binary operation in the DFG as well as its affiliations (Input/Output)
-  void AnalyzeEntryOp(Instruction *Inst);
   /// Check if this block belong to the DFGs
   DfgBase *BelongOtherDFG(Instruction *I);
   /// Check if a value is in this DFG
@@ -270,8 +256,6 @@ public:
 
   TemporalDfg(DFGFile *Parent, IntrinsicInst *Begin, IntrinsicInst *End);
 
-  /// Initialize the dfg's instructions
-  void InitEntries() override;
   /// Return the blocks of the DFG
   SmallVector<BasicBlock*, 0> getBlocks() override;
   /// Dump the DFG to text format
@@ -352,8 +336,6 @@ public:
 
   DedicatedDfg(DFGFile *, Loop *, int);
 
-  /// Initialize the dfg's instructions
-  void InitEntries() override;
   /// Inputs of this DFG
   virtual void dump(std::ostringstream &os) override;
   /// Return the blocks of the DFG
@@ -382,45 +364,6 @@ public:
   }
 };
 
-class DataMoveDfg : public DedicatedDfg {
- public:
-
-  DataMoveDfg(DFGFile *, Loop *, int);
-
-  /// Inputs of this DFG
-  void dump(std::ostringstream &os) override;
-
-  /// Initialize the dfg's instructions
-  void InitEntries() override;
-
-  static bool classof(const DfgBase *DB) {
-    return DB->getKind() == DataMove;
-  }
-};
-
-class IntrinDfg : public DfgBase {
-
- public:
-  IntrinsicInst *Intrin;
-  IntrinDfg(DFGFile &DF, IntrinsicInst *Intrin_) : DfgBase(&DF), Intrin(Intrin_) {}
-
-  Instruction *DefaultIP() override {
-    return Intrin;
-  }
-
-  bool Contains(Instruction *Inst) override {
-    return Inst == Intrin;
-  }
-
-  /// All these are not supposed to be used!
-  SmallVector<BasicBlock*, 0> getBlocks() override { assert(0); }
-  bool Contains(BasicBlock *) override { assert(0); }
-  int getUnroll() override { assert(0); }
-  Value *UnrollConstant() override { assert(0); }
-  void InitEntries() override { assert(0); }
-  /// The scope of the DFG to be offload
-  bool InThisScope(Instruction *I) override;
-};
 
 namespace dsa {
 namespace inject {
@@ -650,8 +593,6 @@ struct LinearInjector : AffinedInjector {
       }
       case 1: {
         auto N = Loops[i]->Invariant();
-        llvm::errs() << Loops[i]->Coef.size() << "\n";
-        llvm::errs() << Loops[i]->PatialInvariant() << "\n";
         CHECK(N) << "No stretch should be in 1d stream! " << Loops[i]->toString();
         auto Stride = LI->Coef[i]->Invariant();
         CHECK(Stride) << "Stride should not be stretched!";
