@@ -236,7 +236,7 @@ struct DFGEntryAnalyzer : DFGVisitor {
     return new MemPort(&DB, Load);
   }
 
-  void GatherEntryInsts(std::queue<Instruction*> &Q, std::set<Instruction*> &Visited) {
+  void GatherEntryInsts(std::queue<Instruction*> &Q, std::vector<Instruction*> &Visited) {
     auto &DB = *DBPtr;
     while (!Q.empty()) {
       auto Cur = Q.front();
@@ -256,13 +256,12 @@ struct DFGEntryAnalyzer : DFGVisitor {
           LLVM_DEBUG(INFO << "Not a entry: " << *Elem);
           continue;
         }
-        if (Visited.find(Inst) == Visited.end()) {
+        if (std::find(Visited.begin(), Visited.end(), Inst) == Visited.end()) {
           Q.push(Inst);
-          Visited.insert(Inst);
+          Visited.push_back(Inst);
         }
       }
     }
-
   }
 
 
@@ -452,7 +451,7 @@ struct DFGEntryAnalyzer : DFGVisitor {
   }
 
   void Visit(DedicatedDfg *DDPtr) {
-    std::set<Instruction*> Visited;
+    std::vector<Instruction*> Visited;
     DBPtr = DDPtr;
     auto &DD = *DDPtr;
     auto &Entries = DD.Entries;
@@ -468,12 +467,13 @@ struct DFGEntryAnalyzer : DFGVisitor {
       // the predicate is always true.
       if (DD.InnerMost()->getBlocksSet().count(DomBB)) {
         auto BI = dyn_cast<BranchInst>(&DomBB->back());
-        if (BI->isConditional())
-          Visited.insert(dyn_cast<Instruction>(BI));
+        if (BI->isConditional()) {
+          Visited.push_back(BI);
+        }
       }
       for (auto &Inst : *BB) {
         if (auto Load = dyn_cast<LoadInst>(&Inst)) {
-          Visited.insert(Load);
+          Visited.push_back(Load);
           Q.push(Load);
         }
       }
@@ -525,19 +525,18 @@ struct DFGEntryAnalyzer : DFGVisitor {
     }
 
     CleanupEntryDependences();
-    ReorderEntries();
   }
 
   void Visit(TemporalDfg *TD) override {
     DBPtr = TD;
     std::queue<Instruction*> Q;
-    std::set<Instruction*> Visited;
+    std::vector<Instruction*> Visited;
     CHECK(TD->getBlocks().size() == 1);
 
     for (auto I = TD->Begin->getNextNode(); I != TD->End; I = I->getNextNode()) {
       if (CanBeAEntry(I)) {
         Q.push(I);
-        Visited.insert(I);
+        Visited.push_back(I);
       }
     }
     GatherEntryInsts(Q, Visited);
@@ -547,13 +546,13 @@ struct DFGEntryAnalyzer : DFGVisitor {
         AnalyzeEntryOp(Inst);
         std::set<Instruction*> Equiv;
         FindEquivPHIs(Inst, Equiv);
-        for (auto EquivInst : Equiv)
+        for (auto EquivInst : Equiv) {
           InspectConsumers(EquivInst);
+        }
       }
     }
 
     CleanupEntryDependences();
-    ReorderEntries();
   }
 
   void CleanupEntryDependences() {
@@ -622,102 +621,6 @@ struct DFGEntryAnalyzer : DFGVisitor {
       DB.Entries.insert(DB.Entries.end(), ToAdd.begin(), ToAdd.end());
     }
 
-  }
-
-  void ReorderEntries() {
-    auto &DB = *DBPtr;
-    auto &Entries = DB.Entries;
-
-    LLVM_DEBUG(
-      dbgs() << "Before reordering: " << DB.Entries.size() << "\n";
-      for (auto &Entry : DB.Entries)
-        dbgs() << Entry->dump() << "\n";
-      dbgs() << "\n";
-    );
-
-    // Reorder instructions in a topological order
-    // Hoist all the input entries to the very first ones
-    for (size_t i = 0; i < Entries.size(); ++i)
-      if (!isa<InputPort>(Entries[i]))
-        for (size_t j = i + 1; j < Entries.size(); ++j)
-          if (isa<InputPort>(Entries[j]))
-            std::swap(Entries[i], Entries[j]);
-
-    // Postpone all the output entries to the very last ones
-    for (int i = Entries.size() - 1; i >= 0; --i)
-      if (!isa<OutputPort>(Entries[i]))
-        for (int j = i - 1; j >= 0; --j)
-          if (isa<OutputPort>(Entries[j]))
-            std::swap(Entries[i], Entries[j]);
-
-    std::set<Value*> Ready;
-    for (size_t i = 0; i < Entries.size(); ++i) {
-
-      if (isa<CtrlSignal>(Entries[i]))
-        continue;
-
-      if (isa<InputPort>(Entries[i])) {
-        Ready.insert(Entries[i]->UnderlyingValue());
-        LLVM_DEBUG(dbgs() << "Already OK: "; Entries[i]->UnderlyingValue()->dump());
-        continue;
-      }
-
-
-      // TODO: Refactor this by replacing the `operand ready' by dominators
-      if (!isa<OutputPort>(Entries[i])) {
-        if (Entries[i]->OperandReady(Ready)) {
-          LLVM_DEBUG(dbgs() << "Already OK: "; Entries[i]->UnderlyingValue()->dump());
-          Ready.insert(Entries[i]->UnderlyingValue());
-        } else {
-          LLVM_DEBUG(dbgs() << "Looking for replacement of: ";
-                     Entries[i]->UnderlyingInst()->dump());
-          bool Found = false;
-          for (size_t j = i + 1; j < Entries.size() && !Found && !isa<OutputPort>(Entries[j]); ++j) {
-            if (Entries[j]->OperandReady(Ready)) {
-              Ready.insert(Entries[j]->UnderlyingValue());
-              std::swap(Entries[i], Entries[j]);
-              Found = true;
-            }
-          }
-          if (!Found) {
-            FinalizeEntryID();
-            errs() << Entries[i]->dump() << "\n";
-            std::ostringstream oss;
-            DB.dump(oss);
-            errs() << oss.str() << "\n";
-            assert(false && "NOT acyclic DFG?");
-          }
-        }
-        if (auto Pred = dyn_cast<Predicate>(Entries[i])) {
-          for (auto Cond : Pred->Cond)
-            Ready.insert(Cond);
-        }
-      } else {
-        break;
-      }
-    }
-
-    LLVM_DEBUG(
-      dbgs() << "After reordering: " << Entries.size() << "\n";
-      for (auto &Entry : Entries)
-        dbgs() << Entry->dump() << "\n";
-      dbgs() << "\n";
-    );
-
-    FinalizeEntryID();
-
-  }
-
-  void FinalizeEntryID() {
-    auto &DB = *DBPtr;
-    auto &Entries = DB.Entries;
-    for (int i = 0, n = Entries.size(); i < n; ++i) {
-      Entries[i]->ID = i;
-    }
-    int j = Entries.size();
-    for (auto Elem : DB.EntryFilter<IndMemPort>()) {
-      Elem->Index->ID = j++;
-    }
   }
 
   DFGEntryAnalyzer(DominatorTree *DT_) : DT(DT_) {}

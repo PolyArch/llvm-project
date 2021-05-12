@@ -56,7 +56,9 @@ const char *KindStr[] = {
   // }
 };
 
-DfgEntry::DfgEntry(DfgBase *Parent_) : Parent(Parent_) {}
+DfgEntry::DfgEntry(DfgBase *Parent_) : Parent(Parent_) {
+  ID = Parent_->Entries.size();
+}
 
 Predicate *DfgEntry::getPredicate(int *x) {
   auto DT = Parent->Parent->Query->DT;
