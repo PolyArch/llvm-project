@@ -60,21 +60,47 @@ enum EntryKind {
 
 struct Predicate;
 
+/*!
+ * \brief The base class of the extracted DFG entry.
+ */
 struct DfgEntry {
+  /*!
+   * \brief The subclass kind of the entry.
+   */
   EntryKind Kind;
+  /*!
+   * \brief The DFG this entry to which it belongs.
+   */
   DfgBase *Parent;
-  std::set<Instruction*> PotentialEpilogue;
 
   DfgEntry(DfgBase *Parent_);
   virtual ~DfgEntry() {}
 
+  /*!
+   * \brief If this entry is in the major block (inner most loop body).
+   */
   virtual bool IsInMajor();
+  /*!
+   * \brief If this entry should be unrolled.
+   */
   virtual bool ShouldUnroll();
+  /*!
+   * \brief Return the underlying value of this entry.
+   */
   virtual Value *UnderlyingValue();
+  /*!
+   * \brief Return the underlying instruction of this entry.
+   */
   virtual Instruction *UnderlyingInst();
+  /*!
+   * \brief Sometimes, it is not only one instruction.
+   */
   virtual std::vector<Instruction*> UnderlyingInsts() {
     return { UnderlyingInst() };
   }
+  /*!
+   * \brief Sometimes, it is not only one value.
+   */
   virtual std::vector<Value*> UnderlyingValues() {
     std::vector<Instruction*> Res_(UnderlyingInsts());
     std::vector<Value*> Res(Res_.size());
@@ -386,5 +412,31 @@ struct AtomicPortMem : OutputPort {
   }
 
 };
+
+namespace dsa {
+
+/*!
+ * \brief The visitor class for the visitor pattern of the DFG entries.
+ */
+struct DFGEntryVisitor {
+  virtual void Visit(DfgEntry *);
+  virtual void Visit(ComputeBody *);
+  virtual void Visit(Predicate *);
+  virtual void Visit(Accumulator *);
+  virtual void Visit(PortBase *);
+  virtual void Visit(InputPort *);
+  virtual void Visit(CtrlMemPort *);
+  virtual void Visit(MemPort *);
+  virtual void Visit(StreamInPort *);
+  virtual void Visit(CtrlSignal *);
+  virtual void Visit(InputConst *);
+  virtual void Visit(OutputPort *);
+  virtual void Visit(PortMem *);
+  virtual void Visit(StreamOutPort *);
+  virtual void Visit(IndMemPort *);
+  virtual void Visit(AtomicPortMem *);
+};
+
+}
 
 #endif // STREAM_SPECIALIZE_PORT_H_

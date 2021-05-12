@@ -47,6 +47,19 @@ struct AnalyzedStream {
   Value *BytesFromMemory(IRBuilder<> *IB);
 };
 
+namespace dsa {
+
+/*!
+ * \brief The visitor for each sub DFG.
+ */
+struct DFGVisitor {
+  virtual void Visit(DfgBase *);
+  virtual void Visit(DedicatedDfg *);
+  virtual void Visit(TemporalDfg *);
+};
+
+}
+
 
 /// The class of the base dfg
 class DfgBase {
@@ -75,7 +88,6 @@ public:
 
   DfgBase(DFGFile *);
 
-public:
   friend class DFGFile;
   friend struct DfgEntry;
   friend struct StreamOutPort;
@@ -104,6 +116,15 @@ public:
   virtual int getUnroll() = 0;
   /// Get the unroll factor of the DFG wrapped in LLVM data structure
   virtual Value *UnrollConstant();
+
+  /*!
+   * \brief Entrance of the visitor pattern.
+   */
+  virtual void Accept(dsa::DFGVisitor *);
+
+
+  /// TODO(@were): Decouple and remove all these.
+  // {
   /// Initialize the dfg's instructions
   virtual void InitEntries() = 0;
   /// After gathering all the entries, finalize their #ID
@@ -156,6 +177,7 @@ public:
   virtual AnalyzedStream AnalyzeDataStream(Value *Index, int ScalarBytes) {
     return AnalyzedStream();
   }
+  // }
 
   /// Get the indirect port number.
   int getNextIND();
@@ -215,8 +237,6 @@ public:
 
   /// Add the given DFG to this file
   void addDfg(DfgBase *DFG);
-  /// Initialize all the DFGs
-  void InitAllDfgs();
   /// Emit the dfg to file so that it can be scheduled
   void EmitAndScheduleDfg();
   /// Analyze the data streams
@@ -238,11 +258,11 @@ public:
 /// The class of the temporal DFG
 class TemporalDfg : public DfgBase {
 
-  IntrinsicInst *Begin, *End;
-
-  Instruction *IP{nullptr};
 
 public:
+  IntrinsicInst *Begin, *End;
+  Instruction *IP{nullptr};
+
   friend class DFGFile;
   friend struct DfgEntry;
   friend struct StreamOutPort;
@@ -267,6 +287,10 @@ public:
   AnalyzedStream AnalyzeDataStream(Value *Index, int ScalarBytes) override;
   /// The scope of the DFG to be offload
   bool InThisScope(Instruction *I) override;
+  /*!
+   * \brief Entrance of the visitor pattern.
+   */
+  virtual void Accept(dsa::DFGVisitor *) override;
 
   static bool classof(const DfgBase *DB) {
     return DB->getKind() == Temporal;
@@ -347,6 +371,10 @@ public:
   Instruction* DefaultIP() override;
   /// The scope of the DFG to be offload
   bool InThisScope(Instruction *I) override;
+  /*!
+   * \brief Entrance of the visitor pattern.
+   */
+  virtual void Accept(dsa::DFGVisitor *) override;
 
   static bool classof(const DfgBase *DB) {
     return DB->getKind() == Dedicated ||

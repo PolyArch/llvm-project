@@ -14,3 +14,5 @@ target_link_libraries(DSAPass
 target_include_directories(DSAPass
   PRIVATE
   $ENV{SS_TOOLS}/include)
+
+target_compile_definitions(DSAPass PUBLIC ENABLE_LLVM)

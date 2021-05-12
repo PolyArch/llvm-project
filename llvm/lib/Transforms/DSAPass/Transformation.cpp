@@ -37,6 +37,11 @@ using namespace llvm;
 #define DEBUG_TYPE "stream-specialize"
 
 namespace dsa {
+
+void DFGVisitor::Visit(DfgBase *Node) {}
+void DFGVisitor::Visit(DedicatedDfg *Node) { Visit(static_cast<DfgBase*>(Node)); }
+void DFGVisitor::Visit(TemporalDfg *Node) { Visit(static_cast<DfgBase*>(Node)); }
+
 namespace inject {
 
 std::stack<IRBuilder<>*> DSAIntrinsicEmitter::REG::IBStack;
@@ -777,11 +782,8 @@ DedicatedDfg::DedicatedDfg(DFGFile *Parent_, Loop *LI, int Unroll)
   Loop *InnerLoop = nullptr;
   std::set<BasicBlock*> Exclude;
 
-  errs() << "Num loops: " << LoopNest.size() << "\n";
   for (auto LI : LoopNest) {
-
     LLVM_DEBUG(dbgs() << "Loop: "; LI->dump());
-    errs() << "Loop: " << *LI << "\n";
     for (auto Child : LI->getSubLoops()) {
       if (Child != InnerLoop) {
         for (auto &Block : Child->getBlocks())
@@ -918,7 +920,6 @@ void DedicatedDfg::InitEntries() {
       size_t j = Entries.size();
       InspectConsumers(Load);
       // FIXME: For now we only support one consumer.
-      llvm::errs() << *Load << "\n";
       CHECK(j + 1 == Entries.size()) << "A load without usage?";
       for (; j < Entries.size(); ++j) {
         auto Entry = Entries[j];
@@ -1194,17 +1195,7 @@ void DFGFile::addDfg(DfgBase *DB) {
   DFGs.push_back(DB);
 }
 
-void DFGFile::InitAllDfgs() {
-  assert(!AllInitialized && "You can no longer modify the dfg after scheduling");
-  for (auto &Elem : DFGs) {
-    LLVM_DEBUG(dbgs() << "Working on DFG[" << Elem->ID << "]\n");
-    Elem->InitEntries();
-  }
-  AllInitialized = true;
-}
-
 void DFGFile::EmitAndScheduleDfg() {
-  assert(AllInitialized && "Only after all initialized this DFG file is ready to schedule!");
 
   std::ostringstream oss;
   for (size_t i = 0; i < DFGs.size(); ++i) {
@@ -2034,3 +2025,7 @@ void DFGFile::InspectSPADs() {
   }
 
 }
+
+void DfgBase::Accept(dsa::DFGVisitor *Visitor) { Visitor->Visit(this); }
+void DedicatedDfg::Accept(dsa::DFGVisitor *Visitor) { Visitor->Visit(this); }
+void TemporalDfg::Accept(dsa::DFGVisitor *Visitor) { Visitor->Visit(this); }

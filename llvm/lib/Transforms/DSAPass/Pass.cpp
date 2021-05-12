@@ -86,7 +86,6 @@ bool StreamSpecialize::runOnFunction(Function &F) {
       DFGFile DFG(Name, Start, End, this);
       dsa::analysis::ExtractDFGFromScope(DFG, Start, End, DT, LI);
       DFG.InspectSPADs();
-      DFG.InitAllDfgs();
       DFG.EmitAndScheduleDfg();
       DFG.InjectStreamIntrinsics();
       if (MF.EXTRACT) {

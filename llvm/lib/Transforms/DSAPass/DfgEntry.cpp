@@ -315,7 +315,8 @@ StreamInPort *StreamOutPort::FindConsumer() {
         return SIP;
     }
   }
-  assert(false && "Stream I/O should be in pairs!");
+  CHECK(false) << "Cannot find consumer for " << *UnderlyingInst();
+  return nullptr;
 }
 
 std::vector<OutputPort*> ComputeBody::GetOutPorts() {
@@ -1555,4 +1556,26 @@ void AtomicPortMem::EmitOutPort(std::ostringstream &os) {
 
 int PortBase::VectorizeFactor() {
   return ShouldUnroll() ? Parent->getUnroll() : 1;
+}
+
+
+namespace dsa {
+
+void DFGEntryVisitor::Visit(DfgEntry *Node) { }
+void DFGEntryVisitor::Visit(ComputeBody *Node) { Visit(static_cast<DfgEntry*>(Node)); }
+void DFGEntryVisitor::Visit(Predicate *Node) { Visit(static_cast<DfgEntry*>(Node)); }
+void DFGEntryVisitor::Visit(Accumulator *Node) { Visit(static_cast<ComputeBody*>(Node)); }
+void DFGEntryVisitor::Visit(PortBase *Node) { Visit(static_cast<DfgEntry*>(Node)); }
+void DFGEntryVisitor::Visit(InputPort *Node) { Visit(static_cast<PortBase*>(Node)); }
+void DFGEntryVisitor::Visit(CtrlMemPort *Node) { Visit(static_cast<InputPort*>(Node)); }
+void DFGEntryVisitor::Visit(MemPort *Node) { Visit(static_cast<InputPort*>(Node)); }
+void DFGEntryVisitor::Visit(StreamInPort *Node) { Visit(static_cast<InputPort*>(Node)); }
+void DFGEntryVisitor::Visit(CtrlSignal *Node) { Visit(static_cast<InputPort*>(Node)); }
+void DFGEntryVisitor::Visit(InputConst *Node) { Visit(static_cast<InputPort*>(Node)); }
+void DFGEntryVisitor::Visit(OutputPort *Node) { Visit(static_cast<PortBase*>(Node)); }
+void DFGEntryVisitor::Visit(PortMem *Node) { Visit(static_cast<OutputPort*>(Node)); }
+void DFGEntryVisitor::Visit(StreamOutPort *Node) { Visit(static_cast<OutputPort*>(Node)); }
+void DFGEntryVisitor::Visit(IndMemPort *Node) { Visit(static_cast<InputPort*>(Node)); }
+void DFGEntryVisitor::Visit(AtomicPortMem *Node) { Visit(static_cast<OutputPort*>(Node)); }
+
 }
