@@ -131,8 +131,6 @@ public:
   DfgEntry *InThisDFG(Value *Val);
   /// The default position to inject the instructions
   virtual Instruction* DefaultIP();
-  /// Differentiate indirect or direct memory streams
-  DfgEntry *DifferentiateMemoryStream(LoadInst *Load);
   /// Find the predicate that can be merged into one.
   Predicate* FindEquivPredicate(Value *LHS, Value *RHS);
 
@@ -170,8 +168,6 @@ public:
   /// Get the next reserved port number for random use.
   /// FIXME: I am not sure if it is good. Do we need a systematic way to manage all the port?
   int getNextReserved();
-  /// Inspect the consumers of the given instruciton.
-  void InspectConsumers(Instruction *Inst);
   /// The scope of the DFG to be offload
   virtual bool InThisScope(Instruction *) = 0;
 

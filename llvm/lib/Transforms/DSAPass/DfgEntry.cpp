@@ -145,7 +145,7 @@ int DfgEntry::getAbstainBit() {
 }
 
 std::string DfgEntry::Name(int Idx) {
-  if (Idx != -1) {
+  if (Idx != -1 && ShouldUnroll()) {
     return formatv("sub{0}_v{1}_{2}", Parent->ID, ID, Idx);
   }
   return formatv("sub{0}_v{1}_", Parent->ID, ID);
