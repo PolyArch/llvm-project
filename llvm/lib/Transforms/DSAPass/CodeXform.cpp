@@ -59,10 +59,27 @@ InjectDSARegisterFile(Function &F) {
   return Res;
 }
 
+bool HasOtherUser(InputPort *IP, Value *Val) {
+  for (auto User : Val->users()) {
+    if (auto Entry = IP->Parent->InThisDFG(User)) {
+      if (auto CB = dyn_cast<ComputeBody>(Entry)) {
+        if (!CB->isAtomic())
+          return true;
+      }
+      if (isa<Predicate>(Entry)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 }
 }
 
-
+std::ostream &operator<<(std::ostream &os, DfgEntry &DE) {
+  return os;
+}
 
 std::ostream &operator<<(std::ostream &os, DfgBase &DB) {
   std::ostringstream oss;
@@ -72,17 +89,95 @@ std::ostream &operator<<(std::ostream &os, DfgBase &DB) {
       if (!First) {
         os << "----\n";
       }
+      DFGVisitor::Visit(DD);
     }
-    void Visit(TemporalDfg *DD) override {
+
+    void Visit(TemporalDfg *TD) override {
       if (!First) {
         os << "----\n";
       }
+      DFGVisitor::Visit(TD);
+    }
+
+    void Visit(DfgBase *DB) {
+      // FIXME(@were): Add block freqency an attribute of DFG.
+      // auto BF = Parent->Query->BFI->getBlockFreq(getBlocks()[0]);
+      // os << "#pragma group frequency " << 1 << "\n";
+      os << "#pragma group unroll " << DB->getUnroll() << "\n";
+
+      for (auto Elem : DB->EntryFilter<InputPort>()) {
+        if (!dsa::utils::ModuleContext().PRED) {
+          bool OnlyPredicate{true};
+          for (auto User : Elem->UnderlyingInst()->users()) {
+            auto Entry = DB->InThisDFG(User);
+            if (Entry && !isa<Predicate>(Entry)) {
+              OnlyPredicate = false;
+              break;
+            }
+          }
+          if (OnlyPredicate) {
+            return;
+          }
+        }
+
+        // FIXME: We need also inspect all the consumers to make sure that
+        //        this indirect memory is not used by other instructions.
+        if (auto IMP = dyn_cast<IndMemPort>(Elem)) {
+          if (IMP->duplicated()) {
+            return;
+          }
+        }
+
+        if (!dsa::xform::HasOtherUser(Elem, Elem->UnderlyingInst())) {
+          return;
+        }
+
+        os << "# From Inst: " << Elem->dump() << "\n";
+        std::ostringstream oss;
+        Elem->Meta.to_pragma(oss);
+        os << oss.str();
+
+        os << "Input" << Elem->UnderlyingInst()->getType()->getScalarSizeInBits()
+                      << ": " << Elem->Name();
+        if (Elem->ShouldUnroll())
+          os << "[" << DB->getUnroll() << "]";
+        os << "\n";
+
+      }
+
+      // for (auto Elem : Entries) {
+      //   if (auto CB = dyn_cast<ComputeBody>(Elem))
+      //     CB->EmitCB(os);
+      //   if (auto P = dyn_cast<Predicate>(Elem))
+      //     P->EmitCond(os);
+      // }
+
+      // /// Emit intermediate result for atomic operation
+      // for (auto Elem : EntryFilter<ComputeBody>())
+      //   Elem->EmitAtomic(os);
+
+      // for (auto Elem : EntryFilter<OutputPort>())
+      //   Elem->EmitOutPort(os);
+
+      // // TODO(@were): Move this to a DFG.
+      // for (auto Elem : EntryFilter<IndMemPort>()) {
+      //   os << "\n\n----\n\n";
+      //   os << "Input" << Elem->Index->Load->getType()->getScalarSizeInBits()
+      //      << ": indirect_in_" << ID << "_" << Elem->ID << "\n";
+      //   os << "indirect_out_" << ID << "_" << Elem->ID << " = "
+      //      << "indirect_in_" << ID << "_" << Elem->ID << "\n";
+      //   os << "Output" << Elem->Index->Load->getType()->getScalarSizeInBits()
+      //      << ": indirect_out_" << ID << "_" << Elem->ID << "\n";
+      // }
     }
 
     bool First{true};
     std::ostream &os;
+
+    DFGPrinter(std::ostream &os_) : os(os_) {}
   };
 
   DB.dump(oss);
   os << oss.str();
+  return os;
 }

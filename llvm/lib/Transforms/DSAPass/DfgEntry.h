@@ -120,7 +120,7 @@ struct DfgEntry {
   virtual int getAbstainBit();
 
   /// Get the name of the entry to be dumped in the DFG textformat
-  std::string NameInDfg(int vec = -1);
+  std::string Name(int Idx = -1);
 
   /// Get the predicate of the entry if exists. O.w. return nullptr.
   virtual Predicate *getPredicate(int *MaskPtr = nullptr);

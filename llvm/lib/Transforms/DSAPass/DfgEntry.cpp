@@ -144,11 +144,10 @@ int DfgEntry::getAbstainBit() {
   return 0;
 }
 
-std::string DfgEntry::NameInDfg(int vec) {
-  if (!ShouldUnroll())
-    return formatv("sub{0}_v{1}", Parent->ID, ID);
-  if (vec != -1)
-    return formatv("sub{0}_v{1}_{2}", Parent->ID, ID, vec);
+std::string DfgEntry::Name(int Idx) {
+  if (Idx != -1) {
+    return formatv("sub{0}_v{1}_{2}", Parent->ID, ID, Idx);
+  }
   return formatv("sub{0}_v{1}_", Parent->ID, ID);
 }
 
@@ -449,7 +448,7 @@ void InputPort::EmitInPort(std::ostringstream &os) {
   Meta.to_pragma(oss);
   os << oss.str();
 
-  os << "Input" << PortWidth() << ": " << NameInDfg();
+  os << "Input" << PortWidth() << ": " << Name();
   if (ShouldUnroll())
     os << "[" << Parent->getUnroll() << "]";
   os << "\n";
@@ -460,7 +459,7 @@ void InputConst::EmitInPort(std::ostringstream &os) {
     return;
   }
   os << "# " << dump() << "\n";
-  os << "Input" << PortWidth() << ": " << NameInDfg() << "\n";
+  os << "Input" << PortWidth() << ": " << Name() << "\n";
 }
 
 int DfgEntry::Index() {
@@ -730,13 +729,13 @@ void Predicate::EmitCond(std::ostringstream &os) {
   }
 
   ControlBit CtrlBit;
-  os << NameInDfg(-1) << " = Compare" << Cond[0]->getOperand(0)->getType()->getScalarSizeInBits()
+  os << Name(-1) << " = Compare" << Cond[0]->getOperand(0)->getType()->getScalarSizeInBits()
      << "(";
   for (size_t i = 0; i < Cond[0]->getNumOperands(); ++i) {
     auto Val = Cond[0]->getOperand(i);
     if (i) os << ", ";
     if (auto EntryOp = Parent->InThisDFG(Val)) {
-      os << EntryOp->NameInDfg(-1);
+      os << EntryOp->Name(-1);
       CtrlBit.addControlledMemoryStream(i, EntryOp);
       if (auto CMP = dyn_cast<CtrlMemPort>(EntryOp))
         CMP->ForPredicate = true;
@@ -749,7 +748,7 @@ void Predicate::EmitCond(std::ostringstream &os) {
     if (CtrlBit.Pred == this)
       os << ", self=";
     else
-      os << ", ctrl=" << CtrlBit.Pred->NameInDfg(-1);
+      os << ", ctrl=" << CtrlBit.Pred->Name(-1);
     os << "{" << CtrlBit.finalize() << "}";
   }
 
@@ -767,7 +766,7 @@ AtomicPortMem *ComputeBody::isAtomic() {
 
 void ComputeBody::EmitAtomic(std::ostringstream &os) {
   if (isImmediateAtomic()) {
-    os << "Output" << UnderlyingInst()->getType()->getScalarSizeInBits() << ": " << NameInDfg();
+    os << "Output" << UnderlyingInst()->getType()->getScalarSizeInBits() << ": " << Name();
     if (ShouldUnroll())
       os << "[" << Parent->getUnroll() << "]";
     os << "\n";
@@ -792,7 +791,7 @@ void ComputeBody::EmitCB(std::ostringstream &os) {
   os << "# " << dump() << "\n";
 
   for (int vec = 0; vec < (ShouldUnroll() ? Parent->getUnroll() : 1); ++vec) {
-    os << NameInDfg(vec) << " = " << getOperationStr(Operation, false, false) << "(";
+    os << Name(vec) << " = " << getOperationStr(Operation, false, false) << "(";
     ControlBit CtrlBit;
 
     if (auto Call = dyn_cast<CallInst>(Operation)) {
@@ -800,7 +799,7 @@ void ComputeBody::EmitCB(std::ostringstream &os) {
         auto Val = Call->getArgOperand(i);
         if (i) os << ", ";
         if (auto EntryOp = Parent->InThisDFG(Val)) {
-          os << EntryOp->NameInDfg(vec);
+          os << EntryOp->Name(vec);
           CtrlBit.addControlledMemoryStream(i, EntryOp);
         } else {
           os << ValueToOperandText(Val);
@@ -811,7 +810,7 @@ void ComputeBody::EmitCB(std::ostringstream &os) {
         auto Val = Operation->getOperand(i);
         if (i) os << ", ";
         if (auto EntryOp = Parent->InThisDFG(Val)) {
-          os << EntryOp->NameInDfg(vec);
+          os << EntryOp->Name(vec);
           CtrlBit.addControlledMemoryStream(i, EntryOp);
         } else {
           os << ValueToOperandText(Val);
@@ -823,7 +822,7 @@ void ComputeBody::EmitCB(std::ostringstream &os) {
       if (getPredicate())
         CtrlBit.updateAbstain(getAbstainBit(), false);
       if (!CtrlBit.empty()) {
-        os << ", ctrl=" << CtrlBit.Pred->NameInDfg(vec) << "{" << CtrlBit.finalize() << "}";
+        os << ", ctrl=" << CtrlBit.Pred->Name(vec) << "{" << CtrlBit.finalize() << "}";
       }
     }
 
@@ -845,7 +844,7 @@ void Accumulator::EmitCB(std::ostringstream &os) {
       if (!isa<PHINode>(Operand)) {
         auto Entry = Parent->InThisDFG(Operand);
         CHECK(Entry);
-        Q.push(Entry->NameInDfg(vec));
+        Q.push(Entry->Name(vec));
       }
     }
   }
@@ -859,18 +858,18 @@ void Accumulator::EmitCB(std::ostringstream &os) {
   }
 
   auto P = getPredicate();
-  os << NameInDfg() << " = " << getOperationStr(Inst, true, P != nullptr) << "(" << Q.front()
+  os << Name() << " = " << getOperationStr(Inst, true, P != nullptr) << "(" << Q.front()
      << ", ";
 
   if (dsa::utils::ModuleContext().PRED) {
     if (P || !CtrlBit.empty()) {
       CtrlBit.updateAbstain(this->getAbstainBit(), true);
-      os << "ctrl=" << P->NameInDfg(-1) << "{" << CtrlBit.finalize() << "}";
+      os << "ctrl=" << P->Name(-1) << "{" << CtrlBit.finalize() << "}";
     } else {
-      os << Ctrl->NameInDfg();
+      os << Ctrl->Name();
     }
   } else {
-    os << "ctrl=" << Ctrl->NameInDfg() << "{2:d}";
+    os << "ctrl=" << Ctrl->Name() << "{2:d}";
   }
 
   os << ")\n";
@@ -883,7 +882,7 @@ void OutputPort::EmitOutPort(std::ostringstream &os) {
   os << oss.str();
   auto Entry = Parent->InThisDFG(Output);
   assert(Entry);
-  os << "Output" << PortWidth() << ": " << Entry->NameInDfg();
+  os << "Output" << PortWidth() << ": " << Entry->Name();
   if (Entry->ShouldUnroll())
     os << "[" << Parent->getUnroll() << "]";
   os << "\n";
@@ -892,7 +891,7 @@ void OutputPort::EmitOutPort(std::ostringstream &os) {
 void CtrlSignal::EmitInPort(std::ostringstream &os) {
   if (!Controlled->getPredicate() || !dsa::utils::ModuleContext().PRED) {
     os << "# [Control Signal]" << Controlled->dump() << "\n";
-    os << "Input: " << NameInDfg() << "\n";
+    os << "Input: " << Name() << "\n";
   }
 }
 
@@ -1117,7 +1116,7 @@ bool MemPort::InjectUpdateStream(IRBuilder<> *IB) {
                << ", make sure your variable recur distance will not overwhlem the FIFO buffer!";
       }
       PM->Meta.set("dest", "localport");
-      PM->Meta.set("dest", MP->NameInDfg());
+      PM->Meta.set("dest", MP->Name());
       {
         std::ostringstream oss;
         oss << Conc * 8 / PortWidth();

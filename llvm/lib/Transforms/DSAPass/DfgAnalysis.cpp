@@ -38,6 +38,11 @@ struct DFGEntryAnalyzer : DFGVisitor {
    */
   DominatorTree *DT;
 
+  /*!
+   * \brief Find all the PHI function that is essentially the same value as the given instruction.
+   * \param Inst The instruction to be analyzed.
+   * \param Equiv The result to be stored.
+   */
   void FindEquivPHIs(Instruction *Inst, std::set<Instruction*> &Equiv) {
     std::queue<Instruction*> Q;
     Q.push(Inst);
@@ -541,7 +546,6 @@ struct DFGEntryAnalyzer : DFGVisitor {
       }
     }
 
-    CleanupEntryDependences();
   }
 
   void Visit(TemporalDfg *TD) override {
@@ -564,70 +568,6 @@ struct DFGEntryAnalyzer : DFGVisitor {
         std::set<Instruction*> Equiv;
         InspectConsumers(Inst);
       }
-    }
-
-    CleanupEntryDependences();
-  }
-
-  void CleanupEntryDependences() {
-    return;
-    auto &DB = *DBPtr;
-    // TODO(@were): Move this program slicing.
-    {
-      std::set<DfgEntry*> ToRemove;
-      for (auto Entry : DB.EntryFilter<IndMemPort>()) {
-        for (auto Elem : BFSOperands(Entry->UnderlyingInst()).first) {
-          if (Elem == Entry->UnderlyingInst())
-            continue;
-          if (auto Entry = DB.InThisDFG(Elem)) {
-            if (!isa<ComputeBody>(Entry))
-              continue;
-            ToRemove.insert(Entry);
-          }
-        }
-      }
-      std::vector<int> Ids;
-      for (auto Elem : ToRemove) {
-        for (size_t i = 0; i < DB.Entries.size(); ++i) {
-          if (Elem == DB.Entries[i])
-            Ids.push_back(i);
-        }
-      }
-      std::sort(Ids.begin(), Ids.end());
-      for (size_t i = 0; i < Ids.size(); ++i) {
-        DB.Entries.erase(DB.Entries.begin() + Ids[i] - i);
-      }
-    }
-
-    /// Figure out entry write to registers
-    {
-      std::vector<DfgEntry*> ToAdd;
-      for (auto Entry : DB.Entries) {
-        if (isa<ComputeBody>(Entry)) {
-          auto Inst = Entry->UnderlyingInst();
-          CHECK(Inst);
-          std::set<Instruction*> Equivs;
-          FindEquivPHIs(Inst, Equivs);
-          bool Written = false;
-          for (auto Iter : Equivs) {
-            for (auto User : Iter->users()) {
-              if (auto UserInst = dyn_cast<Instruction>(User)) {
-                if (isa<PHINode>(UserInst))
-                  continue;
-                if (!DB.BelongOtherDFG(UserInst) && !DB.InThisDFG(UserInst)) {
-                  ToAdd.push_back(new OutputPort(&DB, Inst));
-                  LLVM_DEBUG(INFO << "Write to register: " << *Inst;
-                             INFO << "User: " << UserInst);
-                  Written = true;
-                  break;
-                }
-              }
-            }
-            CHECK(Written) << *Inst << " has no consumer!";
-          }
-        }
-      }
-      DB.Entries.insert(DB.Entries.end(), ToAdd.begin(), ToAdd.end());
     }
 
   }
