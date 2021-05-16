@@ -271,9 +271,6 @@ struct DFGPrinter : dsa::DFGVisitor {
 
 
   void Visit(DedicatedDfg *DD) override {
-    if (!First) {
-      os << "----\n";
-    }
     if (utils::ModuleContext().TRIGGER) {
       CHECK(utils::ModuleContext().TEMPORAL)
         << "Trigger cannot be enabled without temporal";
@@ -283,9 +280,6 @@ struct DFGPrinter : dsa::DFGVisitor {
   }
 
   void Visit(TemporalDfg *TD) override {
-    if (!First) {
-      os << "----\n";
-    }
     os << "#pragma group temporal\n";
     DFGVisitor::Visit(TD);
   }
@@ -311,6 +305,66 @@ struct DFGPrinter : dsa::DFGVisitor {
           }
           os << ": " << *Elem << "\n";
         }
+      }
+
+      void Visit(Accumulator *Acc) {
+
+        Visit(cast<DfgEntry>(Acc));
+        auto Inst = Acc->Operation;
+        std::queue<std::string> Q;
+        auto Reduce = GetOperationStr(Inst, false, false);
+        ControlBit CtrlBit;
+
+        for (int vec = 0; vec < Acc->Parent->getUnroll(); ++vec) {
+          for (size_t j = 0; j < 2; ++j) {
+            auto Operand = Inst->getOperand(j);
+            if (!isa<PHINode>(Operand)) {
+              auto Entry = Acc->Parent->InThisDFG(Operand);
+              CHECK(Entry);
+              Q.push(Entry->Name(vec));
+            }
+          }
+        }
+
+        int &TempCnt = Acc->Parent->Parent->TempCnt;
+        while (Q.size() > 1) {
+          auto A = Q.front(); Q.pop(); assert(!Q.empty());
+          auto B = Q.front(); Q.pop();
+          os << formatv("TMP{0} = {1}({2}, {3})", TempCnt, Reduce, A, B).str() << "\n";
+          Q.push(formatv("TMP{0}", TempCnt++));
+        }
+
+        auto P = Acc->getPredicate();
+        os << Acc->Name() << " = " << GetOperationStr(Inst, true, P != nullptr) << "(" << Q.front()
+           << ", ";
+
+        if (dsa::utils::ModuleContext().PRED) {
+          if (P || !CtrlBit.empty()) {
+            CtrlBit.updateAbstain(Acc->getAbstainBit(), true);
+            os << "ctrl=" << P->Name(-1) << "{" << CtrlBit.finalize() << "}";
+          } else {
+            os << Acc->Ctrl->Name();
+          }
+        } else {
+          os << "ctrl=" << Acc->Ctrl->Name() << "{2:d}";
+        }
+
+        os << ")\n";
+      }
+
+      void Visit(CtrlSignal *CS) {
+        if (!CS->Controlled->getPredicate() || !dsa::utils::ModuleContext().PRED) {
+          Visit(cast<DfgEntry>(CS));
+          os << "Input: " << CS->Name() << "\n";
+        }
+      }
+
+      void Visit(InputConst *IC) {
+        if (!HasOtherUser(IC, IC->Val)) {
+          return;
+        }
+        Visit(cast<DfgEntry>(IC));
+        os << "Input" << IC->Val->getType()->getScalarSizeInBits() << ": " << IC->Name() << "\n";
       }
 
       void Visit(InputPort *IP) override {
@@ -482,7 +536,6 @@ struct DFGPrinter : dsa::DFGVisitor {
     }
   }
 
-  bool First{true};
   raw_ostream &os;
 
   DFGPrinter(raw_ostream &os_) : os(os_) {}
@@ -497,7 +550,12 @@ void EmitDFG(raw_ostream *os, DFGFile *DFG) {
     DeleteOS = true;
   }
   DFGPrinter DP(*os);
-  for (auto Elem : DFG->DFGFilter<DfgBase>())  {
+  auto Graphs = DFG->DFGFilter<DfgBase>();
+  for (int i = 0; i < (int) Graphs.size(); ++i) {
+    auto Elem = Graphs[i];
+    if (i) {
+      *os << "----\n";
+    }
     Elem->Accept(&DP);
   }
   if (DeleteOS) {

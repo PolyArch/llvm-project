@@ -415,53 +415,6 @@ bool HasOtherUser(InputPort *IP, Value *Val) {
   return false;
 }
 
-void InputPort::EmitInPort(std::ostringstream &os) {
-
-  if (!dsa::utils::ModuleContext().PRED) {
-    bool OnlyPredicate{true};
-    for (auto User : UnderlyingInst()->users()) {
-      auto Entry = Parent->InThisDFG(User);
-      if (Entry && !isa<Predicate>(Entry)) {
-        OnlyPredicate = false;
-        break;
-      }
-    }
-    if (OnlyPredicate) {
-      return;
-    }
-  }
-
-  // FIXME: We need also inspect all the consumers to make sure that
-  //        this indirect memory is not used by other instructions.
-  if (auto IMP = dyn_cast<IndMemPort>(this)) {
-    if (IMP->duplicated()) {
-      return;
-    }
-  }
-
-  if (!HasOtherUser(this, UnderlyingInst())) {
-    return;
-  }
-
-  os << "# From Inst: " << dump() << "\n";
-  std::ostringstream oss;
-  Meta.to_pragma(oss);
-  os << oss.str();
-
-  os << "Input" << PortWidth() << ": " << Name();
-  if (ShouldUnroll())
-    os << "[" << Parent->getUnroll() << "]";
-  os << "\n";
-}
-
-void InputConst::EmitInPort(std::ostringstream &os) {
-  if (!HasOtherUser(this, Val)) {
-    return;
-  }
-  os << "# " << dump() << "\n";
-  os << "Input" << PortWidth() << ": " << Name() << "\n";
-}
-
 int DfgEntry::Index() {
   assert(ID != -1);
   return ID;
@@ -607,6 +560,7 @@ std::string ValueToOperandText(Value *Val) {
   }
 
   CHECK(false) << "Cannot dump " << *Val;
+  return "";
 }
 
 bool Predicate::addCond(Instruction *Inst) {
@@ -779,119 +733,6 @@ AtomicPortMem *ComputeBody::isImmediateAtomic() {
     }
   }
   return nullptr;
-}
-
-void ComputeBody::EmitCB(std::ostringstream &os) {
-
-  // If this ComputeBody is handled by a atomic operation skip it!
-  if (isAtomic())
-    return;
-
-  os << "# " << dump() << "\n";
-
-  for (int vec = 0; vec < (ShouldUnroll() ? Parent->getUnroll() : 1); ++vec) {
-    os << Name(vec) << " = " << getOperationStr(Operation, false, false) << "(";
-    ControlBit CtrlBit;
-
-    if (auto Call = dyn_cast<CallInst>(Operation)) {
-      for (size_t i = 0; i < Call->getNumArgOperands(); ++i) {
-        auto Val = Call->getArgOperand(i);
-        if (i) os << ", ";
-        if (auto EntryOp = Parent->InThisDFG(Val)) {
-          os << EntryOp->Name(vec);
-          CtrlBit.addControlledMemoryStream(i, EntryOp);
-        } else {
-          os << ValueToOperandText(Val);
-        }
-      }
-    } else {
-      for (int i = 0; i < (int) Operation->getNumOperands(); ++i) {
-        auto Val = Operation->getOperand(i);
-        if (i) os << ", ";
-        if (auto EntryOp = Parent->InThisDFG(Val)) {
-          os << EntryOp->Name(vec);
-          CtrlBit.addControlledMemoryStream(i, EntryOp);
-        } else {
-          os << ValueToOperandText(Val);
-        }
-      }
-    }
-
-    if (dsa::utils::ModuleContext().PRED) {
-      if (getPredicate())
-        CtrlBit.updateAbstain(getAbstainBit(), false);
-      if (!CtrlBit.empty()) {
-        os << ", ctrl=" << CtrlBit.Pred->Name(vec) << "{" << CtrlBit.finalize() << "}";
-      }
-    }
-
-    os << ")\n";
-  }
-}
-
-void Accumulator::EmitCB(std::ostringstream &os) {
-  os << "# " << dump() << "\n";
-
-  auto Inst = Operation;
-  std::queue<std::string> Q;
-  auto Reduce = getOperationStr(Inst, false, false);
-  ControlBit CtrlBit;
-
-  for (int vec = 0; vec < Parent->getUnroll(); ++vec) {
-    for (size_t j = 0; j < 2; ++j) {
-      auto Operand = Inst->getOperand(j);
-      if (!isa<PHINode>(Operand)) {
-        auto Entry = Parent->InThisDFG(Operand);
-        CHECK(Entry);
-        Q.push(Entry->Name(vec));
-      }
-    }
-  }
-
-  int &TempCnt = Parent->Parent->TempCnt;
-  while (Q.size() > 1) {
-    auto A = Q.front(); Q.pop(); assert(!Q.empty());
-    auto B = Q.front(); Q.pop();
-    os << formatv("TMP{0} = {1}({2}, {3})", TempCnt, Reduce, A, B).str() << "\n";
-    Q.push(formatv("TMP{0}", TempCnt++));
-  }
-
-  auto P = getPredicate();
-  os << Name() << " = " << getOperationStr(Inst, true, P != nullptr) << "(" << Q.front()
-     << ", ";
-
-  if (dsa::utils::ModuleContext().PRED) {
-    if (P || !CtrlBit.empty()) {
-      CtrlBit.updateAbstain(this->getAbstainBit(), true);
-      os << "ctrl=" << P->Name(-1) << "{" << CtrlBit.finalize() << "}";
-    } else {
-      os << Ctrl->Name();
-    }
-  } else {
-    os << "ctrl=" << Ctrl->Name() << "{2:d}";
-  }
-
-  os << ")\n";
-}
-
-void OutputPort::EmitOutPort(std::ostringstream &os) {
-  os << "# From Inst: " << dump() << "\n";
-  std::ostringstream oss;
-  Meta.to_pragma(oss);
-  os << oss.str();
-  auto Entry = Parent->InThisDFG(Output);
-  assert(Entry);
-  os << "Output" << PortWidth() << ": " << Entry->Name();
-  if (Entry->ShouldUnroll())
-    os << "[" << Parent->getUnroll() << "]";
-  os << "\n";
-}
-
-void CtrlSignal::EmitInPort(std::ostringstream &os) {
-  if (!Controlled->getPredicate() || !dsa::utils::ModuleContext().PRED) {
-    os << "# [Control Signal]" << Controlled->dump() << "\n";
-    os << "Input: " << Name() << "\n";
-  }
 }
 
 Predicate::Predicate(DfgBase *Parent_, Instruction *Cond_) :

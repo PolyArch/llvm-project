@@ -102,7 +102,10 @@ struct DfgEntry {
    * \brief Sometimes, it is not only one instruction.
    */
   virtual std::vector<Instruction*> UnderlyingInsts() {
-    return { UnderlyingInst() };
+    if (UnderlyingInst()) {
+      return { UnderlyingInst() };
+    }
+    return {};
   }
   /*!
    * \brief Sometimes, it is not only one value.
@@ -161,7 +164,6 @@ struct ComputeBody : DfgEntry {
   Instruction *UnderlyingInst() override;
   std::vector<OutputPort*> GetOutPorts();
   bool ShouldUnroll() override;
-  virtual void EmitCB(std::ostringstream &os);
 
   /*!
    * \brief The entrance of the visitor pattern.
@@ -208,7 +210,6 @@ struct Accumulator : ComputeBody {
   Accumulator(DfgBase *Parent_, Instruction *Operation_, CtrlSignal *Ctrl_);
   bool ShouldUnroll() override;
   bool OperandReady(std::set<Value*> &Ready) override;
-  void EmitCB(std::ostringstream &os) override;
   Value *NumValuesProduced();
   /*!
    * \brief The entrance of the visitor pattern.
@@ -251,8 +252,6 @@ struct InputPort : PortBase {
    * \brief The entrance of the visitor pattern.
    */
   virtual void Accept(dsa::DFGEntryVisitor *);
-
-  virtual void EmitInPort(std::ostringstream &os);
 
   static bool classof(const DfgEntry *DE) {
     return DE->Kind > kInPortStarts && DE->Kind < kInPortEnds;
@@ -330,7 +329,6 @@ struct CtrlSignal : InputPort {
   Value *FindConsumeRate();
 
   bool ShouldUnroll() override;
-  void EmitInPort(std::ostringstream &os) override;
   void InjectStreamIntrinsic(IRBuilder<> *IB) override;
   /*!
    * \brief The entrance of the visitor pattern.
@@ -354,7 +352,6 @@ struct InputConst : InputPort {
   Instruction *UnderlyingInst() override;
   std::vector<Value*> UnderlyingValues() override;
   std::vector<Instruction*> UnderlyingInsts() override;
-  void EmitInPort(std::ostringstream &os) override;
   /*!
    * \brief The entrance of the visitor pattern.
    */
@@ -378,7 +375,6 @@ struct OutputPort : PortBase {
 
   Instruction *UnderlyingInst() override;
   int PortWidth() override;
-  virtual void EmitOutPort(std::ostringstream &os);
   /*!
    * \brief The entrance of the visitor pattern.
    */
@@ -472,7 +468,7 @@ struct AtomicPortMem : OutputPort {
 
   void InjectStreamIntrinsic(IRBuilder<> *IB) override;
   std::vector<Instruction*> UnderlyingInsts() override;
-  void EmitOutPort(std::ostringstream &os) override;
+  void EmitOutPort(std::ostringstream &os);
   /*!
    * \brief The entrance of the visitor pattern.
    */

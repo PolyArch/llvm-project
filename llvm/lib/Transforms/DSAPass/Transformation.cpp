@@ -518,46 +518,7 @@ DedicatedDfg::DedicatedDfg(DFGFile *Parent_, Loop *LI, int Unroll)
 }
 
 
-void DfgBase::dump(std::ostringstream &os) {
-
-  if (!Entries.empty()) {
-    auto BF = Parent->Query->BFI->getBlockFreq(getBlocks()[0]);
-    os << "#pragma group frequency " << BF.getFrequency() << "\n";
-  }
-
-  if (getUnroll() != 1) {
-    os << "#pragma group unroll " << getUnroll() << "\n";
-  }
-
-  for (auto Elem : EntryFilter<InputPort>())
-    Elem->EmitInPort(os);
-
-  for (auto Elem : Entries) {
-    if (auto CB = dyn_cast<ComputeBody>(Elem))
-      CB->EmitCB(os);
-    if (auto P = dyn_cast<Predicate>(Elem))
-      P->EmitCond(os);
-  }
-
-  /// Emit intermediate result for atomic operation
-  for (auto Elem : EntryFilter<ComputeBody>())
-    Elem->EmitAtomic(os);
-
-  for (auto Elem : EntryFilter<OutputPort>())
-    Elem->EmitOutPort(os);
-
-  // TODO(@were): Move this to a DFG.
-  for (auto Elem : EntryFilter<IndMemPort>()) {
-    os << "\n\n----\n\n";
-    os << "Input" << Elem->Index->Load->getType()->getScalarSizeInBits()
-       << ": indirect_in_" << ID << "_" << Elem->ID << "\n";
-    os << "indirect_out_" << ID << "_" << Elem->ID << " = "
-       << "indirect_in_" << ID << "_" << Elem->ID << "\n";
-    os << "Output" << Elem->Index->Load->getType()->getScalarSizeInBits()
-       << ": indirect_out_" << ID << "_" << Elem->ID << "\n";
-  }
-
-}
+void DfgBase::dump(std::ostringstream &os) {}
 
 void DFGFile::addDfg(DfgBase *DB) {
   assert(!AllInitialized && "You can no longer modify the dfg after scheduling");
