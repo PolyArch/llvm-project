@@ -23,10 +23,11 @@ void EliminateTemporal(Function &F);
  */
 std::vector<utils::StickyRegister> InjectDSARegisterFile(Function &F);
 
-}
-}
-
 /*!
- * \brief Dump DFG to output stream.
+ * \brief Emit DFG to the given destination.
+ * \param os Where the given DFG is emitted. If null, dump to the filename of the given DFGFile. 
  */
-std::ostream &operator<<(std::ostream &os, DfgBase&);
+void EmitDFG(raw_ostream *os, DFGFile *DB);
+
+}
+}

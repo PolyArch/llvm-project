@@ -84,6 +84,8 @@ bool StreamSpecialize::runOnFunction(Function &F) {
     auto End = ScopePairs[i].second;
     DFGFile DFG(Name, Start, End, this);
     dsa::analysis::ExtractDFGFromScope(DFG, Start, End, DT, LI);
+    // dsa::xform::EmitDFG(&llvm::errs(), &DFG);
+    // llvm::errs() << DFG << "\n";
     DFG.InspectSPADs();
     DFG.EmitAndScheduleDfg();
     if (dsa::utils::ModuleContext().EXTRACT) {

@@ -23,6 +23,7 @@
 #include "llvm/Transforms/Utils/Cloning.h"
 #include "llvm/Transforms/Utils/ScalarEvolutionExpander.h"
 
+#include "CodeXform.h"
 #include "StreamAnalysis.h"
 #include "Transformation.h"
 #include "Util.h"
@@ -76,6 +77,10 @@ InjectLinearStream(IRBuilder<> *IB,
 }
 
 }
+}
+
+const std::string &DFGFile::getName() {
+  return FileName;
 }
 
 
@@ -561,19 +566,8 @@ void DFGFile::addDfg(DfgBase *DB) {
 
 void DFGFile::EmitAndScheduleDfg() {
 
-  std::ostringstream oss;
-  for (size_t i = 0; i < DFGs.size(); ++i) {
-    LLVM_DEBUG(dbgs() << "Dump DFG[" << i << "]\n");
-    DFGs[i]->dump(oss);
-  }
+  dsa::xform::EmitDFG(nullptr, this);
 
-  if (!oss.str().empty()) {
-    std::ofstream Fout(FileName);
-    Fout << oss.str();
-    Fout.close();
-  } else {
-    return;
-  }
 
   if (dsa::utils::ModuleContext().EXTRACT) {
     return;

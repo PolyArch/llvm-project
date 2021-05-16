@@ -574,7 +574,7 @@ std::string getOperationStr(Instruction *Inst, bool isAcc, bool predicated) {
     OpStr = "compare";
     BitWidth = Cmp->getOperand(0)->getType()->getScalarSizeInBits();
   } else if (auto Call = dyn_cast<CallInst>(Inst)) {
-    assert(Call);
+    CHECK(Call);
     OpStr = Call->getCalledFunction()->getName().str();
   } else {
     OpStr = Inst->getOpcodeName();
@@ -606,8 +606,7 @@ std::string ValueToOperandText(Value *Val) {
     return formatv("{0}", *RI);
   }
 
-  Val->dump();
-  assert(0 && "The value requested not found!");
+  CHECK(false) << "Cannot dump " << *Val;
 }
 
 bool Predicate::addCond(Instruction *Inst) {
@@ -806,7 +805,7 @@ void ComputeBody::EmitCB(std::ostringstream &os) {
         }
       }
     } else {
-      for (size_t i = 0; i < Operation->getNumOperands(); ++i) {
+      for (int i = 0; i < (int) Operation->getNumOperands(); ++i) {
         auto Val = Operation->getOperand(i);
         if (i) os << ", ";
         if (auto EntryOp = Parent->InThisDFG(Val)) {
@@ -1557,6 +1556,25 @@ void AtomicPortMem::EmitOutPort(std::ostringstream &os) {
 int PortBase::VectorizeFactor() {
   return ShouldUnroll() ? Parent->getUnroll() : 1;
 }
+
+#define VISIT_IMPL(TYPE) void TYPE::Accept(dsa::DFGEntryVisitor *V) { V->Visit(this); }
+VISIT_IMPL(DfgEntry)
+VISIT_IMPL(ComputeBody)
+VISIT_IMPL(Predicate)
+VISIT_IMPL(Accumulator)
+VISIT_IMPL(PortBase)
+VISIT_IMPL(InputPort)
+VISIT_IMPL(CtrlMemPort)
+VISIT_IMPL(MemPort)
+VISIT_IMPL(StreamInPort)
+VISIT_IMPL(CtrlSignal)
+VISIT_IMPL(InputConst)
+VISIT_IMPL(OutputPort)
+VISIT_IMPL(PortMem)
+VISIT_IMPL(StreamOutPort)
+VISIT_IMPL(IndMemPort)
+VISIT_IMPL(AtomicPortMem)
+#undef VISIT_IMPL
 
 
 namespace dsa {

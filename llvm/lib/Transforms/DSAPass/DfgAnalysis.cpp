@@ -480,7 +480,6 @@ struct DFGEntryAnalyzer : DFGVisitor {
     std::vector<Instruction*> Visited;
     DBPtr = DDPtr;
     auto &DD = *DDPtr;
-    auto &Entries = DD.Entries;
     std::queue<Instruction*> Q;
 
     for (auto BB : DD.InnerMost()->getBlocks()) {

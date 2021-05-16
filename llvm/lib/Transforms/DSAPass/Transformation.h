@@ -217,6 +217,11 @@ public:
   /// The constructor
   DFGFile(StringRef Name, IntrinsicInst *Start, IntrinsicInst *End, StreamSpecialize *Query);
 
+  /*!
+   * \brief Get the name of the DFG.
+   */
+  const std::string &getName();
+
   /// Add the given DFG to this file
   void addDfg(DfgBase *DFG);
   /// Emit the dfg to file so that it can be scheduled

@@ -14,6 +14,12 @@ using namespace llvm;
 
 class DfgBase;
 
+namespace dsa {
+
+struct DFGEntryVisitor;
+
+}
+
 enum EntryKind {
   kDfgEntry,
 
@@ -125,6 +131,11 @@ struct DfgEntry {
   /// Get the predicate of the entry if exists. O.w. return nullptr.
   virtual Predicate *getPredicate(int *MaskPtr = nullptr);
 
+  /*!
+   * \brief The entrance of the visitor pattern.
+   */
+  virtual void Accept(dsa::DFGEntryVisitor *);
+
   int ID{-1};
   int Index();
 
@@ -152,6 +163,10 @@ struct ComputeBody : DfgEntry {
   bool ShouldUnroll() override;
   virtual void EmitCB(std::ostringstream &os);
 
+  /*!
+   * \brief The entrance of the visitor pattern.
+   */
+  virtual void Accept(dsa::DFGEntryVisitor *);
   // If this instruction is handled by atomic operation.
   AtomicPortMem *isAtomic();
   // If this instruction is immidiately consumed by an atomic operation.
@@ -177,6 +192,10 @@ struct Predicate : DfgEntry {
   int Contains(Instruction *Inst);
   int ToCompareRes(Instruction *Inst, bool TF);
   std::vector<Instruction*> UnderlyingInsts() override;
+  /*!
+   * \brief The entrance of the visitor pattern.
+   */
+  virtual void Accept(dsa::DFGEntryVisitor *);
 
   static bool classof(const DfgEntry *DE) {
     return DE->Kind == kPredicate;
@@ -191,6 +210,10 @@ struct Accumulator : ComputeBody {
   bool OperandReady(std::set<Value*> &Ready) override;
   void EmitCB(std::ostringstream &os) override;
   Value *NumValuesProduced();
+  /*!
+   * \brief The entrance of the visitor pattern.
+   */
+  virtual void Accept(dsa::DFGEntryVisitor *);
 
   static bool classof(const DfgEntry *DE) {
     return DE->Kind == kAccumulator;
@@ -210,6 +233,10 @@ struct PortBase : DfgEntry {
   bool OperandReady(std::set<Value*> &Ready) override;
   virtual void InjectStreamIntrinsic(IRBuilder<> *IB) {}
   int VectorizeFactor();
+  /*!
+   * \brief The entrance of the visitor pattern.
+   */
+  virtual void Accept(dsa::DFGEntryVisitor *);
 
   static bool classof(const DfgEntry *DE) {
     return DE->Kind > kPortStarts && DE->Kind < kPortEnds;
@@ -220,6 +247,10 @@ struct PortBase : DfgEntry {
 // Input port has a repeat
 struct InputPort : PortBase {
   InputPort(DfgBase *Parent_);
+  /*!
+   * \brief The entrance of the visitor pattern.
+   */
+  virtual void Accept(dsa::DFGEntryVisitor *);
 
   virtual void EmitInPort(std::ostringstream &os);
 
@@ -241,6 +272,10 @@ struct CtrlMemPort : InputPort {
   Predicate *getPredicate(int *MaskPtr = nullptr) override;
   Instruction *UnderlyingInst() override;
   void InjectStreamIntrinsic(IRBuilder<> *) override;
+  /*!
+   * \brief The entrance of the visitor pattern.
+   */
+  virtual void Accept(dsa::DFGEntryVisitor *);
 
   static bool classof(const DfgEntry *DE) {
     return DE->Kind == kCtrlMemPort;
@@ -255,6 +290,10 @@ struct MemPort : InputPort {
   bool ShouldUnroll() override;
   Instruction *UnderlyingInst() override;
   int FillMode();
+  /*!
+   * \brief The entrance of the visitor pattern.
+   */
+  virtual void Accept(dsa::DFGEntryVisitor *);
 
   static bool classof(const DfgEntry *DE) {
     return DE->Kind == kMemPort;
@@ -271,6 +310,10 @@ struct StreamInPort : InputPort {
 
   StreamInPort(DfgBase *Parent, Instruction *Inst);
   Instruction *UnderlyingInst() override;
+  /*!
+   * \brief The entrance of the visitor pattern.
+   */
+  virtual void Accept(dsa::DFGEntryVisitor *);
 
   static bool classof(const DfgEntry *DE) {
     return DE->Kind == kStreamInPort;
@@ -289,6 +332,10 @@ struct CtrlSignal : InputPort {
   bool ShouldUnroll() override;
   void EmitInPort(std::ostringstream &os) override;
   void InjectStreamIntrinsic(IRBuilder<> *IB) override;
+  /*!
+   * \brief The entrance of the visitor pattern.
+   */
+  virtual void Accept(dsa::DFGEntryVisitor *);
 
   static bool classof(const DfgEntry *DE) {
     return DE->Kind == kCtrlSignal;
@@ -308,6 +355,10 @@ struct InputConst : InputPort {
   std::vector<Value*> UnderlyingValues() override;
   std::vector<Instruction*> UnderlyingInsts() override;
   void EmitInPort(std::ostringstream &os) override;
+  /*!
+   * \brief The entrance of the visitor pattern.
+   */
+  virtual void Accept(dsa::DFGEntryVisitor *);
 
   static bool classof(const DfgEntry *DE) {
     return DE->Kind == kInputConst;
@@ -328,6 +379,10 @@ struct OutputPort : PortBase {
   Instruction *UnderlyingInst() override;
   int PortWidth() override;
   virtual void EmitOutPort(std::ostringstream &os);
+  /*!
+   * \brief The entrance of the visitor pattern.
+   */
+  virtual void Accept(dsa::DFGEntryVisitor *);
 
   static bool classof(const DfgEntry *DE) {
     return DE->Kind > kOutPortStarts && DE->Kind < kOutPortEnds;
@@ -345,6 +400,10 @@ struct PortMem : OutputPort {
   bool ShouldUnroll() override;
   Instruction *UnderlyingInst() override;
   void InjectStreamIntrinsic(IRBuilder<> *IB) override;
+  /*!
+   * \brief The entrance of the visitor pattern.
+   */
+  virtual void Accept(dsa::DFGEntryVisitor *);
 
   static bool classof(const DfgEntry *DE) {
     return DE->Kind == kPortMem;
@@ -358,6 +417,10 @@ struct StreamOutPort : OutputPort {
   StreamOutPort(DfgBase *Parent_, Instruction *Inst);
 
   void InjectStreamIntrinsic(IRBuilder<> *IB);
+  /*!
+   * \brief The entrance of the visitor pattern.
+   */
+  virtual void Accept(dsa::DFGEntryVisitor *);
 
   static bool classof(const DfgEntry *DE) {
     return DE->Kind == kStreamOutPort;
@@ -377,6 +440,10 @@ struct IndMemPort : InputPort {
   std::vector<Instruction*> UnderlyingInsts() override;
   bool duplicated();
   bool ShouldUnroll() override;
+  /*!
+   * \brief The entrance of the visitor pattern.
+   */
+  virtual void Accept(dsa::DFGEntryVisitor *);
 
   void InjectStreamIntrinsic(IRBuilder<> *IB) override;
 
@@ -406,6 +473,10 @@ struct AtomicPortMem : OutputPort {
   void InjectStreamIntrinsic(IRBuilder<> *IB) override;
   std::vector<Instruction*> UnderlyingInsts() override;
   void EmitOutPort(std::ostringstream &os) override;
+  /*!
+   * \brief The entrance of the visitor pattern.
+   */
+  virtual void Accept(dsa::DFGEntryVisitor *);
 
   static bool classof(const DfgEntry *DE) {
     return DE->Kind == kAtomicPortMem;
@@ -414,7 +485,6 @@ struct AtomicPortMem : OutputPort {
 };
 
 namespace dsa {
-
 /*!
  * \brief The visitor class for the visitor pattern of the DFG entries.
  */
