@@ -212,8 +212,6 @@ public:
   friend struct InputPort;
   friend struct AtomicPortMem;
 
-  int TempCnt{0};
-
   /// The constructor
   DFGFile(StringRef Name, IntrinsicInst *Start, IntrinsicInst *End, StreamSpecialize *Query);
 

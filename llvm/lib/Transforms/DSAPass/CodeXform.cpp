@@ -326,12 +326,11 @@ struct DFGPrinter : dsa::DFGVisitor {
           }
         }
 
-        int &TempCnt = Acc->Parent->Parent->TempCnt;
         while (Q.size() > 1) {
           auto A = Q.front(); Q.pop(); assert(!Q.empty());
           auto B = Q.front(); Q.pop();
-          os << formatv("TMP{0} = {1}({2}, {3})", TempCnt, Reduce, A, B).str() << "\n";
-          Q.push(formatv("TMP{0}", TempCnt++));
+          os << formatv("TMP{0} = {1}({2}, {3})", Parent->TmpCnt, Reduce, A, B).str() << "\n";
+          Q.push(formatv("TMP{0}", Parent->TmpCnt++));
         }
 
         auto P = Acc->getPredicate();
@@ -509,12 +508,13 @@ struct DFGPrinter : dsa::DFGVisitor {
       }
 
       raw_ostream &os;
+      DFGPrinter *Parent;
 
-      DFGEntryEmitter(raw_ostream &os_) : os(os_) {}
+      DFGEntryEmitter(raw_ostream &os_, DFGPrinter *Parent_) : os(os_), Parent(Parent_) {}
 
     };
 
-    DFGEntryEmitter DEE(os);
+    DFGEntryEmitter DEE(os, this);
     for (auto Elem : DB->Entries) {
       Elem->Accept(&DEE);
     }
@@ -537,6 +537,10 @@ struct DFGPrinter : dsa::DFGVisitor {
   }
 
   raw_ostream &os;
+  /*!
+   * \brief Count the ticker of temp variables for accumulator reduction.
+   */
+  int TmpCnt{0};
 
   DFGPrinter(raw_ostream &os_) : os(os_) {}
 };
