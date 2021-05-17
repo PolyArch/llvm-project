@@ -604,6 +604,7 @@ void DFGFile::EmitAndScheduleDfg() {
         if (auto PB = dyn_cast<PortBase>(Entry)) {
           PB->SoftPortNum = Port;
         } else if (auto CB = dyn_cast<ComputeBody>(Entry)) {
+          CHECK(false) << "This should be deprecated!";
           if (!CB->isImmediateAtomic()) {
             LLVM_DEBUG(llvm::dbgs() << "OutputPorts:\n");
             auto OutPorts = CB->GetOutPorts();
@@ -632,7 +633,7 @@ void DFGFile::EmitAndScheduleDfg() {
             CB->SoftPortNum = Port;
           }
         } else {
-          assert(false && "What's going on?");
+          CHECK(false) << "DSAPass port information gathering unreachable!";
         }
       // #define dfgx_size size
       } else if (Token.find(formatv("{0}_size", Stripped).str()) == 0) {

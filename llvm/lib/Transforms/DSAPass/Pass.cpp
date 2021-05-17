@@ -1,4 +1,3 @@
-#include "llvm_common.h"
 
 #include <cstdlib>
 #include <sstream>
@@ -6,16 +5,7 @@
 #include <queue>
 #include <map>
 
-#include "llvm/ADT/BreadthFirstIterator.h"
-#include "llvm/Analysis/LoopAccessAnalysis.h"
-#include "llvm/Analysis/LoopAnalysisManager.h"
-#include "llvm/Analysis/OptimizationRemarkEmitter.h"
-#include "llvm/IR/LegacyPassManager.h"
-#include "llvm/Support/Format.h"
-#include "llvm/Transforms/IPO.h"
-#include "llvm/Transforms/IPO/PassManagerBuilder.h"
-#include "llvm/Transforms/Utils/LoopUtils.h"
-#include "llvm/Transforms/Utils/UnrollLoop.h"
+#include "./llvm_common.h"
 
 #include "CodeXform.h"
 #include "DfgAnalysis.h"
@@ -75,7 +65,7 @@ bool StreamSpecialize::runOnFunction(Function &F) {
   IBPtr = &IB;
 
   auto ScopePairs = dsa::analysis::GatherConfigScope(F);
-  if (!ScopePairs.empty()) {
+  if (!ScopePairs.empty() && !dsa::utils::ModuleContext().EXTRACT) {
     DSARegs = dsa::xform::InjectDSARegisterFile(F);
   }
   for (int i = 0, n = ScopePairs.size(); i < n; ++i) {
@@ -84,8 +74,21 @@ bool StreamSpecialize::runOnFunction(Function &F) {
     auto End = ScopePairs[i].second;
     DFGFile DFG(Name, Start, End, this);
     dsa::analysis::ExtractDFGFromScope(DFG, Start, End, DT, LI);
-    // dsa::xform::EmitDFG(&llvm::errs(), &DFG);
-    // llvm::errs() << DFG << "\n";
+    dsa::xform::EmitDFG(nullptr, &DFG);
+    // If extraction only, we do not schedule and analyze.
+    if (!dsa::utils::ModuleContext().EXTRACT) {
+      continue;
+    }
+    auto SBCONFIG = getenv("SBCONFIG");
+    CHECK(SBCONFIG);
+    auto Cmd = formatv("ss_sched {0} {1} {2} -e 0 > /dev/null", "-v", SBCONFIG, Name).str();
+    LLVM_DEBUG(INFO << Cmd);
+    CHECK(system(Cmd.c_str()) == 0) << "Not successfully scheduled! Try another DFG!";
+    auto Graphs = DFG.DFGFilter<DfgBase>();
+    std::vector<std::vector<int>> Ports(Graphs.size());
+    for (int i = 0, n = Graphs.size(); i < n; ++i) {
+      Ports[i].resize(Graphs[i]->Entries.size(), -1);
+    }
     DFG.InspectSPADs();
     DFG.EmitAndScheduleDfg();
     if (dsa::utils::ModuleContext().EXTRACT) {
@@ -99,6 +102,8 @@ bool StreamSpecialize::runOnFunction(Function &F) {
       Pair.second->eraseFromParent();
       Pair.first->eraseFromParent();
     }
+  } else {
+    return false;
   }
 
   // HandleMemIntrin(F);

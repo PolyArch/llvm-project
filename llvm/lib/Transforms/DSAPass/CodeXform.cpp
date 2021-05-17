@@ -80,6 +80,7 @@ InjectDSARegisterFile(Function &F) {
   return Res;
 }
 
+// TODO(@were): I did not remember what is this function for.
 bool HasOtherUser(InputPort *IP, Value *Val) {
   for (auto User : Val->users()) {
     if (auto Entry = IP->Parent->InThisDFG(User)) {
@@ -368,7 +369,6 @@ struct DFGPrinter : dsa::DFGVisitor {
 
       void Visit(InputPort *IP) override {
         if (!utils::ModuleContext().PRED) {
-          bool OnlyPredicate{true};
           for (auto User : IP->UnderlyingInst()->users()) {
             auto Entry = IP->Parent->InThisDFG(User);
             if (Entry && !isa<Predicate>(Entry)) {
@@ -500,8 +500,11 @@ struct DFGPrinter : dsa::DFGVisitor {
         OP->Meta.to_pragma(oss);
         os << oss.str();
         auto Entry = OP->Parent->InThisDFG(OP->Output);
-        assert(Entry);
-        os << "Output" << OP->Output->getType()->getScalarSizeInBits() << ": " << Entry->Name();
+        CHECK(Entry);
+        for (int i = 0; i < OP->Parent->getUnroll(); ++i) {
+          os << OP->Name(i) << " = " << Entry->Name(i) << "\n";
+        }
+        os << "Output" << OP->Output->getType()->getScalarSizeInBits() << ": " << OP->Name();
         if (Entry->ShouldUnroll())
           os << "[" << OP->Parent->getUnroll() << "]";
         os << "\n";

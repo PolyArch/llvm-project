@@ -25,5 +25,12 @@ void ExtractDFGFromScope(DFGFile &DF,
                          IntrinsicInst *Start, IntrinsicInst *End,
                          DominatorTree *DT, LoopInfo *LI);
 
+/*!
+ * \brief Extract the port number from the generated schedule.
+ * \param FName The emitted file to be analyzed.
+ * \param Ports Write the result in the allocated vector buffer.
+ */
+void ExtractDFGPorts(std::string FName, std::vector<std::vector<int>> &Ports);
+
 }
 }
