@@ -501,7 +501,7 @@ struct DFGPrinter : dsa::DFGVisitor {
         os << oss.str();
         auto Entry = OP->Parent->InThisDFG(OP->Output);
         CHECK(Entry);
-        for (int i = 0; i < OP->Parent->getUnroll(); ++i) {
+        for (int i = 0; i < (Entry->ShouldUnroll() ? OP->Parent->getUnroll() : 1); ++i) {
           os << OP->Name(i) << " = " << Entry->Name(i) << "\n";
         }
         os << "Output" << OP->Output->getType()->getScalarSizeInBits() << ": " << OP->Name();

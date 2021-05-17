@@ -375,12 +375,12 @@ bool CtrlSignal::ShouldUnroll() {
   return false;
 }
 
-bool PortMem::ShouldUnroll() {
+bool OutputPort::ShouldUnroll() {
   if (!DfgEntry::ShouldUnroll())
     return false;
-  if (auto DD = dyn_cast<DedicatedDfg>(Parent))
-    return !DD->InnerMost()->isLoopInvariant(Store->getPointerOperand());
-  return false;
+  auto OV = Parent->InThisDFG(Output);
+  CHECK(OV);
+  return OV->ShouldUnroll();
 }
 
 bool MemPort::ShouldUnroll() {

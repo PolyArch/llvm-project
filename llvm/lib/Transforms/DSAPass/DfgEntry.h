@@ -379,6 +379,10 @@ struct OutputPort : PortBase {
    * \brief The entrance of the visitor pattern.
    */
   virtual void Accept(dsa::DFGEntryVisitor *);
+  /*!
+   * \brief If this value should be unrolled.
+   */
+  bool ShouldUnroll() override;
 
   static bool classof(const DfgEntry *DE) {
     return DE->Kind > kOutPortStarts && DE->Kind < kOutPortEnds;
@@ -393,7 +397,6 @@ struct PortMem : OutputPort {
   StoreInst *Store;
   PortMem(DfgBase *Parent_, StoreInst *Store_);
 
-  bool ShouldUnroll() override;
   Instruction *UnderlyingInst() override;
   void InjectStreamIntrinsic(IRBuilder<> *IB) override;
   /*!

@@ -75,8 +75,9 @@ bool StreamSpecialize::runOnFunction(Function &F) {
     DFGFile DFG(Name, Start, End, this);
     dsa::analysis::ExtractDFGFromScope(DFG, Start, End, DT, LI);
     dsa::xform::EmitDFG(nullptr, &DFG);
+    dsa::xform::EmitDFG(&llvm::errs(), &DFG);
     // If extraction only, we do not schedule and analyze.
-    if (!dsa::utils::ModuleContext().EXTRACT) {
+    if (dsa::utils::ModuleContext().EXTRACT) {
       continue;
     }
     auto SBCONFIG = getenv("SBCONFIG");
