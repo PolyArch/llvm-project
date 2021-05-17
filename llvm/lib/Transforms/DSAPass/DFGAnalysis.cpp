@@ -1,6 +1,6 @@
 #include "dsa/debug.h"
 
-#include "./DfgAnalysis.h"
+#include "./DFGAnalysis.h"
 
 #define DEBUG_TYPE "dfg-analysis"
 
@@ -32,7 +32,7 @@ struct DFGEntryAnalyzer : DFGVisitor {
   /*!
    * \brief The DFG to be analyzed.
    */
-  DfgBase *DBPtr;
+  DFGBase *DBPtr;
   /*!
    * \brief The result of an analyzer.
    */
@@ -88,13 +88,13 @@ struct DFGEntryAnalyzer : DFGVisitor {
     return nullptr;
   }
 
-  DfgEntry *DifferentiateMemoryStream(LoadInst *Load) {
+  DFGEntry *DifferentiateMemoryStream(LoadInst *Load) {
     auto &DB = *DBPtr;
     if (auto GEP = dyn_cast<GetElementPtrInst>(Load->getPointerOperand())) {
 
       auto BFSBack = BFSOperands(GEP);
 
-      auto fLoad = [this, Load, BFSBack, &DB] (Value *Val) -> DfgEntry* {
+      auto fLoad = [this, Load, BFSBack, &DB] (Value *Val) -> DFGEntry* {
         LoadInst *IdxLoad = nullptr;
         for (auto Elem : BFSBack.first) {
           if (auto ThisLoad = dyn_cast<LoadInst>(Elem)) {
@@ -108,8 +108,8 @@ struct DFGEntryAnalyzer : DFGVisitor {
         return nullptr;
       };
 
-      auto fGather = [Load, GEP, this, &DB] (Value *Val) -> DfgEntry* {
-        auto DD = dyn_cast<DedicatedDfg>(&DB);
+      auto fGather = [Load, GEP, this, &DB] (Value *Val) -> DFGEntry* {
+        auto DD = dyn_cast<DedicatedDFG>(&DB);
 
         auto Casted = dyn_cast<Instruction>(Val);
         if (!Casted)
@@ -339,7 +339,7 @@ struct DFGEntryAnalyzer : DFGVisitor {
       }
     }
 
-    DfgEntry *Entry = nullptr;
+    DFGEntry *Entry = nullptr;
     if (!isAcc) {
       if (auto BI = dyn_cast<BranchInst>(Inst)) {
         assert(BI->isConditional());
@@ -476,7 +476,7 @@ struct DFGEntryAnalyzer : DFGVisitor {
     return {Visited, OutBound};
   }
 
-  void Visit(DedicatedDfg *DDPtr) {
+  void Visit(DedicatedDFG *DDPtr) {
     std::vector<Instruction*> Visited;
     DBPtr = DDPtr;
     auto &DD = *DDPtr;
@@ -547,7 +547,7 @@ struct DFGEntryAnalyzer : DFGVisitor {
 
   }
 
-  void Visit(TemporalDfg *TD) override {
+  void Visit(TemporalDFG *TD) override {
     DBPtr = TD;
     std::queue<Instruction*> Q;
     std::vector<Instruction*> Visited;
@@ -603,8 +603,8 @@ void ExtractDFGFromScope(DFGFile &DF,
       if (MDNode *MD = GetUnrollMetadata(SubLoop->getLoopID(), "llvm.loop.ss.dedicated")) {
         auto MDFactor = dyn_cast<ConstantAsMetadata>(MD->getOperand(1));
         int Factor =(int) MDFactor->getValue()->getUniqueInteger().getSExtValue();
-        auto DD = new DedicatedDfg(&DF, SubLoop, Factor);
-        DF.addDfg(DD);
+        auto DD = new DedicatedDFG(&DF, SubLoop, Factor);
+        DF.addDFG(DD);
       }
     }
   }
@@ -624,8 +624,8 @@ void ExtractDFGFromScope(DFGFile &DF,
           if (TemporalEnd->getIntrinsicID() != Intrinsic::ss_temporal_region_end)
             continue;
           CHECK(TemporalEnd->getOperand(0) == TemporalStart);
-          auto TD = new TemporalDfg(&DF, TemporalStart, TemporalEnd);
-          DF.addDfg(TD);
+          auto TD = new TemporalDFG(&DF, TemporalStart, TemporalEnd);
+          DF.addDFG(TD);
           Found = true;
           break;
         }
@@ -637,7 +637,7 @@ void ExtractDFGFromScope(DFGFile &DF,
     }
   }
   // All the sketches are extracted. Fill in the entries.
-  for (auto Elem : DF.DFGFilter<DfgBase>()) {
+  for (auto Elem : DF.DFGFilter<DFGBase>()) {
     DFGEntryAnalyzer DEA(DT);
     Elem->Accept(&DEA);
   }

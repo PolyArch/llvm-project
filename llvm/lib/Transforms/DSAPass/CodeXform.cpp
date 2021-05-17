@@ -3,7 +3,7 @@
 #include "dsa/rf.h"
 
 
-// raw_ostream &operator<<(raw_ostream &os, DfgEntry &DE) {
+// raw_ostream &operator<<(raw_ostream &os, DFGEntry &DE) {
 //   os << "# [" << dsa::xform::KindStr[DE.Kind] << "]" << " DFG" << DE.Parent->ID << " Entry" << DE.ID;
 //   if (DE.UnderlyingInsts().size() == 1) {
 //     os << " " << *DE.UnderlyingInst();
@@ -16,7 +16,7 @@
 //   return os;
 // }
 // 
-// raw_ostream &operator<<(raw_ostream &os, DfgBase &DB) {
+// raw_ostream &operator<<(raw_ostream &os, DFGBase &DB) {
 //   std::ostringstream oss;
 //   DB.dump(oss);
 //   os << oss.str();
@@ -142,7 +142,7 @@ std::string GetOperationStr(Instruction *Inst, bool isAcc, bool predicated) {
 }
 
 const char *KindStr[] = {
-  "DfgEntry",
+  "DFGEntry",
 
   // Computation {
   "ComputeStarts",
@@ -192,7 +192,7 @@ struct DFGPrinter : dsa::DFGVisitor {
     std::ostringstream SubCtrl[3];
     Predicate *Pred{nullptr};
 
-    void addControlledMemoryStream(int Idx, DfgEntry *DE) {
+    void addControlledMemoryStream(int Idx, DFGEntry *DE) {
       if (auto CMP = dyn_cast<CtrlMemPort>(DE)) {
          if (Pred == nullptr) {
            Pred = CMP->Pred;
@@ -252,8 +252,8 @@ struct DFGPrinter : dsa::DFGVisitor {
    * \brief I anyways need the DFG entries to be reordered in which the order the are emitted. 
    * \param DB The DFG to reorder the entries.
    */
-  static std::vector<DfgEntry*> ReorderEntries(DfgBase *DB) {
-    std::vector<DfgEntry*> Res;
+  static std::vector<DFGEntry*> ReorderEntries(DFGBase *DB) {
+    std::vector<DFGEntry*> Res;
     Res.reserve(DB->Entries.size());
     for (auto Elem : DB->EntryFilter<InputPort>()) {
       Res.push_back(Elem);
@@ -271,7 +271,7 @@ struct DFGPrinter : dsa::DFGVisitor {
   }
 
 
-  void Visit(DedicatedDfg *DD) override {
+  void Visit(DedicatedDFG *DD) override {
     if (utils::ModuleContext().TRIGGER) {
       CHECK(utils::ModuleContext().TEMPORAL)
         << "Trigger cannot be enabled without temporal";
@@ -280,12 +280,12 @@ struct DFGPrinter : dsa::DFGVisitor {
     DFGVisitor::Visit(DD);
   }
 
-  void Visit(TemporalDfg *TD) override {
+  void Visit(TemporalDFG *TD) override {
     os << "#pragma group temporal\n";
     DFGVisitor::Visit(TD);
   }
 
-  void Visit(DfgBase *DB) {
+  void Visit(DFGBase *DB) {
     using dfg::MetaPort;
     // FIXME(@were): Add block freqency an attribute of DFG.
     // auto BF = Parent->Query->BFI->getBlockFreq(getBlocks()[0]);
@@ -295,7 +295,7 @@ struct DFGPrinter : dsa::DFGVisitor {
     auto Reordered = ReorderEntries(DB);
 
     struct DFGEntryEmitter : DFGEntryVisitor {
-      void Visit(DfgEntry *DE) override {
+      void Visit(DFGEntry *DE) override {
         os << "# [" << KindStr[DE->Kind] << "]: DFG" << DE->Parent->ID << " Entry" << DE->ID << "\n";
         int i = 0;
         auto Insts = DE->UnderlyingInsts();
@@ -310,7 +310,7 @@ struct DFGPrinter : dsa::DFGVisitor {
 
       void Visit(Accumulator *Acc) {
 
-        Visit(cast<DfgEntry>(Acc));
+        Visit(cast<DFGEntry>(Acc));
         auto Inst = Acc->Operation;
         std::queue<std::string> Q;
         auto Reduce = GetOperationStr(Inst, false, false);
@@ -354,7 +354,7 @@ struct DFGPrinter : dsa::DFGVisitor {
 
       void Visit(CtrlSignal *CS) {
         if (!CS->Controlled->getPredicate() || !dsa::utils::ModuleContext().PRED) {
-          Visit(cast<DfgEntry>(CS));
+          Visit(cast<DFGEntry>(CS));
           os << "Input: " << CS->Name() << "\n";
         }
       }
@@ -363,7 +363,7 @@ struct DFGPrinter : dsa::DFGVisitor {
         if (!HasOtherUser(IC, IC->Val)) {
           return;
         }
-        Visit(cast<DfgEntry>(IC));
+        Visit(cast<DFGEntry>(IC));
         os << "Input" << IC->Val->getType()->getScalarSizeInBits() << ": " << IC->Name() << "\n";
       }
 
@@ -384,7 +384,7 @@ struct DFGPrinter : dsa::DFGVisitor {
         if (!HasOtherUser(IP, IP->UnderlyingInst())) {
           return;
         }
-        Visit(cast<DfgEntry>(IP));
+        Visit(cast<DFGEntry>(IP));
         {
           auto Meta = IP->Meta;
           if (Meta.source != MetaPort::Data::Unknown) {
@@ -421,7 +421,7 @@ struct DFGPrinter : dsa::DFGVisitor {
         if (CB->isAtomic())
           return;
 
-        Visit(cast<DfgEntry>(CB));
+        Visit(cast<DFGEntry>(CB));
 
         int Degree = (CB->ShouldUnroll() ? CB->Parent->getUnroll() : 1);
         for (int vec = 0; vec < Degree; ++vec) {
@@ -495,7 +495,7 @@ struct DFGPrinter : dsa::DFGVisitor {
       }
 
       void Visit(OutputPort *OP) {
-        Visit(cast<DfgEntry>(OP));
+        Visit(cast<DFGEntry>(OP));
         std::ostringstream oss;
         OP->Meta.to_pragma(oss);
         os << oss.str();
@@ -557,7 +557,7 @@ void EmitDFG(raw_ostream *os, DFGFile *DFG) {
     DeleteOS = true;
   }
   DFGPrinter DP(*os);
-  auto Graphs = DFG->DFGFilter<DfgBase>();
+  auto Graphs = DFG->DFGFilter<DFGBase>();
   for (int i = 0; i < (int) Graphs.size(); ++i) {
     auto Elem = Graphs[i];
     if (i) {

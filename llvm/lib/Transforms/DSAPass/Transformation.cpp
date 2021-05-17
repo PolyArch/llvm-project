@@ -39,9 +39,9 @@ using namespace llvm;
 
 namespace dsa {
 
-void DFGVisitor::Visit(DfgBase *Node) {}
-void DFGVisitor::Visit(DedicatedDfg *Node) { Visit(static_cast<DfgBase*>(Node)); }
-void DFGVisitor::Visit(TemporalDfg *Node) { Visit(static_cast<DfgBase*>(Node)); }
+void DFGVisitor::Visit(DFGBase *Node) {}
+void DFGVisitor::Visit(DedicatedDFG *Node) { Visit(static_cast<DFGBase*>(Node)); }
+void DFGVisitor::Visit(TemporalDFG *Node) { Visit(static_cast<DFGBase*>(Node)); }
 
 namespace inject {
 
@@ -102,7 +102,7 @@ bool CheckLoopInvariant(const SCEV *S, int From, const SmallVector<Loop*, 0> &Lo
   return true;
 }
 
-Value *DfgBase::ComputeRepeat(Value *Prime, Value *Wrapper, bool isVectorized,
+Value *DFGBase::ComputeRepeat(Value *Prime, Value *Wrapper, bool isVectorized,
                               bool isPortConfig) {
   SCEVExpander Expander(*Parent->Query->SE, Parent->Func.getParent()->getDataLayout(), "");
   auto &IB = *Parent->Query->IBPtr;
@@ -131,7 +131,7 @@ Value *DfgBase::ComputeRepeat(Value *Prime, Value *Wrapper, bool isVectorized,
   }
 }
 
-Value *DfgBase::ComputeRepeat(const AnalyzedRepeat &AR, bool isVectorized, bool isPortConfig) {
+Value *DFGBase::ComputeRepeat(const AnalyzedRepeat &AR, bool isVectorized, bool isPortConfig) {
   SCEVExpander Expander(*Parent->Query->SE, Parent->Func.getParent()->getDataLayout(), "");
   if (!AR.Prime)
     return createConstant(getCtx(), 1);
@@ -178,7 +178,7 @@ bool CanBeStretched(int x, const SmallVector<Loop*, 0> &LoopNest, ScalarEvolutio
   return false;
 }
 
-DfgEntry *DfgBase::InThisDFG(Value *Val) {
+DFGEntry *DFGBase::InThisDFG(Value *Val) {
   for (auto &Elem : Entries) {
     for (auto &Iter : Elem->UnderlyingValues()) {
       if (Iter == Val) {
@@ -189,19 +189,19 @@ DfgEntry *DfgBase::InThisDFG(Value *Val) {
   return nullptr;
 }
 
-Instruction *DfgBase::DefaultIP() {
+Instruction *DFGBase::DefaultIP() {
   assert(false && "Not supported yet!");
 }
 
-Instruction *TemporalDfg::DefaultIP() {
+Instruction *TemporalDFG::DefaultIP() {
   return IP;
 }
 
-Instruction *DedicatedDfg::DefaultIP() {
+Instruction *DedicatedDFG::DefaultIP() {
   return &Preheader->back();
 }
 
-bool DedicatedDfg::ConsumedByAccumulator(MemPort *MP) {
+bool DedicatedDFG::ConsumedByAccumulator(MemPort *MP) {
   std::set<Value*> Visited{MP->UnderlyingInst()};
   std::queue<Value*> Q;
   Q.push(MP->UnderlyingInst());
@@ -260,7 +260,7 @@ void DFGFile::InjectStreamIntrinsics() {
 
 }
 
-Instruction *DfgBase::InjectRepeat(const AnalyzedRepeat &AR, Value *Val, int Port) {
+Instruction *DFGBase::InjectRepeat(const AnalyzedRepeat &AR, Value *Val, int Port) {
   SCEVExpander Expander(*Parent->Query->SE, Parent->Func.getParent()->getDataLayout(), "");
 
   if (!AR.Prime) {
@@ -334,7 +334,7 @@ Instruction *DfgBase::InjectRepeat(const AnalyzedRepeat &AR, Value *Val, int Por
   llvm_unreachable("Unknown kind of AnalyzedRepeat's Repeat Type");
 }
 
-Instruction *DfgBase::InjectRepeat(Value *Prime, Value *Wrapper, int64_t Stretch,
+Instruction *DFGBase::InjectRepeat(Value *Prime, Value *Wrapper, int64_t Stretch,
                                    Value *Val, int Port) {
 
   auto IP = DefaultIP();
@@ -368,7 +368,7 @@ Instruction *DfgBase::InjectRepeat(Value *Prime, Value *Wrapper, int64_t Stretch
   }
 }
 
-DfgBase *DfgBase::BelongOtherDFG(Instruction *I) {
+DFGBase *DFGBase::BelongOtherDFG(Instruction *I) {
   for (auto &DFG : Parent->DFGs) {
     if (DFG == this)
       continue;
@@ -379,7 +379,7 @@ DfgBase *DfgBase::BelongOtherDFG(Instruction *I) {
 }
 
 std::pair<std::set<Instruction*>, std::set<Instruction*>>
-BFSOperands(DfgBase *DFG, DominatorTree *DT, Instruction *From) {
+BFSOperands(DFGBase *DFG, DominatorTree *DT, Instruction *From) {
 
   std::set<Instruction*> Visited, OutBound;
   std::queue<Instruction*> Q;
@@ -410,7 +410,7 @@ BFSOperands(DfgBase *DFG, DominatorTree *DT, Instruction *From) {
   return {Visited, OutBound};
 }
 
-Predicate* DfgBase::FindEquivPredicate(Value *LHS, Value *RHS) {
+Predicate* DFGBase::FindEquivPredicate(Value *LHS, Value *RHS) {
   for (auto Elem : EntryFilter<Predicate>()) {
     if (Elem->Cond[0]->getOperand(0) == LHS && Elem->Cond[0]->getOperand(1) == RHS)
       return Elem;
@@ -420,7 +420,7 @@ Predicate* DfgBase::FindEquivPredicate(Value *LHS, Value *RHS) {
   return nullptr;
 }
 
-bool DedicatedDfg::Contains(const Loop *L) {
+bool DedicatedDFG::Contains(const Loop *L) {
   for (auto Elem : LoopNest) {
     if (Elem == L)
       return true;
@@ -429,7 +429,7 @@ bool DedicatedDfg::Contains(const Loop *L) {
 }
 
 
-Value *DedicatedDfg::TripCount(int x, Instruction *InsertBefore) {
+Value *DedicatedDFG::TripCount(int x, Instruction *InsertBefore) {
   SCEVExpander Expander(*Parent->Query->SE, Parent->Func.getParent()->getDataLayout(), "");
   auto IB = Parent->Query->IBPtr;
   auto BackSE = Parent->Query->SE->getBackedgeTakenCount(LoopNest[x]);
@@ -440,7 +440,7 @@ Value *DedicatedDfg::TripCount(int x, Instruction *InsertBefore) {
   return Trip;
 }
 
-Value *DedicatedDfg::ProdTripCount(int l, int r, Instruction *InsertBefore) {
+Value *DedicatedDFG::ProdTripCount(int l, int r, Instruction *InsertBefore) {
   Value *Prod = createConstant(getCtx(), 1);
   for (int i = l; i < r; ++i) {
     Prod = BinaryOperator::Create(BinaryOperator::Mul, Prod, TripCount(i, InsertBefore),
@@ -449,14 +449,14 @@ Value *DedicatedDfg::ProdTripCount(int l, int r, Instruction *InsertBefore) {
   return Prod;
 }
 
-Value *DedicatedDfg::ProdTripCount(int x, Instruction *InsertBefore) {
+Value *DedicatedDFG::ProdTripCount(int x, Instruction *InsertBefore) {
   return ProdTripCount(0, x, InsertBefore);
 }
 
-DedicatedDfg::DedicatedDfg(DFGFile *Parent_, Loop *LI, int Unroll)
-  : DfgBase(Parent_), UnrollFactor(std::max(1, Unroll)) {
+DedicatedDFG::DedicatedDFG(DFGFile *Parent_, Loop *LI, int Unroll)
+  : DFGBase(Parent_), UnrollFactor(std::max(1, Unroll)) {
 
-  Kind = DfgBase::Dedicated;
+  Kind = DFGBase::Dedicated;
 
   if (GetUnrollMetadata(LI->getLoopID(), "llvm.loop.ss.datamove")) {
     LLVM_DEBUG(dbgs() << "A data-move 'DFG'\n");
@@ -518,14 +518,14 @@ DedicatedDfg::DedicatedDfg(DFGFile *Parent_, Loop *LI, int Unroll)
 }
 
 
-void DfgBase::dump(std::ostringstream &os) {}
+void DFGBase::dump(std::ostringstream &os) {}
 
-void DFGFile::addDfg(DfgBase *DB) {
+void DFGFile::addDFG(DFGBase *DB) {
   assert(!AllInitialized && "You can no longer modify the dfg after scheduling");
   DFGs.push_back(DB);
 }
 
-void DFGFile::EmitAndScheduleDfg() {
+void DFGFile::EmitAndScheduleDFG() {
 
   dsa::xform::EmitDFG(nullptr, this);
 
@@ -555,7 +555,7 @@ void DFGFile::EmitAndScheduleDfg() {
     );
 
     //SS_CONFIG::SSModel model(SBCONFIG);
-    //SSDfg dfg(FileName);
+    //SSDFG dfg(FileName);
     //SchedulerSimulatedAnnealing *sa = new SchedulerSimulatedAnnealing(&model);
     //sa->verbose = DebugFlag && isCurrentDebugType(DEBUG_TYPE);
     //sa->str_subalg = "";
@@ -619,8 +619,8 @@ void DFGFile::EmitAndScheduleDfg() {
             // Fill in the latency of each node.
             //{
             //  OutputPort *OP = OutPorts[0];
-            //  std::string ON = OP->Parent->InThisDFG(OP->Output)->NameInDfg();
-            //  for (auto SDVO : dfg.nodes<SSDfgVecOutput*>()) {
+            //  std::string ON = OP->Parent->InThisDFG(OP->Output)->NameInDFG();
+            //  for (auto SDVO : dfg.nodes<SSDFGVecOutput*>()) {
             //    if (SDVO->name() == ON) {
             //      OP->Latency = sched->latOf(SDVO);
             //      LLVM_DEBUG(dbgs() << "[lat] " << ON << ": " << OP->Latency << "\n");
@@ -742,7 +742,7 @@ void DFGFile::EraseOffloadedInstructions() {
       }
     }
 
-    if (auto DD = dyn_cast<DedicatedDfg>(DFG)) {
+    if (auto DD = dyn_cast<DedicatedDFG>(DFG)) {
       auto StreamMD = GetUnrollMetadata(DD->LoopNest.back()->getLoopID(), "llvm.loop.ss.stream");
       auto BarrierMD = dyn_cast<ConstantAsMetadata>(StreamMD->getOperand(1));
       if (BarrierMD->getValue()->getUniqueInteger().getSExtValue()) {
@@ -774,7 +774,7 @@ void DFGFile::EraseOffloadedInstructions() {
       } else {
         LLVM_DEBUG(dbgs() << "No barrier required!\n");
       }
-    } else if (auto TD = dyn_cast<TemporalDfg>(DFG)) {
+    } else if (auto TD = dyn_cast<TemporalDFG>(DFG)) {
       TD->End->eraseFromParent();
       TD->Begin->eraseFromParent();
     }
@@ -789,26 +789,26 @@ void DFGFile::EraseOffloadedInstructions() {
 
 }
 
-Loop *DedicatedDfg::InnerMost() {
+Loop *DedicatedDFG::InnerMost() {
   return LoopNest.front();
 }
 
-Loop *DedicatedDfg::OuterMost() {
+Loop *DedicatedDFG::OuterMost() {
   return LoopNest.back();
 }
 
-DfgBase::DfgBase(DFGFile *Parent_) :
+DFGBase::DFGBase(DFGFile *Parent_) :
   Parent(Parent_) {
   ID = Parent_->DFGs.size();
-  Kind = DfgBase::Unknown;
+  Kind = DFGBase::Unknown;
 }
 
-DfgBase::DfgKind DfgBase::getKind() const {
+DFGBase::DFGKind DFGBase::getKind() const {
   return Kind;
 }
 
-TemporalDfg::TemporalDfg(DFGFile *Parent, IntrinsicInst *Begin, IntrinsicInst *End)
-  : DfgBase(Parent), Begin(Begin), End(End) {
+TemporalDFG::TemporalDFG(DFGFile *Parent, IntrinsicInst *Begin, IntrinsicInst *End)
+  : DFGBase(Parent), Begin(Begin), End(End) {
 
   std::set<Instruction*> users;
   for (Instruction *I = Begin; I != End; I = I->getNextNode()) {
@@ -827,27 +827,27 @@ TemporalDfg::TemporalDfg(DFGFile *Parent, IntrinsicInst *Begin, IntrinsicInst *E
     }
   }
 
-  Kind = DfgBase::Temporal;
+  Kind = DFGBase::Temporal;
 }
 
-void TemporalDfg::dump(std::ostringstream &os) {
+void TemporalDFG::dump(std::ostringstream &os) {
   if (!os.str().empty())
     os << "\n----\n\n";
   os << "#pragma group temporal\n";
-  DfgBase::dump(os);
+  DFGBase::dump(os);
 }
 
-void DedicatedDfg::dump(std::ostringstream &os) {
+void DedicatedDFG::dump(std::ostringstream &os) {
   if (!os.str().empty())
     os << "\n----\n\n";
   if (dsa::utils::ModuleContext().TRIGGER) {
     CHECK(dsa::utils::ModuleContext().TEMPORAL) << "Trigger cannot be enabled without temporal";
     os << "#pragma group temporal\n";
   }
-  DfgBase::dump(os);
+  DFGBase::dump(os);
 }
 
-bool DedicatedDfg::Contains(Instruction *Inst) {
+bool DedicatedDFG::Contains(Instruction *Inst) {
 
   // FIXME(@were): I forgot what this is doing.
 
@@ -870,37 +870,37 @@ bool DedicatedDfg::Contains(Instruction *Inst) {
   return Contains(Inst->getParent());
 }
 
-bool DedicatedDfg::Contains(BasicBlock *BB) {
+bool DedicatedDFG::Contains(BasicBlock *BB) {
   // FIXME: I hope for now it is good enough.
   //        Later maybe we need to dive into the paritally contain thing.
   return Blocks.find(BB) != Blocks.end();
 }
 
-bool TemporalDfg::Contains(Instruction *Inst) {
+bool TemporalDFG::Contains(Instruction *Inst) {
   for (Instruction *I = Begin; I != End; I = I->getNextNode())
     if (I == Inst)
       return true;
   return false;
 }
 
-bool TemporalDfg::Contains(BasicBlock *BB) {
+bool TemporalDFG::Contains(BasicBlock *BB) {
   return BB == Begin->getParent();
 }
 
-int TemporalDfg::getUnroll() {
+int TemporalDFG::getUnroll() {
   return 1;
 }
 
-int DedicatedDfg::getUnroll() {
+int DedicatedDFG::getUnroll() {
   return UnrollFactor;
 }
 
-AnalyzedStream DedicatedDfg::AnalyzeDataStream(Value *Index, int Bytes) {
+AnalyzedStream DedicatedDFG::AnalyzeDataStream(Value *Index, int Bytes) {
   return AnalyzeDataStream(Index, Bytes, false, nullptr);
 }
 
 AnalyzedStream
-DedicatedDfg::AnalyzeDataStream(Value *Index, int Bytes, bool DoOuterRepeat,
+DedicatedDFG::AnalyzeDataStream(Value *Index, int Bytes, bool DoOuterRepeat,
                                 Instruction *InsertBefore) {
 
   SCEVExpander Expander(*Parent->Query->SE, Parent->Func.getParent()->getDataLayout(), "");
@@ -1117,12 +1117,12 @@ Value *AnalyzedStream::BytesFromMemory(IRBuilder<> *IB) {
 }
 
 
-Value *DfgBase::UnrollConstant() {
+Value *DFGBase::UnrollConstant() {
   return Parent->Query->IBPtr->getInt64(getUnroll());
 }
 
 
-LLVMContext &DfgBase::getCtx() {
+LLVMContext &DFGBase::getCtx() {
   return Parent->getCtx();
 }
 
@@ -1131,13 +1131,13 @@ LLVMContext &DFGFile::getCtx() {
   return Query->IBPtr->getContext();
 }
 
-template<typename DfgType>
-void AddDfg(DFGFile *DF, MDNode *Ptr, Loop *LI) {
+template<typename DFGType>
+void AddDFG(DFGFile *DF, MDNode *Ptr, Loop *LI) {
   assert(Ptr->getNumOperands() == 2);
   auto MDFactor = dyn_cast<ConstantAsMetadata>(Ptr->getOperand(1));
   assert(MDFactor);
   int Factor =(int) MDFactor->getValue()->getUniqueInteger().getSExtValue();
-  DF->addDfg(new DfgType(DF, LI, Factor));
+  DF->addDFG(new DFGType(DF, LI, Factor));
 }
 
 DFGFile::DFGFile(StringRef Name, IntrinsicInst *Start, IntrinsicInst *End, StreamSpecialize *Query_)
@@ -1152,7 +1152,7 @@ int getPortImpl() {
   return Res;
 }
 
-int DfgBase::getNextIND() {
+int DFGBase::getNextIND() {
   return getPortImpl();
   //static const int Ports[] = {27, 28, 29, 30, 31};
   //static const int N = (sizeof Ports) / (sizeof(int));
@@ -1162,7 +1162,7 @@ int DfgBase::getNextIND() {
   //return Res;
 }
 
-int DfgBase::getNextReserved() {
+int DFGBase::getNextReserved() {
   return getPortImpl();
   //static const int Ports[] = {23, 24, 25, 26};
   //static const int N = (sizeof Ports) / (sizeof(int));
@@ -1172,18 +1172,18 @@ int DfgBase::getNextReserved() {
   //return Res;
 }
 
-SmallVector<BasicBlock*, 0> DedicatedDfg::getBlocks() {
+SmallVector<BasicBlock*, 0> DedicatedDFG::getBlocks() {
   SmallVector<BasicBlock*, 0> Res(InnerMost()->getBlocks().begin(),
                                   InnerMost()->getBlocks().end());
   return Res;
 }
 
-SmallVector<BasicBlock*, 0> TemporalDfg::getBlocks() {
+SmallVector<BasicBlock*, 0> TemporalDFG::getBlocks() {
   SmallVector<BasicBlock*, 0> Res{Begin->getParent()};
   return Res;
 }
 
-AnalyzedStream TemporalDfg::AnalyzeDataStream(Value *Index, int Bytes) {
+AnalyzedStream TemporalDFG::AnalyzeDataStream(Value *Index, int Bytes) {
   AnalyzedStream res;
   auto &Ctx = Parent->getCtx();
   res.AR.Wrapped = createConstant(Ctx, 1);
@@ -1191,11 +1191,11 @@ AnalyzedStream TemporalDfg::AnalyzeDataStream(Value *Index, int Bytes) {
   return res;
 }
 
-bool DedicatedDfg::InThisScope(Instruction *I) {
+bool DedicatedDFG::InThisScope(Instruction *I) {
   return LoopNest.back()->getBlocksSet().count(I->getParent());
 }
 
-bool TemporalDfg::InThisScope(Instruction *Inst) {
+bool TemporalDFG::InThisScope(Instruction *Inst) {
   for (Instruction *I = Begin; I != End; I = I->getNextNode()) {
     if (I == Inst) {
       return true;
@@ -1319,6 +1319,6 @@ void DFGFile::InspectSPADs() {
 
 }
 
-void DfgBase::Accept(dsa::DFGVisitor *Visitor) { Visitor->Visit(this); }
-void DedicatedDfg::Accept(dsa::DFGVisitor *Visitor) { Visitor->Visit(this); }
-void TemporalDfg::Accept(dsa::DFGVisitor *Visitor) { Visitor->Visit(this); }
+void DFGBase::Accept(dsa::DFGVisitor *Visitor) { Visitor->Visit(this); }
+void DedicatedDFG::Accept(dsa::DFGVisitor *Visitor) { Visitor->Visit(this); }
+void TemporalDFG::Accept(dsa::DFGVisitor *Visitor) { Visitor->Visit(this); }

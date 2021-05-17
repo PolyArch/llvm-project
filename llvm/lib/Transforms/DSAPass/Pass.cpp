@@ -8,8 +8,8 @@
 #include "./llvm_common.h"
 
 #include "CodeXform.h"
-#include "DfgAnalysis.h"
-#include "DfgEntry.h"
+#include "DFGAnalysis.h"
+#include "DFGEntry.h"
 #include "Transformation.h"
 #include "Util.h"
 #include "Pass.h"
@@ -36,19 +36,21 @@ bool StreamSpecialize::runOnModule(Module &M) {
     runOnFunction(F);
   }
 
-  // Clean up the code generated.
-  llvm::PassManagerBuilder PMB;
-  PMB.OptLevel = 3;
-  llvm::legacy::FunctionPassManager fpass(&M);
-  llvm::legacy::PassManager mpass;
-  PMB.populateFunctionPassManager(fpass);
-  PMB.populateModulePassManager(mpass);
-  PMB.Inliner = llvm::createFunctionInliningPass(3, 0, false);
-  for (auto &F : M) {
-    runOnFunction(F);
+  // If we are not extracting DFG's, do not clean up the code with O3.
+  if (!dsa::utils::ModuleContext().EXTRACT) {
+    llvm::PassManagerBuilder PMB;
+    PMB.OptLevel = 3;
+    llvm::legacy::FunctionPassManager fpass(&M);
+    llvm::legacy::PassManager mpass;
+    PMB.populateFunctionPassManager(fpass);
+    PMB.populateModulePassManager(mpass);
+    PMB.Inliner = llvm::createFunctionInliningPass(3, 0, false);
+    for (auto &F : M) {
+      runOnFunction(F);
+    }
+    fpass.doFinalization();
+    mpass.run(M);
   }
-  fpass.doFinalization();
-  mpass.run(M);
 
   return false;
 }
@@ -85,13 +87,13 @@ bool StreamSpecialize::runOnFunction(Function &F) {
     auto Cmd = formatv("ss_sched {0} {1} {2} -e 0 > /dev/null", "-v", SBCONFIG, Name).str();
     LLVM_DEBUG(INFO << Cmd);
     CHECK(system(Cmd.c_str()) == 0) << "Not successfully scheduled! Try another DFG!";
-    auto Graphs = DFG.DFGFilter<DfgBase>();
+    auto Graphs = DFG.DFGFilter<DFGBase>();
     std::vector<std::vector<int>> Ports(Graphs.size());
     for (int i = 0, n = Graphs.size(); i < n; ++i) {
       Ports[i].resize(Graphs[i]->Entries.size(), -1);
     }
     DFG.InspectSPADs();
-    DFG.EmitAndScheduleDfg();
+    DFG.EmitAndScheduleDFG();
     if (dsa::utils::ModuleContext().EXTRACT) {
       continue;
     }
@@ -144,8 +146,8 @@ void StreamSpecialize::HandleMemIntrin(Function &F) {
     AS0.Dimensions.emplace_back(Dst, Size, 0);
     AS1.Dimensions.emplace_back(Src, Size, 0);
 
-    // DedicatedDfg Dfg(&Dummy, Intrin);
-    // IBPtr->SetInsertPoint(Dfg.DefaultIP());
+    // DedicatedDFG DFG(&Dummy, Intrin);
+    // IBPtr->SetInsertPoint(DFG.DefaultIP());
     // dsa::inject::InjectLinearStream(IBPtr, DSARegs, MemScrPort, AS1, DMO_Read, DP_NoPadding, DMT_DMA, 1);
     // dsa::inject::InjectLinearStream(IBPtr, DSARegs, MemScrPort, AS1, DMO_Read, DP_NoPadding, DMT_SPAD, 1);
     // dsa::inject::DSAIntrinsicEmitter(IBPtr, DSARegs).SS_WAIT(~0ull);

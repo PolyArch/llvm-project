@@ -112,7 +112,7 @@ Constant *createConstant(LLVMContext &Context, uint64_t Val, int Bits = 64);
 
 Value *CeilDiv(Value *A, Value *B, Instruction *InsertBefore);
 
-std::string funcNameToDfgName(const StringRef &Name);
+std::string funcNameToDFGName(const StringRef &Name);
 
 template<typename Desired, typename Iteratable>
 std::vector<Desired*> TypeFilter(const Iteratable &List) {

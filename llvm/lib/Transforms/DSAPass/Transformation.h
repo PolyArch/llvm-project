@@ -12,7 +12,7 @@
 #include "llvm/IR/Instruction.h"
 #include "llvm/Support/Casting.h"
 #include "Util.h"
-#include "DfgEntry.h"
+#include "DFGEntry.h"
 #include "Pass.h"
 #include "StreamAnalysis.h"
 
@@ -22,9 +22,9 @@
 using namespace llvm;
 
 class DFGFile;
-class DedicatedDfg;
-class TemporalDfg;
-class DfgBase;
+class DedicatedDFG;
+class TemporalDFG;
+class DFGBase;
 
 struct AnalyzedRepeat {
 
@@ -53,18 +53,18 @@ namespace dsa {
  * \brief The visitor for each sub DFG.
  */
 struct DFGVisitor {
-  virtual void Visit(DfgBase *);
-  virtual void Visit(DedicatedDfg *);
-  virtual void Visit(TemporalDfg *);
+  virtual void Visit(DFGBase *);
+  virtual void Visit(DedicatedDFG *);
+  virtual void Visit(TemporalDFG *);
 };
 
 }
 
 
 /// The class of the base dfg
-class DfgBase {
+class DFGBase {
 public:
-  enum DfgKind {
+  enum DFGKind {
     Unknown,
     Dedicated,
     Temporal,
@@ -73,23 +73,23 @@ public:
 
   /// DFG #ID in the .dfg file.
   int ID{-1};
-  /// The DfgFile contains this Dfg
+  /// The DFGFile contains this DFG
   DFGFile *Parent;
   /// The instructions to be emitted as DFG
-  SmallVector<DfgEntry*, 0> Entries;
+  SmallVector<DFGEntry*, 0> Entries;
   /// Find a value among the compute bodies
   std::string ValueToOperandText(Value *Val, int Vec = -1);
   /// To unify the comparisons
   std::map<std::pair<Value*, Value*>, Predicate*> Comparison;
 
-  DfgKind Kind;
+  DFGKind Kind;
 
   std::vector<Instruction*> InjectedCode;
 
-  DfgBase(DFGFile *);
+  DFGBase(DFGFile *);
 
   friend class DFGFile;
-  friend struct DfgEntry;
+  friend struct DFGEntry;
   friend struct StreamOutPort;
   friend struct ComputeBody;
   friend struct PortBase;
@@ -126,9 +126,9 @@ public:
   /// TODO(@were): Decouple and remove all these.
   // {
   /// Check if this block belong to the DFGs
-  DfgBase *BelongOtherDFG(Instruction *I);
+  DFGBase *BelongOtherDFG(Instruction *I);
   /// Check if a value is in this DFG
-  DfgEntry *InThisDFG(Value *Val);
+  DFGEntry *InThisDFG(Value *Val);
   /// The default position to inject the instructions
   virtual Instruction* DefaultIP();
   /// Find the predicate that can be merged into one.
@@ -155,7 +155,7 @@ public:
   /// The Wrap indicates the "10" here.
   Instruction *InjectRepeat(Value *Prime, Value *Wrap, int64_t Stretch, Value *Val, int Port);
 
-  DfgKind getKind() const;
+  DFGKind getKind() const;
 
   /// Analyze data stream
   virtual AnalyzedStream AnalyzeDataStream(Value *Index, int ScalarBytes) {
@@ -171,7 +171,7 @@ public:
   /// The scope of the DFG to be offload
   virtual bool InThisScope(Instruction *) = 0;
 
-  static bool classof(DfgBase *DB) {
+  static bool classof(DFGBase *DB) {
     return true;
   }
 
@@ -188,17 +188,17 @@ class DFGFile {
   Function &Func;
   Instruction *Config, *Fence;
   StreamSpecialize *Query;
-  /// DFGs included by this DfgFile
-  std::vector<DfgBase*> DFGs;
+  /// DFGs included by this DFGFile
+  std::vector<DFGBase*> DFGs;
   std::map<Value *, Value *> AddrsOnSpad;
 
   bool AllInitialized{false};
 
 public:
-  friend class DfgBase;
-  friend class DedicatedDfg;
-  friend class TemporalDfg;
-  friend struct DfgEntry;
+  friend class DFGBase;
+  friend class DedicatedDFG;
+  friend class TemporalDFG;
+  friend struct DFGEntry;
   friend struct StreamOutPort;
   friend struct MemPort;
   friend struct PortMem;
@@ -221,9 +221,9 @@ public:
   const std::string &getName();
 
   /// Add the given DFG to this file
-  void addDfg(DfgBase *DFG);
+  void addDFG(DFGBase *DFG);
   /// Emit the dfg to file so that it can be scheduled
-  void EmitAndScheduleDfg();
+  void EmitAndScheduleDFG();
   /// Analyze the data streams
   void InjectStreamIntrinsics();
   /// Erase all the instructions offloaded to CGRA
@@ -241,7 +241,7 @@ public:
 };
 
 /// The class of the temporal DFG
-class TemporalDfg : public DfgBase {
+class TemporalDFG : public DFGBase {
 
 
 public:
@@ -249,11 +249,11 @@ public:
   Instruction *IP{nullptr};
 
   friend class DFGFile;
-  friend struct DfgEntry;
+  friend struct DFGEntry;
   friend struct StreamOutPort;
   friend struct ComputeBody;
 
-  TemporalDfg(DFGFile *Parent, IntrinsicInst *Begin, IntrinsicInst *End);
+  TemporalDFG(DFGFile *Parent, IntrinsicInst *Begin, IntrinsicInst *End);
 
   /// Return the blocks of the DFG
   SmallVector<BasicBlock*, 0> getBlocks() override;
@@ -275,13 +275,13 @@ public:
    */
   virtual void Accept(dsa::DFGVisitor *) override;
 
-  static bool classof(const DfgBase *DB) {
+  static bool classof(const DFGBase *DB) {
     return DB->getKind() == Temporal;
   }
 };
 
 /// The class of the dedicated DFG
-class DedicatedDfg : public DfgBase {
+class DedicatedDFG : public DFGBase {
   /// The loop levels from dfg to stream pragma
   SmallVector<Loop*, 0> LoopNest;
   /// How many times the instances should be duplicated
@@ -308,8 +308,8 @@ class DedicatedDfg : public DfgBase {
 
 public:
   friend class DFGFile;
-  friend class DfgBase;
-  friend struct DfgEntry;
+  friend class DFGBase;
+  friend struct DFGEntry;
   friend struct MemPort;
   friend struct PortMem;
   friend struct StreamOutPort;
@@ -333,7 +333,7 @@ public:
                                    Instruction *InsertBefore);
 
 
-  DedicatedDfg(DFGFile *, Loop *, int);
+  DedicatedDFG(DFGFile *, Loop *, int);
 
   /// Inputs of this DFG
   virtual void dump(std::ostringstream &os) override;
@@ -357,7 +357,7 @@ public:
    */
   virtual void Accept(dsa::DFGVisitor *) override;
 
-  static bool classof(const DfgBase *DB) {
+  static bool classof(const DFGBase *DB) {
     return DB->getKind() == Dedicated ||
            DB->getKind() == DataMove;
   }
