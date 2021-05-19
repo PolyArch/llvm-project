@@ -31,7 +31,7 @@ struct StreamSpecialize : public ModulePass {
   MemorySSA *MSSA;
 
   IRBuilder<> *IBPtr{nullptr};
-  std::vector<dsa::utils::StickyRegister> DSARegs;
+  dsa::RegisterFile DSARegs;
 
   static char ID;
 

@@ -52,6 +52,10 @@ struct ModuleFlags {
    * \brief If we just want to extract the DFG without further transformation.
    */
   DEFINE_FLAG(EXTRACT, 0)
+  /*!
+   * \brief If we want to execute the peephole optimization over dsa register file instructions.
+   */
+  DEFINE_FLAG(FUSION, 0)
 #undef DEFINE_FLAG
 
   ModuleFlags() {
@@ -61,6 +65,7 @@ struct ModuleFlags {
     getFlagTEMPORAL();
     getFlagTRIGGER();
     getFlagEXTRACT();
+    getFlagFUSION();
   }
 
 };
@@ -91,7 +96,11 @@ struct StickyRegister {
   StickyRegister(Value *A, Value *R, Value *S) : Alloca(A), Reg(R), Sticky(S) {}
 };
 
+
 }
+
+using RegisterFile = std::vector<utils::StickyRegister>;
+
 }
 
 

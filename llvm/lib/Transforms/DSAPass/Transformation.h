@@ -222,8 +222,6 @@ public:
 
   /// Add the given DFG to this file
   void addDFG(DFGBase *DFG);
-  /// Emit the dfg to file so that it can be scheduled
-  void EmitAndScheduleDFG();
   /// Analyze the data streams
   void InjectStreamIntrinsics();
   /// Erase all the instructions offloaded to CGRA
@@ -282,16 +280,6 @@ public:
 
 /// The class of the dedicated DFG
 class DedicatedDFG : public DFGBase {
-  /// The loop levels from dfg to stream pragma
-  SmallVector<Loop*, 0> LoopNest;
-  /// How many times the instances should be duplicated
-  int UnrollFactor;
-  /// Blocks in this path of loop nest
-  std::set<BasicBlock*> Blocks;
-  /// The insert point of the instructions
-  BasicBlock *Preheader;
-  /// Prologue IP
-  Instruction *PrologueIP;
 
   /// The current fill mode
   enum FillMode {
@@ -307,6 +295,17 @@ class DedicatedDFG : public DFGBase {
   bool ConsumedByAccumulator(MemPort *MP);
 
 public:
+  /// The loop levels from dfg to stream pragma
+  SmallVector<Loop*, 0> LoopNest;
+  /// How many times the instances should be duplicated
+  int UnrollFactor;
+  /// Blocks in this path of loop nest
+  std::set<BasicBlock*> Blocks;
+  /// The insert point of the instructions
+  BasicBlock *Preheader;
+  /// Prologue IP
+  Instruction *PrologueIP;
+
   friend class DFGFile;
   friend class DFGBase;
   friend struct DFGEntry;
@@ -379,7 +378,7 @@ namespace inject {
  */
 MemoryType
 InjectLinearStream(IRBuilder<> *IB,
-                   const std::vector<dsa::utils::StickyRegister> &Regs,
+                   const RegisterFile &Regs,
                    int PortNum, const AnalyzedStream &Stream,
                    MemoryOperation MO, Padding PP, MemoryType MT, int DType);
 
@@ -387,14 +386,13 @@ struct DSAIntrinsicEmitter {
   bool Prepass{true};
   IRBuilder<> *IB;
   std::vector<CallInst*> res;
-  std::vector<dsa::utils::StickyRegister> Regs;
+  RegisterFile Regs;
 
   struct REG {
     static std::stack<IRBuilder<>*> IBStack;
     Value *value{nullptr};
     REG() {}
     REG(Value *value_) : value(value_) {}
-    // REG(uint64_t x) : value(IB->getInt64(x)) {}
     REG(uint64_t x) {
       value = IBStack.top()->getInt64(x);
     }
@@ -402,7 +400,7 @@ struct DSAIntrinsicEmitter {
   };
 
   DSAIntrinsicEmitter(IRBuilder<> *IB_,
-                      const std::vector<dsa::utils::StickyRegister> &Regs_) : IB(IB_), Regs(Regs_) {
+                      const RegisterFile &Regs_) : IB(IB_), Regs(Regs_) {
     REG::IBStack.push(IB_);
   }
 

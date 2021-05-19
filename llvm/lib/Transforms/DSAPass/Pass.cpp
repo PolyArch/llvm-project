@@ -70,14 +70,16 @@ bool StreamSpecialize::runOnFunction(Function &F) {
   if (!ScopePairs.empty() && !dsa::utils::ModuleContext().EXTRACT) {
     DSARegs = dsa::xform::InjectDSARegisterFile(F);
   }
+  SCEVExpander SEE(*SE, F.getParent()->getDataLayout(), "");
+  dsa::xform::CodeGenContext CGC(&IB, DSARegs, *SE, SEE);
   for (int i = 0, n = ScopePairs.size(); i < n; ++i) {
     std::string Name = F.getName().str() + "_dfg_" + std::to_string(i) + ".dfg";
     auto Start = ScopePairs[i].first;
     auto End = ScopePairs[i].second;
-    DFGFile DFG(Name, Start, End, this);
-    dsa::analysis::ExtractDFGFromScope(DFG, Start, End, DT, LI);
-    dsa::xform::EmitDFG(nullptr, &DFG);
-    dsa::xform::EmitDFG(&llvm::errs(), &DFG);
+    DFGFile DF(Name, Start, End, this);
+    dsa::analysis::ExtractDFGFromScope(DF, Start, End, DT, LI);
+    dsa::xform::EmitDFG(nullptr, &DF);
+    // dsa::xform::EmitDFG(&llvm::errs(), &DF);
     // If extraction only, we do not schedule and analyze.
     if (dsa::utils::ModuleContext().EXTRACT) {
       continue;
@@ -87,18 +89,20 @@ bool StreamSpecialize::runOnFunction(Function &F) {
     auto Cmd = formatv("ss_sched {0} {1} {2} -e 0 > /dev/null", "-v", SBCONFIG, Name).str();
     LLVM_DEBUG(INFO << Cmd);
     CHECK(system(Cmd.c_str()) == 0) << "Not successfully scheduled! Try another DFG!";
-    auto Graphs = DFG.DFGFilter<DFGBase>();
-    std::vector<std::vector<int>> Ports(Graphs.size());
-    for (int i = 0, n = Graphs.size(); i < n; ++i) {
-      Ports[i].resize(Graphs[i]->Entries.size(), -1);
-    }
-    DFG.InspectSPADs();
-    DFG.EmitAndScheduleDFG();
+    // TODO(@were): When making the DFG's of index expression is done, uncomment these.
+    // auto Graphs = DFG.DFGFilter<DFGBase>();
+    // std::vector<std::vector<int>> Ports(Graphs.size());
+    // for (int i = 0, n = Graphs.size(); i < n; ++i) {
+    //   Ports[i].resize(Graphs[i]->Entries.size(), -1);
+    // }
+    // DF.InspectSPADs();
+    auto CI = dsa::analysis::ExtractDFGPorts(Name, DF);
+    dsa::xform::InjectConfiguration(CGC, CI, Start, End);
     if (dsa::utils::ModuleContext().EXTRACT) {
       continue;
     }
-    DFG.InjectStreamIntrinsics();
-    DFG.EraseOffloadedInstructions();
+    dsa::xform::InjectStreamIntrinsics(CGC, DF);
+    DF.EraseOffloadedInstructions();
   }
   if (!dsa::utils::ModuleContext().EXTRACT) {
     for (auto &Pair : ScopePairs) {

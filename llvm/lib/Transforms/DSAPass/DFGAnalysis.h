@@ -25,12 +25,20 @@ void ExtractDFGFromScope(DFGFile &DF,
                          IntrinsicInst *Start, IntrinsicInst *End,
                          DominatorTree *DT, LoopInfo *LI);
 
+struct ConfigInfo {
+  std::string Name;
+  std::string Bitstream;
+  int Size;
+  ConfigInfo(const std::string &N, const std::string &B, int S) :
+    Name(N), Bitstream(B), Size(S) {}
+};
+
 /*!
  * \brief Extract the port number from the generated schedule.
  * \param FName The emitted file to be analyzed.
  * \param Ports Write the result in the allocated vector buffer.
  */
-void ExtractDFGPorts(std::string FName, std::vector<std::vector<int>> &Ports);
+ConfigInfo ExtractDFGPorts(std::string FName, DFGFile &DF);
 
 }
 }

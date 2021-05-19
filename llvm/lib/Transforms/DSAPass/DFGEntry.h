@@ -299,7 +299,6 @@ struct MemPort : InputPort {
   }
   void InjectStreamIntrinsic(IRBuilder<> *IB) override;
 
- private:
   bool InjectUpdateStream(IRBuilder<> *IB);
 };
 

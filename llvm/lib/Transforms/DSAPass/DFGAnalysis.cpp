@@ -644,5 +644,108 @@ void ExtractDFGFromScope(DFGFile &DF,
 
 }
 
+ConfigInfo ExtractDFGPorts(std::string FName, DFGFile &DF) {
+  std::ifstream ifs(FName + ".h");
+  auto DFGs = DF.DFGFilter<DFGBase>();
+
+  std::string Stripped(FName);
+  while (Stripped.back() != '.') Stripped.pop_back();
+  Stripped.pop_back();
+
+  int ConfigSize = 0;
+  std::string ConfigString;
+  INFO << FName;
+
+  std::string Line;
+  std::string PortPrefix(formatv("P_{0}_", Stripped).str());
+  while (std::getline(ifs, Line)) {
+    std::istringstream iss(Line);
+    std::string Token;
+    iss >> Token;
+    // #define xxx
+    if (Token == "#define") {
+      iss >> Token;
+      // #define P_dfgX_subY_vZ
+      if (Token.find(PortPrefix + "sub") == 0) {
+        int X, Y;
+        Token = Token.substr(PortPrefix.size() + 3, Token.size());
+        CHECK(sscanf(Token.c_str(), "%d_v%d", &X, &Y) == 2);
+        int Port;
+        iss >> Port;
+        LLVM_DEBUG(dbgs() << "sub" << X << "v" << Y << " -> " << Port << "\n");
+        auto Entry = DFGs[X]->Entries[Y];
+        if (auto PB = dyn_cast<PortBase>(Entry)) {
+          PB->SoftPortNum = Port;
+        } else if (auto CB = dyn_cast<ComputeBody>(Entry)) {
+          CHECK(false) << "This should be deprecated!";
+          if (!CB->isImmediateAtomic()) {
+            LLVM_DEBUG(llvm::dbgs() << "OutputPorts:\n");
+            auto OutPorts = CB->GetOutPorts();
+            for (auto &Port : CB->GetOutPorts()) {
+              LLVM_DEBUG(Port->UnderlyingInst()->dump());
+            }
+            // FIXME: For now only one destination is supported
+            // Later divergence will be supported
+            CHECK(OutPorts.size() == 1) << *CB->UnderlyingInst() << " " << OutPorts.size();
+            OutPorts[0]->SoftPortNum = Port;
+
+            // Fill in the latency of each node.
+            //{
+            //  OutputPort *OP = OutPorts[0];
+            //  std::string ON = OP->Parent->InThisDFG(OP->Output)->NameInDFG();
+            //  for (auto SDVO : dfg.nodes<SSDFGVecOutput*>()) {
+            //    if (SDVO->name() == ON) {
+            //      OP->Latency = sched->latOf(SDVO);
+            //      LLVM_DEBUG(dbgs() << "[lat] " << ON << ": " << OP->Latency << "\n");
+            //      break;
+            //    }
+            //  }
+            //}
+
+          } else {
+            CB->SoftPortNum = Port;
+          }
+        } else {
+          CHECK(false) << "DSAPass port information gathering unreachable!";
+        }
+      // #define dfgx_size size
+      } else if (Token.find(formatv("{0}_size", Stripped).str()) == 0) {
+        iss >> ConfigSize;
+      } else if (Token.find(PortPrefix + "indirect_") == 0) {
+        Token = Token.substr(std::string(PortPrefix + "indirect_").size());
+        int X, Y;
+        int Port;
+        if (sscanf(Token.c_str(), "in_%d_%d", &X, &Y) == 2) {
+          auto IMP = dyn_cast<IndMemPort>(DFGs[X]->Entries[Y]);
+          CHECK(IMP);
+          iss >> Port;
+          IMP->Index->SoftPortNum = Port;
+        } else {
+          CHECK(sscanf(Token.c_str(), "out_%d_%d", &X, &Y) == 2);
+          auto IMP = dyn_cast<IndMemPort>(DFGs[X]->Entries[Y]);
+          CHECK(IMP);
+          iss >> Port;
+          IMP->IndexOutPort = Port;
+        }
+      }
+    // char dfgx_config[size] = "filename:dfgx.sched";
+    } else if (Token == "char") {
+      // dfgx_config[size]
+      iss >> Token;
+      // =
+      iss >> Token;
+      // "filename:dfgx.sched";
+      iss >> Token;
+      ConfigString = Token.substr(1, Token.size() - 3);
+      ConfigString += std::string(ConfigSize - ConfigString.size() - 1, '\0');
+    }
+  }
+
+  LLVM_DEBUG(INFO << "[Config] " << ConfigSize << ": " << ConfigString << "\n");
+
+  return ConfigInfo(Stripped, ConfigString, ConfigSize);
+
+}
+
 }
 }
