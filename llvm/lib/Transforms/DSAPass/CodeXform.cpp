@@ -673,13 +673,13 @@ void InjectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF) {
   auto DFGs = DF.DFGFilter<DFGBase>();
 
   struct StreamIntrinsicInjector : DFGEntryVisitor {
-    void Visit(InputPort *IP) {
-      IP->InjectStreamIntrinsic(CGC.IB);
-    }
+    // void Visit(InputPort *IP) {
+    //   IP->InjectStreamIntrinsic(CGC.IB);
+    // }
 
-    void Visit(OutputPort *IP) {
-      IP->InjectStreamIntrinsic(CGC.IB);
-    }
+    // void Visit(OutputPort *IP) {
+    //   IP->InjectStreamIntrinsic(CGC.IB);
+    // }
 
     void Visit(IndMemPort *IMP) override {
       if (IMP->IntrinInjected)
@@ -806,8 +806,280 @@ void InjectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF) {
         MP->Meta.set("src", dsa::dfg::MetaPort::DataText[(int) Src]);
         MP->Meta.set("op", "read");
       }
-
       MP->IntrinInjected = true;
+    }
+
+    void Visit(PortMem *PM) override {
+      auto DFG = PM->Parent;
+      auto IB = CGC.IB;
+      if (PM->IntrinInjected)
+        return;
+
+      IB->SetInsertPoint(DFG->DefaultIP());
+      if (auto DD = dyn_cast<DedicatedDFG>(DFG)) {
+        auto &SEE = CGC.SEE;
+        SEE.setInsertPoint(DFG->DefaultIP());
+        dsa::inject::RepeatInjector RI(IB, &SEE, CGC.Regs);
+        dsa::inject::LinearInjector LI(IB, &SEE, CGC.Regs);
+        std::vector<Loop*> LoopNest(DD->LoopNest.begin(), DD->LoopNest.end());
+        auto &SE = CGC.SE;
+        auto SCEVIdx = SE.getSCEV(PM->Store->getPointerOperand());
+        int DType = PM->Store->getValueOperand()->getType()->getScalarSizeInBits() / 8;
+        InjectLinearStreamImpl(&SE, SEE, IB, SCEVIdx, LoopNest, RI, LI, PM->SoftPortNum,
+                               DFG->getUnroll(), DType, DMO_Write, DP_NoPadding, DMT_DMA);
+        PM->IntrinInjected = true;
+        return;
+      }
+
+      int Bytes = PM->Store->getValueOperand()->getType()->getScalarType()->getScalarSizeInBits() / 8;
+      auto Analyzed = DFG->AnalyzeDataStream(PM->Store->getPointerOperand(), Bytes);
+      if (!Analyzed.Dimensions.empty()) {
+        auto Dst = dsa::inject::InjectLinearStream(
+          IB, CGC.Regs, PM->SoftPortNum, Analyzed, DMO_Write, DP_NoPadding, DMT_DMA, Bytes);
+        PM->Meta.set("op", "write");
+        PM->Meta.set("dest", dsa::dfg::MetaPort::DataText[(int) Dst]);
+      } else {
+        dsa::inject::DSAIntrinsicEmitter DIE(IB, CGC.Regs);
+        IB->SetInsertPoint(PM->Store);
+        DIE.INSTANTIATE_1D_STREAM(PM->Store->getPointerOperand(), /*length*/1,
+                                  PM->SoftPortNum, /*padding*/0, DSA_Access, DMO_Write, DMT_DMA,
+                                  /*signal*/0,
+                                  PM->Store->getValueOperand()->getType()->getScalarSizeInBits() / 8,
+                                  0);
+        auto Intrin = DIE.res.back();
+        IB->SetInsertPoint(DFG->DefaultIP());
+        //auto &Ctx = Parent->getCtx();
+        //auto VoidTy = Type::getVoidTy(Ctx);
+        //int VBtyes = PM->Store->getValueOperand()->getType()->getScalarSizeInBits() / 8;
+        //auto Intrin = createAssembleCall(VoidTy, "ss_wr_dma $0, $1, $2", "r,r,i",
+        //                   {PM->Store->getPointerOperand(),
+        //                   IB->getInt64(VBtyes),
+        //                   IB->getInt64(PM->SoftPortNum << 1)},
+        //                   PM->Store);
+        DFG->InjectedCode.push_back(Intrin);
+        //auto FromCGRA = createAssembleCall(PM->Store->getValueOperand()->getType(),
+        //                                   "ss_recv $0, zero, $1", "=r,i",
+        //                                   {createConstant(Parent->getCtx(), PM->SoftPortNum)},
+        //                                   DFG->DefaultIP());
+        //auto ValueInst = dyn_cast<Instruction>(PM->Store->getValueOperand());
+        //assert(ValueInst);
+        //ValueInst->replaceAllUsesWith(FromCGRA);
+      }
+
+      PM->IntrinInjected = true;
+    }
+
+
+    void Visit(InputConst *IC) {
+      if (auto DD = dyn_cast<DedicatedDFG>(IC->Parent)) {
+        auto Analyzed = DD->AnalyzeDataStream(IC->Val, IC->Val->getType()->getScalarSizeInBits() / 8,
+                                              true, IC->Parent->DefaultIP());
+        /// FIXME: Will this cause other problem?
+        DD->InjectRepeat(Analyzed.AR, IC->Val, IC->SoftPortNum);
+        //DD->InjectRepeat(DD->TripCount(0, DD->DefaultIP()),
+        //                 DD->ProdTripCount(1, DD->LoopNest.size(), Parent->DefaultIP()), 0,
+        //                 Val, SoftPortNum);
+      } else {
+        CHECK(isa<TemporalDFG>(IC->Parent));
+        auto One = CGC.IB->getInt64(1);
+        IC->Parent->InjectRepeat(One, One, 0, IC->Val, IC->SoftPortNum);
+      }
+      IC->IntrinInjected = true;
+    }
+
+    void Visit(CtrlSignal *CS) {
+      auto DD = dyn_cast<DedicatedDFG>(CS->Parent);
+      CHECK(DD);
+      auto InsertBefore = DD->DefaultIP();
+      auto One = CGC.IB->getInt64(1);
+      auto Two = CGC.IB->getInt64(2);
+
+      if (CS->Controlled->getPredicate()) {
+        if (dsa::utils::ModuleContext().PRED) {
+          CS->IntrinInjected = true;
+        } else {
+          CGC.SS_CONST(CS->SoftPortNum, Two, One, Two->getType()->getScalarSizeInBits() / 8);
+          CGC.SS_CONST(CS->SoftPortNum, One, One, Two->getType()->getScalarSizeInBits() / 8);
+        }
+        CS->IntrinInjected = true;
+        return;
+      }
+
+
+      CHECK(!CS->IntrinInjected);
+      auto CR = CS->Controlled->NumValuesProduced();
+      assert(CR);
+
+      /// {
+      auto IB = CGC.IB;
+      auto Iters = IB->CreateUDiv(DD->ProdTripCount(DD->LoopNest.size(), InsertBefore),
+                                  CR, "const.iters");
+      auto Unroll = IB->getInt64(DD->UnrollFactor);
+      auto Ceil = CeilDiv(CR, Unroll, InsertBefore);
+      auto RepeatTwo = IB->CreateSub(Ceil, One, "repeat.two", InsertBefore);
+      CGC.SS_2D_CONST(CS->SoftPortNum, Two, RepeatTwo, One, One, Iters,
+                      Two->getType()->getScalarSizeInBits() / 8);
+      /// }
+
+      CS->IntrinInjected = true;
+    }
+
+    void Visit(CtrlMemPort *CMP) {
+    
+      auto IB = CGC.IB;
+      auto One = IB->getInt64(1);
+      auto Zero = IB->getInt64(0);
+      IB->SetInsertPoint(CMP->Parent->DefaultIP());
+
+      if (!dsa::utils::ModuleContext().PRED) {
+        // PortNum == -1 indicates this port is omitted because of no predication support
+        if (CMP->SoftPortNum != -1) {
+          CGC.SS_CONST(CMP->SoftPortNum, CMP->Load, One,
+                       CMP->Load->getType()->getScalarSizeInBits() / 8);
+          auto DD = dyn_cast<DedicatedDFG>(CMP->Parent);
+          CHECK(DD && "This node only exists in stream DFGs");
+          CGC.SS_CONST(CMP->SoftPortNum, Zero, One);
+        }
+        CMP->IntrinInjected = true;
+        return;
+      }
+
+
+      // If this stream is for the predicate, we require users to put sentinal at the end the next
+      // word of the array.
+      int DType = CMP->Load->getType()->getScalarSizeInBits();
+      CGC.INSTANTIATE_1D_STREAM(CMP->Start, DType, CMP->TripCnt, CMP->SoftPortNum,
+                                0, DSA_Access, DMO_Read, DMT_DMA, DType, 0);
+
+
+      CMP->Meta.set("op", "read");
+      CMP->Meta.set("src", "memory");
+
+      // If this stream is NOT for the predicate, we pad two zero values to produce the final result.
+      if (!CMP->ForPredicate) {
+        CGC.SS_CONST(CMP->SoftPortNum, IB->getInt64(0), IB->getInt64(1), DType);
+      }
+
+      // This is kinda ad-hoc, because we current do not support a runtime-determined length stream.
+      // This assumption does not work on that case.
+
+      //FIXME: Automatically inject sentinal tail
+      //if (CMP->ForPredicate) {
+      //  auto Sentinal = createConstant(getCtx(), 1ull << (Bits - 1), Bits);
+      //  createAssembleCall(VoidTy, "ss_const $0, $1, $2", "r,r,i",
+      //                     {Sentinal, One, createConstant(getCtx(), CMP->SoftPortNum)},
+      //                     DFG->DefaultIP());
+      //} else {
+      //  createAssembleCall(VoidTy, "ss_const $0, $1, $2", "r,r,i",
+      //                     {createConstant(getCtx(), 0), One,
+      //                     createConstant(getCtx(), CMP->SoftPortNum)},
+      //                     DFG->DefaultIP());
+      //}
+
+      CMP->IntrinInjected = true;
+    }
+
+    void Visit(OutputPort *OP) {
+      auto Recv = CGC.SS_RECV(OP->SoftPortNum, OP->Output->getType()->getScalarSizeInBits() / 8).value(CGC.IB);
+      Recv = CGC.IB->CreateBitCast(Recv, OP->Output->getType());
+      std::set<Instruction*> Equiv;
+      FindEquivPHIs(OP->Output, Equiv);
+      for (auto Iter : Equiv) {
+        Iter->replaceAllUsesWith(Recv);
+      }
+      OP->IntrinInjected = true;
+    }
+
+    void Visit(StreamOutPort *SOP) {
+      auto SIP = SOP->FindConsumer();
+      assert(!SOP->IntrinInjected && !SIP->IntrinInjected);
+      if (auto DD = dyn_cast<DedicatedDFG>(SIP->Parent)) {
+        int Bytes = SOP->Output->getType()->getScalarType()->getScalarSizeInBits() / 8;
+        auto Analyzed = DD->AnalyzeDataStream(SOP->Output, Bytes, true, SOP->Parent->DefaultIP());
+        /// FIXME: Will this cause other problem?
+        DD->InjectRepeat(Analyzed.AR, nullptr, SIP->SoftPortNum);
+        assert(Analyzed.OuterRepeat);
+        CGC.SS_RECURRENCE(SOP->SoftPortNum, SIP->SoftPortNum, Analyzed.OuterRepeat,
+                          SOP->Output->getType()->getScalarSizeInBits() / 8);
+      } else if (isa<TemporalDFG>(SIP->Parent)) {
+        // TODO: Support temporal stream
+        CGC.SS_RECURRENCE(SOP->SoftPortNum, SIP->SoftPortNum, CGC.IB->getInt64(1),
+                          SOP->Output->getType()->getScalarSizeInBits() / 8);
+      }
+      SOP->IntrinInjected = SIP->IntrinInjected = true;
+    }
+
+    void Visit(AtomicPortMem *APM) {
+      // Open these when bringing APM back.
+      CHECK(false) << "Not implemented yet!";
+      // if (!dsa::utils::ModuleContext().IND) {
+      //   if (auto DFGEntry = Parent->InThisDFG(Operand)) {
+      //     assert(false && "TODO: ss_recv operand from port!");
+      //     (void) DFGEntry;
+      //   } else {
+      //     (void) DFGEntry;
+      //   }
+      //   IntrinInjected = true;
+      //   Meta.set("cmd", "0.1");
+      //   return;
+      // }
+      // // TODO: Support OpCode() == 3.
+      // assert(OpCode == 0);
+    
+      // SoftPortNum = Parent->getNextIND();
+    
+      // auto Index = this->Index->Load->getPointerOperand();
+      // auto Analyzed = Parent->AnalyzeDataStream(
+      //   Index, this->Index->Load->getType()->getScalarSizeInBits() / 8);
+      // Parent->InjectRepeat(Analyzed.AR, nullptr, SoftPortNum);
+      // auto ActualSrc =
+      //   dsa::inject::InjectLinearStream(IB, Parent->Parent->Query->DSARegs,
+      //                                   SoftPortNum, Analyzed, DMO_Read, DP_NoPadding, DMT_DMA,
+      //                                   this->Index->Load->getType()->getScalarSizeInBits() / 8);
+      // int OperandPort = -1;
+      // auto DD = dyn_cast<DedicatedDFG>(Parent);
+      // assert(DD);
+      // // FIXME: Is trip count a temporary solution?
+      // auto TripCnt = DD->ProdTripCount(DD->LoopNest.size(), DD->DefaultIP());
+    
+      // if (auto DFGEntry = Parent->InThisDFG(Operand)) {
+      //   if (auto CB = dyn_cast<ComputeBody>(DFGEntry)) {
+      //     assert(CB->isImmediateAtomic());
+      //     OperandPort = CB->SoftPortNum;
+      //   } else if (auto IP = dyn_cast<InputPort>(DFGEntry)) {
+      //     OperandPort = IP->SoftPortNum;
+      //   }
+      // } else {
+      //   OperandPort = Parent->getNextReserved();
+      //   uint64_t CI = stoul(ValueToOperandText(Operand));
+      //   int DBits = this->Store->getValueOperand()->getType()->getScalarSizeInBits();
+      //   createAssembleCall(IB->getVoidTy(), "ss_const $0, $1, $2", "r,r,i",
+      //                      {IB->getInt64(CI), TripCnt,
+      //                       IB->getInt64(OperandPort | ((TBits(DBits) + 1) << 9))},
+      //                      Parent->DefaultIP());
+      // }
+    
+      // int IBits = this->Index->Load->getType()->getScalarSizeInBits();
+      // int DBits = this->Store->getValueOperand()->getType()->getScalarSizeInBits();
+    
+      // auto TImm = IB->getInt64((TBits(DBits) << 4) | (TBits(DBits) << 2) | TBits(IBits));
+      // auto NumUpdates = IB->getInt64(1);
+      // auto TupleLen = IB->getInt64(1);
+      // createAssembleCall(IB->getVoidTy(), "ss_cfg_atom_op $0, $1, $2", "r,r,i",
+      //                    {TupleLen, NumUpdates, TImm},
+      //                    Parent->DefaultIP());
+      // Meta.set("src", dsa::dfg::MetaPort::DataText[(int) ActualSrc]);
+      // Meta.set("dest", "spad");
+      // Meta.set("op", "atomic");
+      // // FIXME: offset is not always 0
+      // uint32_t OffsetList = 0;
+      // auto AddrPort = IB->getInt64(OffsetList | (SoftPortNum << 24));
+      // auto ValuePort = IB->getInt64((OperandPort << 2) | ((int) OpCode));
+      // createAssembleCall(IB->getVoidTy(), "ss_atom_op $0, $1, $2", "r,r,i",
+      //                    {AddrPort, TripCnt, ValuePort},
+      //                    Parent->DefaultIP());
+    
+      // IntrinInjected = true;
     }
 
     CodeGenContext &CGC;

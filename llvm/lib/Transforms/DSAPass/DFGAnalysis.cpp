@@ -654,7 +654,6 @@ ConfigInfo ExtractDFGPorts(std::string FName, DFGFile &DF) {
 
   int ConfigSize = 0;
   std::string ConfigString;
-  INFO << FName;
 
   std::string Line;
   std::string PortPrefix(formatv("P_{0}_", Stripped).str());
