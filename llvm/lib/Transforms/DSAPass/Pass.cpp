@@ -1,24 +1,23 @@
 
 #include <cstdlib>
-#include <sstream>
 #include <fstream>
-#include <queue>
 #include <map>
+#include <queue>
+#include <sstream>
 
 #include "./llvm_common.h"
 
 #include "CodeXform.h"
 #include "DFGAnalysis.h"
 #include "DFGEntry.h"
+#include "Pass.h"
 #include "Transformation.h"
 #include "Util.h"
-#include "Pass.h"
 #include "dsa/rf.h"
 
 using namespace llvm;
 
 #define DEBUG_TYPE "stream-specialize"
-
 
 bool StreamSpecialize::runOnModule(Module &M) {
 
@@ -86,11 +85,14 @@ bool StreamSpecialize::runOnFunction(Function &F) {
     }
     auto SBCONFIG = getenv("SBCONFIG");
     CHECK(SBCONFIG);
-    auto Cmd = formatv("ss_sched {0} {1} {2} -e 0 > /dev/null", "-v", SBCONFIG, Name).str();
+    auto Cmd =
+        formatv("ss_sched {0} {1} {2} -e 0 > /dev/null", "-v", SBCONFIG, Name)
+            .str();
     LLVM_DEBUG(INFO << Cmd);
-    CHECK(system(Cmd.c_str()) == 0) << "Not successfully scheduled! Try another DFG!";
-    // TODO(@were): When making the DFG's of index expression is done, uncomment these.
-    // auto Graphs = DFG.DFGFilter<DFGBase>();
+    CHECK(system(Cmd.c_str()) == 0)
+        << "Not successfully scheduled! Try another DFG!";
+    // TODO(@were): When making the DFG's of index expression is done, uncomment
+    // these. auto Graphs = DFG.DFGFilter<DFGBase>();
     // std::vector<std::vector<int>> Ports(Graphs.size());
     // for (int i = 0, n = Graphs.size(); i < n; ++i) {
     //   Ports[i].resize(Graphs[i]->Entries.size(), -1);
@@ -115,10 +117,7 @@ bool StreamSpecialize::runOnFunction(Function &F) {
 
   // HandleMemIntrin(F);
 
-  LLVM_DEBUG(
-    llvm::errs() << "After transformation:\n";
-    F.dump()
-  );
+  LLVM_DEBUG(llvm::errs() << "After transformation:\n"; F.dump());
 
   return false;
 }
@@ -126,7 +125,7 @@ bool StreamSpecialize::runOnFunction(Function &F) {
 void StreamSpecialize::HandleMemIntrin(Function &F) {
   // FIXME(@were): After decoupling, we no longer need this.
   DFGFile Dummy("dummy", nullptr, nullptr, this);
-  std::vector<IntrinsicInst*> ToInject;
+  std::vector<IntrinsicInst *> ToInject;
 
   for (auto &BB : F) {
     for (auto &I : BB) {
@@ -152,12 +151,13 @@ void StreamSpecialize::HandleMemIntrin(Function &F) {
 
     // DedicatedDFG DFG(&Dummy, Intrin);
     // IBPtr->SetInsertPoint(DFG.DefaultIP());
-    // dsa::inject::InjectLinearStream(IBPtr, DSARegs, MemScrPort, AS1, DMO_Read, DP_NoPadding, DMT_DMA, 1);
-    // dsa::inject::InjectLinearStream(IBPtr, DSARegs, MemScrPort, AS1, DMO_Read, DP_NoPadding, DMT_SPAD, 1);
+    // dsa::inject::InjectLinearStream(IBPtr, DSARegs, MemScrPort, AS1,
+    // DMO_Read, DP_NoPadding, DMT_DMA, 1);
+    // dsa::inject::InjectLinearStream(IBPtr, DSARegs, MemScrPort, AS1,
+    // DMO_Read, DP_NoPadding, DMT_SPAD, 1);
     // dsa::inject::DSAIntrinsicEmitter(IBPtr, DSARegs).SS_WAIT(~0ull);
     // Intrin->eraseFromParent();
   }
-
 }
 
 void StreamSpecialize::getAnalysisUsage(AnalysisUsage &AU) const {
@@ -177,4 +177,5 @@ void StreamSpecialize::getAnalysisUsage(AnalysisUsage &AU) const {
 
 char StreamSpecialize::ID = 0;
 
-static RegisterPass<StreamSpecialize> X("stream-specialize", "Decoupld-Spatial Specialized Transformation");
+static RegisterPass<StreamSpecialize>
+    X("stream-specialize", "Decoupld-Spatial Specialized Transformation");

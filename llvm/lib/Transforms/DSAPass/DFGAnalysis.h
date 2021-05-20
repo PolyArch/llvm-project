@@ -11,7 +11,7 @@ namespace analysis {
  * \brief Gather all the pairs of dsa.config.start/end
  * \param F The function to be analyzed.
  */
-std::vector<std::pair<IntrinsicInst*, IntrinsicInst*>>
+std::vector<std::pair<IntrinsicInst *, IntrinsicInst *>>
 GatherConfigScope(Function &F);
 
 /*!
@@ -21,16 +21,15 @@ GatherConfigScope(Function &F);
  * \param DT The dominator tree information for analysis
  * \param LI The loop information for analysis
  */
-void ExtractDFGFromScope(DFGFile &DF,
-                         IntrinsicInst *Start, IntrinsicInst *End,
+void ExtractDFGFromScope(DFGFile &DF, IntrinsicInst *Start, IntrinsicInst *End,
                          DominatorTree *DT, LoopInfo *LI);
 
 struct ConfigInfo {
   std::string Name;
   std::string Bitstream;
   int Size;
-  ConfigInfo(const std::string &N, const std::string &B, int S) :
-    Name(N), Bitstream(B), Size(S) {}
+  ConfigInfo(const std::string &N, const std::string &B, int S)
+      : Name(N), Bitstream(B), Size(S) {}
 };
 
 /*!
@@ -40,5 +39,5 @@ struct ConfigInfo {
  */
 ConfigInfo ExtractDFGPorts(std::string FName, DFGFile &DF);
 
-}
-}
+} // namespace analysis
+} // namespace dsa
