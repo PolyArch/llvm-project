@@ -125,7 +125,6 @@ struct DFGEntry {
     return oss.str();
   }
 
-  virtual bool OperandReady(std::set<Value *> &Ready);
   virtual int getAbstainBit();
 
   /// Get the name of the entry to be dumped in the DFG textformat
@@ -203,7 +202,6 @@ struct Accumulator : ComputeBody {
   CtrlSignal *Ctrl;
   Accumulator(DFGBase *Parent_, Instruction *Operation_, CtrlSignal *Ctrl_);
   bool ShouldUnroll() override;
-  bool OperandReady(std::set<Value *> &Ready) override;
   Value *NumValuesProduced();
   /*!
    * \brief The entrance of the visitor pattern.
@@ -222,7 +220,6 @@ struct PortBase : DFGEntry {
 
   virtual int PortWidth();
   PortBase(DFGBase *Parent_);
-  bool OperandReady(std::set<Value *> &Ready) override;
   int VectorizeFactor();
   /*!
    * \brief The entrance of the visitor pattern.

@@ -392,39 +392,6 @@ void DFGEntry::dump(std::ostringstream &os) {
   }
 }
 
-bool DFGEntry::OperandReady(std::set<Value *> &Ready) {
-  auto Inst = UnderlyingInst();
-  for (size_t i = 0; i < Inst->getNumOperands(); ++i) {
-    auto InstOperand = Inst->getOperand(i);
-    auto Entry = Parent->InThisDFG(InstOperand);
-    if (!Entry) {
-      continue;
-    }
-    // A self-control port is allowed...
-    if (isa<InputPort>(Entry) && Entry->getPredicate() == this)
-      Ready.insert(InstOperand);
-    if (Ready.find(InstOperand) == Ready.end())
-      return false;
-  }
-  auto Pred = getPredicate();
-  if (!Pred)
-    return true;
-  return Ready.count(Pred->UnderlyingInst());
-}
-
-bool Accumulator::OperandReady(std::set<Value *> &Ready) {
-  auto Inst = UnderlyingInst();
-  for (size_t i = 0; i < Inst->getNumOperands(); ++i) {
-    if (isa<PHINode>(Inst->getOperand(i)))
-      continue;
-    if (Ready.find(Inst->getOperand(i)) == Ready.end())
-      return false;
-  }
-  return true;
-}
-
-bool PortBase::OperandReady(std::set<Value *> &Ready) { return true; }
-
 Value *Accumulator::NumValuesProduced() {
   auto Inst = UnderlyingInst();
   assert(IsInMajor());

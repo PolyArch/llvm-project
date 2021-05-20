@@ -532,6 +532,18 @@ struct DFGEntryAnalyzer : DFGVisitor {
       }
     }
 
+    if (DD.Entries.empty()) {
+      CHECK(Visited.size() == 1 && isa<LoadInst>(Visited[0]));
+      DD.Entries.push_back(DifferentiateMemoryStream(dyn_cast<LoadInst>(Visited[0])));
+      InspectConsumers(Visited[0]);
+      for (auto Elem : DD.Entries) {
+        INFO << *Elem;
+      }
+    }
+
+    CHECK(!DD.Entries.empty());
+
+
     // TODO(@were): Open this to support data move.
     // for (auto Inst : Visited) {
     //   auto Load = dyn_cast<LoadInst>(Inst);

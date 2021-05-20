@@ -80,22 +80,6 @@ std::vector<utils::StickyRegister> InjectDSARegisterFile(Function &F) {
   return Res;
 }
 
-// TODO(@were): I did not remember what is this function for.
-bool HasOtherUser(InputPort *IP, Value *Val) {
-  for (auto User : Val->users()) {
-    if (auto Entry = IP->Parent->InThisDFG(User)) {
-      if (auto CB = dyn_cast<ComputeBody>(Entry)) {
-        if (!CB->isAtomic())
-          return true;
-      }
-      if (isa<Predicate>(Entry)) {
-        return true;
-      }
-    }
-  }
-  return false;
-}
-
 std::string ValueToOperandText(Value *Val) {
 
   if (auto CI = dyn_cast<ConstantInt>(Val)) {
@@ -325,9 +309,6 @@ struct DFGPrinter : dsa::DFGVisitor {
     }
 
     void Visit(InputConst *IC) {
-      if (!HasOtherUser(IC, IC->Val)) {
-        return;
-      }
       Visit(cast<DFGEntry>(IC));
       os << "Input" << IC->Val->getType()->getScalarSizeInBits() << ": "
          << IC->Name() << "\n";
@@ -346,9 +327,6 @@ struct DFGPrinter : dsa::DFGVisitor {
         if (IMP->duplicated()) {
           return;
         }
-      }
-      if (!HasOtherUser(IP, IP->UnderlyingInst())) {
-        return;
       }
       Visit(cast<DFGEntry>(IP));
       {
@@ -885,11 +863,6 @@ void InjectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF) {
 
       if (MP->IntrinInjected)
         return;
-
-      if (!HasOtherUser(MP, MP->UnderlyingInst())) {
-        MP->IntrinInjected = true;
-        return;
-      }
 
       // TODO(@were): Decouple this!
       if (MP->InjectUpdateStream(IB)) {

@@ -1,10 +1,13 @@
-#include "Util.h"
 #include "llvm/Analysis/ScalarEvolutionExpressions.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/Type.h"
 #include "llvm/Support/FormatVariadic.h"
 #include "llvm/Transforms/Utils/ScalarEvolutionExpander.h"
+
+#include "Util.h"
+#include "DFGEntry.h"
+#include "Transformation.h"
 
 #include <queue>
 #include <set>
@@ -165,3 +168,47 @@ ModuleFlags &ModuleContext() {
 
 } // namespace utils
 } // namespace dsa
+
+raw_ostream &operator<<(raw_ostream &os, DFGEntry &DE) {
+
+  static const char *KindStr[] = {
+      "DFGEntry",
+
+      // Computation {
+      "ComputeStarts", "ComputeBody", "Duplicate", "Accumulator", "ComputeEnds",
+      // }
+
+      // Predicate {
+      "Predicate",
+      // }
+
+      // Port {
+      "PortStarts", "PortBase",
+
+      // InPort {
+      "InPortStarts", "InputPort", "MemPort", "IndMemPort", "CtrlMemPort",
+      "InputConst", "StreamInPort", "CtrlSignal", "InPortEnds",
+      // }
+
+      // OutPort {
+      "OutPortStarts", "OutputPort", "PortMem", "AtomicPortMem", "StreamOutPort",
+      "OutPortEnds",
+      // }
+
+      "PortEnds"
+      // }
+  };
+
+  os << "# [" << KindStr[(int) DE.Kind] << "]: DFG" << DE.Parent->ID << " Entry"
+     << DE.ID << "\n";
+  int i = 0;
+  auto Insts = DE.UnderlyingInsts();
+  for (auto Elem : Insts) {
+    os << "# Inst";
+    if (Insts.size() != 1) {
+      os << i++;
+    }
+    os << ": " << *Elem << "\n";
+  }
+  return os;
+}

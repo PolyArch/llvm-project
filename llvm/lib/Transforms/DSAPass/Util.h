@@ -1,5 +1,4 @@
-#ifndef STREAM_SPECIALIZE_UTIL_H_
-#define STREAM_SPECIALIZE_UTIL_H_
+#pragma once
 
 #include <map>
 #include <set>
@@ -146,4 +145,6 @@ int PredicateToInt(ICmpInst::Predicate Pred, bool TF, bool Reverse);
 
 BasicBlock *FindLoopPrologue(Loop *L);
 
-#endif
+class DFGEntry;
+
+raw_ostream &operator<<(raw_ostream &OS, DFGEntry &DE);
