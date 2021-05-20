@@ -232,34 +232,6 @@ int ScalarBits2T(int Bits) {
   assert(false);
 }
 
-void DFGFile::InjectStreamIntrinsics() {
-  auto IB = Query->IBPtr;
-
-  for (auto &DFG : DFGs) {
-    for (auto Port : DFG->EntryFilter<InputPort>()) {
-      LLVM_DEBUG(dbgs() << "Inject for "; dbgs() << Port->dump());
-      Port->InjectStreamIntrinsic(IB);
-    }
-  }
-
-  for (auto &DFG : DFGs) {
-    for (auto Port : DFG->EntryFilter<OutputPort>()) {
-      LLVM_DEBUG(dbgs() << "Inject for "; dbgs() << Port->dump());
-      Port->InjectStreamIntrinsic(IB);
-    }
-  }
-
-  for (auto &DD : DFGs) {
-    for (auto &PB : DD->EntryFilter<PortBase>()) {
-      CHECK(PB->IntrinInjected);
-    }
-  }
-
-  IB->SetInsertPoint(Fence);
-  dsa::inject::DSAIntrinsicEmitter(IB, Query->DSARegs).SS_WAIT_ALL();
-
-}
-
 Instruction *DFGBase::InjectRepeat(const AnalyzedRepeat &AR, Value *Val, int Port) {
   SCEVExpander Expander(*Parent->Query->SE, Parent->Func.getParent()->getDataLayout(), "");
 

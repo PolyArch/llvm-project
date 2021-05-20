@@ -232,7 +232,6 @@ struct PortBase : DFGEntry {
   virtual int PortWidth();
   PortBase(DFGBase *Parent_);
   bool OperandReady(std::set<Value*> &Ready) override;
-  virtual void InjectStreamIntrinsic(IRBuilder<> *IB) {}
   int VectorizeFactor();
   /*!
    * \brief The entrance of the visitor pattern.
@@ -270,7 +269,6 @@ struct CtrlMemPort : InputPort {
 
   Predicate *getPredicate(int *MaskPtr = nullptr) override;
   Instruction *UnderlyingInst() override;
-  void InjectStreamIntrinsic(IRBuilder<> *) override;
   /*!
    * \brief The entrance of the visitor pattern.
    */
@@ -297,7 +295,6 @@ struct MemPort : InputPort {
   static bool classof(const DFGEntry *DE) {
     return DE->Kind == kMemPort;
   }
-  void InjectStreamIntrinsic(IRBuilder<> *IB) override;
 
   bool InjectUpdateStream(IRBuilder<> *IB);
 };
@@ -328,7 +325,6 @@ struct CtrlSignal : InputPort {
   Value *FindConsumeRate();
 
   bool ShouldUnroll() override;
-  void InjectStreamIntrinsic(IRBuilder<> *IB) override;
   /*!
    * \brief The entrance of the visitor pattern.
    */
@@ -360,7 +356,6 @@ struct InputConst : InputPort {
     return DE->Kind == kInputConst;
   }
 
-  void InjectStreamIntrinsic(IRBuilder<> *IB) override;
 
 };
 
@@ -387,8 +382,6 @@ struct OutputPort : PortBase {
     return DE->Kind > kOutPortStarts && DE->Kind < kOutPortEnds;
   }
 
-  void InjectStreamIntrinsic(IRBuilder<> *) override;
-
 };
 
 // Value will be written to memory through a port
@@ -397,7 +390,6 @@ struct PortMem : OutputPort {
   PortMem(DFGBase *Parent_, StoreInst *Store_);
 
   Instruction *UnderlyingInst() override;
-  void InjectStreamIntrinsic(IRBuilder<> *IB) override;
   /*!
    * \brief The entrance of the visitor pattern.
    */
@@ -414,7 +406,6 @@ struct StreamOutPort : OutputPort {
 
   StreamOutPort(DFGBase *Parent_, Instruction *Inst);
 
-  void InjectStreamIntrinsic(IRBuilder<> *IB);
   /*!
    * \brief The entrance of the visitor pattern.
    */
@@ -443,8 +434,6 @@ struct IndMemPort : InputPort {
    */
   virtual void Accept(dsa::DFGEntryVisitor *);
 
-  void InjectStreamIntrinsic(IRBuilder<> *IB) override;
-
   static bool classof(const DFGEntry *DE) {
     return DE->Kind == kIndMemPort;
   }
@@ -468,7 +457,6 @@ struct AtomicPortMem : OutputPort {
                 Instruction *Op_, Value *Operand_);
   Instruction *UnderlyingInst() override;
 
-  void InjectStreamIntrinsic(IRBuilder<> *IB) override;
   std::vector<Instruction*> UnderlyingInsts() override;
   void EmitOutPort(std::ostringstream &os);
   /*!

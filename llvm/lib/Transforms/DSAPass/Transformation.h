@@ -222,8 +222,6 @@ public:
 
   /// Add the given DFG to this file
   void addDFG(DFGBase *DFG);
-  /// Analyze the data streams
-  void InjectStreamIntrinsics();
   /// Erase all the instructions offloaded to CGRA
   void EraseOffloadedInstructions();
   /// Get the current context
