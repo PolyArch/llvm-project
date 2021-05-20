@@ -756,9 +756,7 @@ void InjectLinearStreamImpl(CodeGenContext &CGC, const SCEV *Idx,
           IB->CreateAdd(SEE.expandCodeFor(Loops[i]->Base), IB->getInt64(1));
       Value *Stretch = IB->getInt64(0);
       if (!Loops[i]->Coef.empty()) {
-        Stretch =
-            IB->CreateSDiv(SEE.expandCodeFor(Loops[i]->Coef[i + 1]->Base),
-                           IB->getInt64(DType));
+        Stretch = SEE.expandCodeFor(Loops[i]->Coef[i + 1]->Base);
       }
       auto Length2D = IB->CreateAdd(SEE.expandCodeFor(Loops[i + 1]->Base),
                                     IB->getInt64(1));
@@ -939,22 +937,7 @@ void InjectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF) {
       auto CR =
         InjectComputedRepeat(CGC, DLI.TripCount, DLI.TripCount.size(), IC->Parent->getUnroll());
       CHECK(!CR.second) << "Should not be stretched!";
-      INFO << *CR.first;
-      // CGC.SS_CONST(IC->SoftPortNum, IC->Val, CR.first, IC->Val->getType()->getScalarSizeInBits() / 8);
-      if (auto DD = dyn_cast<DedicatedDFG>(IC->Parent)) {
-        auto Analyzed = DD->AnalyzeDataStream(
-            IC->Val, IC->Val->getType()->getScalarSizeInBits() / 8, true,
-            IC->Parent->DefaultIP());
-        /// FIXME: Will this cause other problem?
-        DD->InjectRepeat(Analyzed.AR, IC->Val, IC->SoftPortNum);
-        // DD->InjectRepeat(DD->TripCount(0, DD->DefaultIP()),
-        //                 DD->ProdTripCount(1, DD->LoopNest.size(),
-        //                 Parent->DefaultIP()), 0, Val, SoftPortNum);
-      } else {
-        CHECK(isa<TemporalDFG>(IC->Parent));
-        auto One = CGC.IB->getInt64(1);
-        IC->Parent->InjectRepeat(One, One, 0, IC->Val, IC->SoftPortNum);
-      }
+      CGC.SS_CONST(IC->SoftPortNum, IC->Val, CR.first, IC->Val->getType()->getScalarSizeInBits() / 8);
       IC->IntrinInjected = true;
     }
 
