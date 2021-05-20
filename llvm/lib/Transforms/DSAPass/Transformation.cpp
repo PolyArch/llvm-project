@@ -86,7 +86,7 @@ const std::string &DFGFile::getName() { return FileName; }
 
 /// Check if a given SCEV is loop invariant
 bool CheckLoopInvariant(const SCEV *S, int From,
-                        const SmallVector<Loop *, 0> &LoopNest,
+                        const std::vector<Loop*> &LoopNest,
                         ScalarEvolution *SE) {
   for (size_t i = From; i < LoopNest.size(); ++i) {
     auto LI = LoopNest[i];
@@ -140,7 +140,7 @@ Value *DFGBase::ComputeRepeat(const AnalyzedRepeat &AR, bool isVectorized,
 }
 
 /// Chech if a SCEV can be a repeat stretch
-bool CanBeStretched(int x, const SmallVector<Loop *, 0> &LoopNest,
+bool CanBeStretched(int x, const std::vector<Loop*> &LoopNest,
                     ScalarEvolution *SE) {
   if (x != 1) {
     LLVM_DEBUG(dbgs() << "[Can be stretch] x != 1\n");

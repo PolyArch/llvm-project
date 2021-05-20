@@ -122,8 +122,7 @@ LinearInfo *AnalyzeIndexExpr(ScalarEvolution *SE, const SCEV *Raw,
       AppendZero();
     }
   }
-  CHECK(LI->Coef.size() == Loops.size())
-      << LI->Coef.size() << " != " << Loops.size();
+  CHECK(LI->Coef.size() == Loops.size()) << LI->Coef.size() << " != " << Loops.size();
   LI->Base = Raw;
   return LI;
 }

@@ -70,7 +70,7 @@ public:
   /// The DFGFile contains this DFG
   DFGFile *Parent;
   /// The instructions to be emitted as DFG
-  SmallVector<DFGEntry *, 0> Entries;
+  std::vector<DFGEntry*> Entries;
   /// Find a value among the compute bodies
   std::string ValueToOperandText(Value *Val, int Vec = -1);
   /// To unify the comparisons
@@ -283,7 +283,7 @@ class DedicatedDFG : public DFGBase {
 
 public:
   /// The loop levels from dfg to stream pragma
-  SmallVector<Loop *, 0> LoopNest;
+  std::vector<Loop*> LoopNest;
   /// How many times the instances should be duplicated
   int UnrollFactor;
   /// Blocks in this path of loop nest

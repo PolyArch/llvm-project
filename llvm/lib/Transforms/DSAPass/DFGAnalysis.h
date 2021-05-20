@@ -24,6 +24,9 @@ GatherConfigScope(Function &F);
 void ExtractDFGFromScope(DFGFile &DF, IntrinsicInst *Start, IntrinsicInst *End,
                          DominatorTree *DT, LoopInfo *LI);
 
+/*!
+ * \brief Information for confiration injection.
+ */
 struct ConfigInfo {
   std::string Name;
   std::string Bitstream;
@@ -38,6 +41,32 @@ struct ConfigInfo {
  * \param Ports Write the result in the allocated vector buffer.
  */
 ConfigInfo ExtractDFGPorts(std::string FName, DFGFile &DF);
+
+/*!
+ * \brief Analyze DFG loops for code generation.
+ */
+struct DFGLoopInfo {
+  /*!
+   * \brief The loop nest, from inner to outer.
+   */
+  std::vector<Loop*> LoopNest;
+  /*!
+   * \brief The trip count of each loop level, corresponding to the loop nest above.
+   */
+  std::vector<analysis::LinearInfo*> TripCount;
+
+  DFGLoopInfo() {}
+
+  DFGLoopInfo(const std::vector<Loop*> &L, const std::vector<analysis::LinearInfo*> &T) :
+    LoopNest(L), TripCount(T) {}
+};
+
+/*!
+ * \brief Gather the loop information of the loop nest that wraps the DFG.
+ * \param DB The DFG to be analyzed.
+ * \param SE The scalar evolution for analysis.
+ */
+DFGLoopInfo AnalyzeDFGLoops(DFGBase *DB, ScalarEvolution &SE);
 
 } // namespace analysis
 } // namespace dsa

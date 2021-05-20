@@ -769,5 +769,30 @@ ConfigInfo ExtractDFGPorts(std::string FName, DFGFile &DF) {
   return ConfigInfo(Stripped, ConfigString, ConfigSize);
 }
 
+
+DFGLoopInfo AnalyzeDFGLoops(DFGBase *DB, ScalarEvolution &SE) {
+  struct DFGLoopAnalyzer : DFGVisitor {
+    void Visit(DedicatedDFG *DD) override {
+      auto &LoopNest = DD->LoopNest;
+      DLI.LoopNest = LoopNest;
+      for (int i = 0; i < (int) LoopNest.size(); ++i) {
+        DLI.TripCount.push_back(
+          analysis::AnalyzeIndexExpr(&SE, SE.getBackedgeTakenCount(LoopNest[i]), LoopNest));
+      }
+    }
+
+    void Visit(TemporalDFG *TD) override {}
+
+    DFGLoopInfo DLI;
+    ScalarEvolution &SE;
+
+    DFGLoopAnalyzer(ScalarEvolution &SE_) : SE(SE_) {}
+  };
+
+  DFGLoopAnalyzer DLA(SE);
+  DB->Accept(&DLA);
+  return DLA.DLI;
+}
+
 } // namespace analysis
 } // namespace dsa
