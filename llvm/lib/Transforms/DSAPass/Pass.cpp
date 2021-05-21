@@ -119,49 +119,9 @@ bool StreamSpecialize::runOnFunction(Function &F) {
     return false;
   }
 
-  // HandleMemIntrin(F);
-
   LLVM_DEBUG(llvm::errs() << "After transformation:\n"; F.dump());
 
   return false;
-}
-
-void StreamSpecialize::HandleMemIntrin(Function &F) {
-  // FIXME(@were): After decoupling, we no longer need this.
-  DFGFile Dummy("dummy", nullptr, nullptr, this);
-  std::vector<IntrinsicInst *> ToInject;
-
-  for (auto &BB : F) {
-    for (auto &I : BB) {
-      auto Intrin = dyn_cast<IntrinsicInst>(&I);
-      if (!Intrin)
-        continue;
-      if (Intrin->getIntrinsicID() == Intrinsic::memcpy) {
-        ToInject.push_back(Intrin);
-      }
-    }
-  }
-
-  for (auto Intrin : ToInject) {
-    Value *Dst = Intrin->getOperand(0);
-    Value *Src = Intrin->getOperand(1);
-    Value *Size = Intrin->getOperand(2);
-
-    AnalyzedStream AS0;
-    AnalyzedStream AS1;
-
-    AS0.Dimensions.emplace_back(Dst, Size, 0);
-    AS1.Dimensions.emplace_back(Src, Size, 0);
-
-    // DedicatedDFG DFG(&Dummy, Intrin);
-    // IBPtr->SetInsertPoint(DFG.DefaultIP());
-    // dsa::inject::InjectLinearStream(IBPtr, DSARegs, MemScrPort, AS1,
-    // DMO_Read, DP_NoPadding, DMT_DMA, 1);
-    // dsa::inject::InjectLinearStream(IBPtr, DSARegs, MemScrPort, AS1,
-    // DMO_Read, DP_NoPadding, DMT_SPAD, 1);
-    // dsa::inject::DSAIntrinsicEmitter(IBPtr, DSARegs).SS_WAIT(~0ull);
-    // Intrin->eraseFromParent();
-  }
 }
 
 void StreamSpecialize::getAnalysisUsage(AnalysisUsage &AU) const {

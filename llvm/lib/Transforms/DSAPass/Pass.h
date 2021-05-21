@@ -43,7 +43,6 @@ struct StreamSpecialize : public ModulePass {
   void getAnalysisUsage(AnalysisUsage &AU) const override;
   // }
 
-  void HandleMemIntrin(Function &F);
 };
 
 #endif
