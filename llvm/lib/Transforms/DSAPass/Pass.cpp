@@ -60,15 +60,19 @@ bool StreamSpecialize::runOnFunction(Function &F) {
     dsa::xform::EliminateTemporal(F);
   }
 
-  LLVM_DEBUG(dbgs() << "Working on " << F.getName() << "\n");
 
   IRBuilder<> IB(F.getContext());
   IBPtr = &IB;
 
   auto ScopePairs = dsa::analysis::GatherConfigScope(F);
-  if (!ScopePairs.empty() && !dsa::utils::ModuleContext().EXTRACT) {
-    DSARegs = dsa::xform::InjectDSARegisterFile(F);
+  if (!ScopePairs.empty()) {
+    if (!dsa::utils::ModuleContext().EXTRACT) {
+      DSARegs = dsa::xform::InjectDSARegisterFile(F);
+    }
+  } else {
+    LLVM_DEBUG(INFO << "No need to transform " << F.getName() << "\n");
   }
+  LLVM_DEBUG(INFO << "Transforming " << F.getName() << "\n");
   SCEVExpander SEE(*SE, F.getParent()->getDataLayout(), "");
   dsa::xform::CodeGenContext CGC(&IB, DSARegs, *SE, SEE);
   for (int i = 0, n = ScopePairs.size(); i < n; ++i) {
