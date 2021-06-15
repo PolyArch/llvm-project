@@ -763,25 +763,25 @@ void InjectLinearStreamImpl(CodeGenContext &CGC, const SCEV *Idx,
   LinearInstantiation(IdxLI, LoopLI, Port, MO, P, MT, DType);
 }
 
-void InjectLinearStreamImpl(ScalarEvolution *SE, SCEVExpander &SEE,
-                            IRBuilder<> *IB, const SCEV *Idx,
-                            std::vector<Loop *> LoopNest,
-                            dsa::inject::RepeatInjector &RI,
-                            dsa::inject::LinearInjector &LI, int Port,
-                            int Unroll, int DType, MemoryOperation MO,
-                            Padding Padding, MemoryType MT) {
-  auto IdxLI = dsa::analysis::AnalyzeIndexExpr(SE, Idx, LoopNest);
-  std::vector<dsa::analysis::LinearInfo *> LoopLI;
-  for (int i = 0, N = LoopNest.size(); i < N; ++i) {
-    auto CurDim = dsa::analysis::AnalyzeIndexExpr(
-        SE, SE->getBackedgeTakenCount(LoopNest[i]), LoopNest);
-    LoopLI.push_back(CurDim);
-  }
-  if (MO == MemoryOperation::DMO_Read) {
-    RI.Inject(IdxLI, LoopLI, Port, Unroll);
-  }
-  LI.Inject(IdxLI, LoopLI, Port, MO, Padding, MT, DType);
-}
+// void InjectLinearStreamImpl(ScalarEvolution *SE, SCEVExpander &SEE,
+//                             IRBuilder<> *IB, const SCEV *Idx,
+//                             std::vector<Loop *> LoopNest,
+//                             dsa::inject::RepeatInjector &RI,
+//                             dsa::inject::LinearInjector &LI, int Port,
+//                             int Unroll, int DType, MemoryOperation MO,
+//                             Padding Padding, MemoryType MT) {
+//   auto IdxLI = dsa::analysis::AnalyzeIndexExpr(SE, Idx, LoopNest);
+//   std::vector<dsa::analysis::LinearInfo *> LoopLI;
+//   for (int i = 0, N = LoopNest.size(); i < N; ++i) {
+//     auto CurDim = dsa::analysis::AnalyzeIndexExpr(
+//         SE, SE->getBackedgeTakenCount(LoopNest[i]), LoopNest);
+//     LoopLI.push_back(CurDim);
+//   }
+//   if (MO == MemoryOperation::DMO_Read) {
+//     RI.Inject(IdxLI, LoopLI, Port, Unroll);
+//   }
+//   LI.Inject(IdxLI, LoopLI, Port, MO, Padding, MT, DType);
+// }
 
 void InjectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF) {
 
@@ -831,11 +831,14 @@ void InjectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF) {
       auto Index = IMP->Index->Load->getPointerOperand();
       auto Analyzed = IMP->Parent->AnalyzeDataStream(
           Index, IMP->Index->Load->getType()->getScalarSizeInBits() / 8);
-      IMP->Parent->InjectRepeat(Analyzed.AR, nullptr, IMP->SoftPortNum);
-      auto ActualSrc = dsa::inject::InjectLinearStream(
-          IB, CGC.Regs, IMP->Index->SoftPortNum, Analyzed, DMO_Read,
-          DP_NoPadding, DMT_DMA,
-          IMP->Index->Load->getType()->getScalarSizeInBits() / 8);
+      InjectLinearStreamImpl(CGC, CGC.SE.getSCEV(Index), DLI.LoopNest, DLI.TripCount, IMP->SoftPortNum,
+                             IMP->Parent->getUnroll(), IMP->Index->Load->getType()->getScalarSizeInBits() / 8,
+                             DMO_Read, DP_NoPadding, DMT_DMA);
+      // IMP->Parent->InjectRepeat(Analyzed.AR, nullptr, IMP->SoftPortNum);
+      // auto ActualSrc = dsa::inject::InjectLinearStream(
+      //     IB, CGC.Regs, IMP->Index->SoftPortNum, Analyzed, DMO_Read,
+      //     DP_NoPadding, DMT_DMA,
+      //     IMP->Index->Load->getType()->getScalarSizeInBits() / 8);
 
       for (size_t i = 0; i < Together.size(); ++i) {
         auto Cur = Together[i];
@@ -843,12 +846,14 @@ void InjectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF) {
         auto Num = IB->CreateUDiv(Analyzed.BytesFromMemory(IB),
                                   IB->getInt64(IBits / 8));
         auto GEP = dyn_cast<GetElementPtrInst>(Cur->Load->getPointerOperand());
-        CGC.SS_INDIRECT_READ(
-            IMP->SoftPortNum, IMP->IndexOutPort, GEP->getOperand(0),
-            Cur->Load->getType()->getScalarSizeInBits() / 8, Num, DMT_DMA);
+        CGC.INSTANTIATE_1D_INDIRECT(
+            IMP->SoftPortNum, IMP->Load->getType()->getScalarSizeInBits() / 8,
+            IMP->IndexOutPort, Index->getType()->getScalarSizeInBits() / 8,
+            GEP->getOperand(0), Cur->Load->getType()->getScalarSizeInBits() / 8,
+            Num, DMT_DMA, DMO_Read);
 
         // TODO: Support indirect read on the SPAD(?)
-        Cur->Meta.set("src", dsa::dfg::MetaPort::DataText[(int)ActualSrc]);
+        Cur->Meta.set("src", dsa::dfg::MetaPort::DataText[(int)DMT_DMA]);
         Cur->Meta.set("dest", "memory");
         Cur->Meta.set("op", "indread");
 
@@ -1024,26 +1029,37 @@ void InjectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF) {
     }
 
     void Visit(StreamOutPort *SOP) {
-      auto SIP = SOP->FindConsumer();
-      assert(!SOP->IntrinInjected && !SIP->IntrinInjected);
-      if (auto DD = dyn_cast<DedicatedDFG>(SIP->Parent)) {
-        int Bytes =
-            SOP->Output->getType()->getScalarType()->getScalarSizeInBits() / 8;
-        auto Analyzed = DD->AnalyzeDataStream(SOP->Output, Bytes, true,
-                                              SOP->Parent->DefaultIP());
-        /// FIXME: Will this cause other problem?
-        DD->InjectRepeat(Analyzed.AR, nullptr, SIP->SoftPortNum);
-        assert(Analyzed.OuterRepeat);
-        CGC.SS_RECURRENCE(SOP->SoftPortNum, SIP->SoftPortNum,
-                          Analyzed.OuterRepeat,
-                          SOP->Output->getType()->getScalarSizeInBits() / 8);
-      } else if (isa<TemporalDFG>(SIP->Parent)) {
-        // TODO: Support temporal stream
-        CGC.SS_RECURRENCE(SOP->SoftPortNum, SIP->SoftPortNum,
-                          CGC.IB->getInt64(1),
-                          SOP->Output->getType()->getScalarSizeInBits() / 8);
-      }
-      SOP->IntrinInjected = SIP->IntrinInjected = true;
+      // auto &SEE = CGC.SEE;
+      // auto IB = CGC.IB;
+      // auto SIP = SOP->FindConsumer();
+      // assert(!SOP->IntrinInjected && !SIP->IntrinInjected);
+      // if (auto DD = dyn_cast<DedicatedDFG>(SIP->Parent)) {
+      //   int Bytes =
+      //       SOP->Output->getType()->getScalarType()->getScalarSizeInBits() / 8;
+      //   auto Repeat = IB->getInt64(1);
+      //   int i = 0;
+      //   for (i = 0; i < (int) DLI.LoopNest.size(); ++i) {
+      //     if (!DLI.LoopNest[i]->isLoopInvariant(SOP->UnderlyingInst()) {
+      //       break;
+      //     }
+      //     auto Mul = SEE.expandCodeFor(DLI.TripCount[i]->Base);
+      //     if (!i) {
+      //       Mul = CeilDiv(Mul, IB.getInt64(SOP->Parent->getUnroll()), CGC.IB);
+      //     }
+      //     Repeat = CGC.IB->CreateMul(Repeat, Mul);
+      //   }
+      //   CGC.REPEAT_PORT(SOP->SoftPortNum, Repeat);
+      //   auto N = IB->getInt64(1);
+      //   for (; i < DLI.LoopNest.size(); ++i) {
+      //     N = IB->CreateMul(N, SEE.expandCodeFor(DLI.TripCount[i]->Base));
+      //   }
+      //   CGC.SS_RECURRENCE(SOP->SoftPortNum, SIP->SoftPortNum, N, Bytes),
+      // } else if (isa<TemporalDFG>(SIP->Parent)) {
+      //   // TODO: Support temporal stream
+      //   CGC.SS_RECURRENCE(SOP->SoftPortNum, SIP->SoftPortNum, IB->getInt64(1),
+      //                     SOP->Output->getType()->getScalarSizeInBits() / 8);
+      // }
+      // SOP->IntrinInjected = SIP->IntrinInjected = true;
     }
 
     void Visit(AtomicPortMem *APM) {
