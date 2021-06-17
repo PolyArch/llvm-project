@@ -1,5 +1,6 @@
 #include "CodeXform.h"
 #include "DFGAnalysis.h"
+#include "Util.h"
 
 #include "dsa/rf.h"
 
@@ -629,6 +630,14 @@ void InjectConfiguration(CodeGenContext &CGC, analysis::ConfigInfo &CI,
 }
 
 
+/*!
+ * \brief Emit port repeat operands;
+ *        Note: First is repeat, the raw value. Second is stretch, already shifted by fixed-point.
+ * \param CGC The DSA code generator wrapper.
+ * \param Loops The loop nest of repeat.
+ * \param N The index of loop invariant.
+ * \param Unroll The unrolling degree.
+ */
 std::pair<Value*, Value*>
 InjectComputedRepeat(CodeGenContext &CGC,
                      std::vector<dsa::analysis::LinearInfo*> Loops, int N,
@@ -649,13 +658,13 @@ InjectComputedRepeat(CodeGenContext &CGC,
         CHECK(CI && *CI == 0);
       }
       // FIXME(@were): Fix this for fixed point.
-      Stretch = SEE.expandCodeFor(Loops[0]->Coef[i]->Coef[1]->Base);
+      Stretch = SEE.expandCodeFor(Loops[0]->Coef[1]->Base);
     }
     auto Current = IB->CreateAdd(SEE.expandCodeFor(Loops[i]->Base), IB->getInt64(1));
     if (i == 0 && Unroll != 1) {
-      Current = IB->CreateSub(Current, IB->getInt64(1));
-      Current = IB->CreateSDiv(Current, IB->getInt64(Unroll));
-      Current = IB->CreateAdd(Current, IB->getInt64(1));
+      Current = CeilDiv(Current, IB->getInt64(Unroll), IB);
+      Stretch = IB->CreateMul(Stretch, IB->getInt64(1 << DSA_REPEAT_DIGITAL_POINT));
+      Stretch = IB->CreateSDiv(Stretch, IB->getInt64(Unroll));
     }
     Repeat = IB->CreateMul(Repeat, Current);
   }
@@ -687,7 +696,7 @@ void InjectLinearStreamImpl(CodeGenContext &CGC, const SCEV *Idx,
         return;
       }
     }
-    CGC.SS_CONFIG_PORT(Port, DPF_PortRepeat, Repeat);
+    CGC.SS_CONFIG_PORT(Port, DPF_PortRepeat, CGC.MUL(Repeat, 1 << DSA_REPEAT_DIGITAL_POINT));
     if (Stretch) {
       CGC.SS_CONFIG_PORT(Port, DPF_PortRepeatStretch, Stretch);
     }
@@ -1029,37 +1038,37 @@ void InjectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF) {
     }
 
     void Visit(StreamOutPort *SOP) {
-      // auto &SEE = CGC.SEE;
-      // auto IB = CGC.IB;
-      // auto SIP = SOP->FindConsumer();
-      // assert(!SOP->IntrinInjected && !SIP->IntrinInjected);
-      // if (auto DD = dyn_cast<DedicatedDFG>(SIP->Parent)) {
-      //   int Bytes =
-      //       SOP->Output->getType()->getScalarType()->getScalarSizeInBits() / 8;
-      //   auto Repeat = IB->getInt64(1);
-      //   int i = 0;
-      //   for (i = 0; i < (int) DLI.LoopNest.size(); ++i) {
-      //     if (!DLI.LoopNest[i]->isLoopInvariant(SOP->UnderlyingInst()) {
-      //       break;
-      //     }
-      //     auto Mul = SEE.expandCodeFor(DLI.TripCount[i]->Base);
-      //     if (!i) {
-      //       Mul = CeilDiv(Mul, IB.getInt64(SOP->Parent->getUnroll()), CGC.IB);
-      //     }
-      //     Repeat = CGC.IB->CreateMul(Repeat, Mul);
-      //   }
-      //   CGC.REPEAT_PORT(SOP->SoftPortNum, Repeat);
-      //   auto N = IB->getInt64(1);
-      //   for (; i < DLI.LoopNest.size(); ++i) {
-      //     N = IB->CreateMul(N, SEE.expandCodeFor(DLI.TripCount[i]->Base));
-      //   }
-      //   CGC.SS_RECURRENCE(SOP->SoftPortNum, SIP->SoftPortNum, N, Bytes),
-      // } else if (isa<TemporalDFG>(SIP->Parent)) {
-      //   // TODO: Support temporal stream
-      //   CGC.SS_RECURRENCE(SOP->SoftPortNum, SIP->SoftPortNum, IB->getInt64(1),
-      //                     SOP->Output->getType()->getScalarSizeInBits() / 8);
-      // }
-      // SOP->IntrinInjected = SIP->IntrinInjected = true;
+      auto &SEE = CGC.SEE;
+      auto IB = CGC.IB;
+      auto SIP = SOP->FindConsumer();
+      assert(!SOP->IntrinInjected && !SIP->IntrinInjected);
+      if (auto DD = dyn_cast<DedicatedDFG>(SIP->Parent)) {
+        int Bytes =
+            SOP->Output->getType()->getScalarType()->getScalarSizeInBits() / 8;
+        Value *Repeat = IB->getInt64(1);
+        int i = 0;
+        for (i = 0; i < (int) DLI.LoopNest.size(); ++i) {
+          if (!DLI.LoopNest[i]->isLoopInvariant(SOP->UnderlyingInst())) {
+            break;
+          }
+          Value *Mul = SEE.expandCodeFor(DLI.TripCount[i]->Base);
+          if (!i) {
+            Mul = CeilDiv(Mul, IB->getInt64(SOP->Parent->getUnroll()), CGC.IB);
+          }
+          Repeat = IB->CreateMul(Repeat, Mul);
+        }
+        CGC.SS_REPEAT_PORT(SOP->SoftPortNum, Repeat);
+        Value *N = IB->getInt64(1);
+        for (; i < (int) DLI.LoopNest.size(); ++i) {
+          N = IB->CreateMul(N, SEE.expandCodeFor(DLI.TripCount[i]->Base));
+        }
+        CGC.SS_RECURRENCE(SOP->SoftPortNum, SIP->SoftPortNum, N, Bytes);
+      } else if (isa<TemporalDFG>(SIP->Parent)) {
+        // TODO: Support temporal stream
+        CGC.SS_RECURRENCE(SOP->SoftPortNum, SIP->SoftPortNum, IB->getInt64(1),
+                          SOP->Output->getType()->getScalarSizeInBits() / 8);
+      }
+      SOP->IntrinInjected = SIP->IntrinInjected = true;
     }
 
     void Visit(AtomicPortMem *APM) {

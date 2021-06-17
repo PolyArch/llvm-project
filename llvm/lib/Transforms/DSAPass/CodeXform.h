@@ -105,6 +105,8 @@ struct CodeGenContext {
 
   REG SHL(REG a, REG b) { return IB->CreateShl(a.value(IB), b.value(IB)); }
 
+  REG MUL(REG a, REG b) { return IB->CreateMul(a.value(IB), b.value(IB)); }
+
   void INTRINSIC_DRI(std::string Mnemonic, REG &a, REG b, int c) {
     IntrinsicImpl(Mnemonic, "=r,r,i", {b.value(IB), IB->getInt64(c)},
                   IB->getInt64Ty());
