@@ -663,8 +663,10 @@ InjectComputedRepeat(CodeGenContext &CGC,
     auto Current = IB->CreateAdd(SEE.expandCodeFor(Loops[i]->Base), IB->getInt64(1));
     if (i == 0 && Unroll != 1) {
       Current = CeilDiv(Current, IB->getInt64(Unroll), IB);
-      Stretch = IB->CreateMul(Stretch, IB->getInt64(1 << DSA_REPEAT_DIGITAL_POINT));
-      Stretch = IB->CreateSDiv(Stretch, IB->getInt64(Unroll));
+      if (Stretch) {
+        Stretch = IB->CreateMul(Stretch, IB->getInt64(1 << DSA_REPEAT_DIGITAL_POINT));
+        Stretch = IB->CreateSDiv(Stretch, IB->getInt64(Unroll));
+      }
     }
     Repeat = IB->CreateMul(Repeat, Current);
   }
@@ -840,7 +842,7 @@ void InjectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF) {
       auto Index = IMP->Index->Load->getPointerOperand();
       auto Analyzed = IMP->Parent->AnalyzeDataStream(
           Index, IMP->Index->Load->getType()->getScalarSizeInBits() / 8);
-      InjectLinearStreamImpl(CGC, CGC.SE.getSCEV(Index), DLI.LoopNest, DLI.TripCount, IMP->SoftPortNum,
+      InjectLinearStreamImpl(CGC, CGC.SE.getSCEV(Index), DLI.LoopNest, DLI.TripCount, IMP->Index->SoftPortNum,
                              IMP->Parent->getUnroll(), IMP->Index->Load->getType()->getScalarSizeInBits() / 8,
                              DMO_Read, DP_NoPadding, DMT_DMA);
       // IMP->Parent->InjectRepeat(Analyzed.AR, nullptr, IMP->SoftPortNum);
@@ -857,7 +859,7 @@ void InjectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF) {
         auto GEP = dyn_cast<GetElementPtrInst>(Cur->Load->getPointerOperand());
         CGC.INSTANTIATE_1D_INDIRECT(
             IMP->SoftPortNum, IMP->Load->getType()->getScalarSizeInBits() / 8,
-            IMP->IndexOutPort, Index->getType()->getScalarSizeInBits() / 8,
+            IMP->IndexOutPort, IMP->Index->Load->getType()->getScalarSizeInBits() / 8,
             GEP->getOperand(0), Cur->Load->getType()->getScalarSizeInBits() / 8,
             Num, DMT_DMA, DMO_Read);
 
@@ -1037,30 +1039,41 @@ void InjectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF) {
       OP->IntrinInjected = true;
     }
 
-    void Visit(StreamOutPort *SOP) {
-      auto &SEE = CGC.SEE;
+    void Visit(StreamInPort *SIP) {
+      auto f = [this, SIP] () -> StreamOutPort* {
+        for (auto DFG : SIP->Parent->Parent->DFGFilter<DFGBase>()) {
+          for (auto Elem : DFG->Entries) {
+            if (auto Casted = dyn_cast<StreamOutPort>(Elem)) {
+              if (SIP->DataFrom == Casted->UnderlyingInst()) {
+                return Casted;
+              }
+            }
+          }
+        }
+        CHECK(false);
+        return nullptr;
+      };
+      StreamOutPort *SOP = f();
       auto IB = CGC.IB;
-      auto SIP = SOP->FindConsumer();
-      assert(!SOP->IntrinInjected && !SIP->IntrinInjected);
+      auto &SEE = CGC.SEE;
+      assert(!SIP->IntrinInjected);
       if (auto DD = dyn_cast<DedicatedDFG>(SIP->Parent)) {
         int Bytes =
             SOP->Output->getType()->getScalarType()->getScalarSizeInBits() / 8;
-        Value *Repeat = IB->getInt64(1);
         int i = 0;
         for (i = 0; i < (int) DLI.LoopNest.size(); ++i) {
           if (!DLI.LoopNest[i]->isLoopInvariant(SOP->UnderlyingInst())) {
             break;
           }
-          Value *Mul = SEE.expandCodeFor(DLI.TripCount[i]->Base);
-          if (!i) {
-            Mul = CeilDiv(Mul, IB->getInt64(SOP->Parent->getUnroll()), CGC.IB);
-          }
-          Repeat = IB->CreateMul(Repeat, Mul);
         }
-        CGC.SS_REPEAT_PORT(SOP->SoftPortNum, Repeat);
+        auto Repeat = InjectComputedRepeat(CGC, DLI.TripCount, i, DD->getUnroll());
+        CGC.SS_REPEAT_PORT(SIP->SoftPortNum, Repeat.first);
+        if (Repeat.second) {
+          CGC.SS_CONFIG_PORT(SIP->SoftPortNum, DPF_PortRepeatStretch, Repeat.second);
+        }
         Value *N = IB->getInt64(1);
         for (; i < (int) DLI.LoopNest.size(); ++i) {
-          N = IB->CreateMul(N, SEE.expandCodeFor(DLI.TripCount[i]->Base));
+          N = IB->CreateMul(N, IB->CreateAdd(SEE.expandCodeFor(DLI.TripCount[i]->Base), IB->getInt64(1)));
         }
         CGC.SS_RECURRENCE(SOP->SoftPortNum, SIP->SoftPortNum, N, Bytes);
       } else if (isa<TemporalDFG>(SIP->Parent)) {
@@ -1068,7 +1081,12 @@ void InjectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF) {
         CGC.SS_RECURRENCE(SOP->SoftPortNum, SIP->SoftPortNum, IB->getInt64(1),
                           SOP->Output->getType()->getScalarSizeInBits() / 8);
       }
-      SOP->IntrinInjected = SIP->IntrinInjected = true;
+      SIP->IntrinInjected = true;
+    }
+
+    void Visit(StreamOutPort *SOP) {
+      assert(!SOP->IntrinInjected);
+      SOP->IntrinInjected = true;
     }
 
     void Visit(AtomicPortMem *APM) {
