@@ -28,8 +28,8 @@
 #include "Transformation.h"
 #include "Util.h"
 
-#include "dsa/rf.h"
-#include "dsa/spec.h"
+#include "dsa-ext/rf.h"
+#include "dsa-ext/spec.h"
 //#include "dsa/mapper/scheduler.h"
 //#include "dsa/mapper/scheduler_sa.h"
 

@@ -16,8 +16,8 @@
 #include <set>
 #include <vector>
 
-#include "dsa/rf.h"
-#include "dsa/spec.h"
+#include "dsa-ext/rf.h"
+#include "dsa-ext/spec.h"
 
 using namespace llvm;
 
