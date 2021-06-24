@@ -798,6 +798,108 @@ void InjectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF) {
 
   auto DFGs = DF.DFGFilter<DFGBase>();
 
+  struct UpdateStreamInjector : DFGEntryVisitor {
+
+    void Visit(MemPort *MP) override {
+      // No outer repeat
+      if (DLI.TripCount.size() <= 1) {
+        return;
+      }
+      auto DFG = MP->Parent;
+      if (!isa<DedicatedDFG>(DFG)) {
+        return;
+      }
+      auto &SE = CGC.SE;
+      auto IB = CGC.IB;
+      for (auto &PM : DFG->EntryFilter<PortMem>()) {
+        if (!PM->IsInMajor() || PM->IntrinInjected)
+          continue;
+        auto Ptr0 = dyn_cast<Instruction>(MP->Load->getPointerOperand());
+        auto Ptr1 = dyn_cast<Instruction>(PM->Store->getPointerOperand());
+        if (Ptr0 == Ptr1) {
+          DSA_INFO << "Rec: " << *MP->Load << " " << *PM->Store;
+          auto SCEV = SE.getSCEV(Ptr0);
+          auto Analyzed = dsa::analysis::AnalyzeIndexExpr(&SE, SE.getSCEV(Ptr0), DLI.LoopNest);
+          // No repeat!
+          if (Analyzed->PatialInvariant() != 0) {
+            return;
+          }
+          // Outer should not be stretched!
+          if (!Analyzed->Coef.back()->Coef.empty()) {
+            return;
+          }
+          if (auto O = dyn_cast<ConstantInt>(CGC.SEE.expandCodeFor(Analyzed->Coef.back()->Base))) {
+            if (O->getSExtValue()) {
+              return;
+            }
+          }
+          using LinearInfo = dsa::analysis::LinearInfo;
+          auto DType = MP->Load->getType()->getScalarSizeInBits() / 8;
+          InjectLinearStreamImpl(CGC, SCEV,
+                                 std::vector<Loop*>(DLI.LoopNest.begin(), DLI.LoopNest.end() - 1),
+                                 std::vector<LinearInfo*>(DLI.TripCount.begin(), DLI.TripCount.end() - 1),
+                                 MP->SoftPortNum, DFG->getUnroll(),
+                                 DType, DMO_Read,
+                                 (Padding) MP->FillMode(), DMT_DMA);
+
+          if (DLI.TripCount.size() == 2) {
+            // TODO(@were): Support stretch later.
+            auto InnerN = CGC.SEE.expandCodeFor(DLI.TripCount[0]->Base);
+            auto OuterN = CGC.SEE.expandCodeFor(DLI.TripCount[1]->Base);
+            CGC.SS_RECURRENCE(PM->SoftPortNum, MP->SoftPortNum,
+                              IB->CreateMul(IB->CreateAdd(InnerN, IB->getInt64(1)), OuterN),
+                              DType);
+            DSA_INFO << *InnerN << ", " << *OuterN;
+            DSA_INFO << *CGC.res.back();
+          } else {
+            CHECK(false) << "Not supported yet";
+          }
+
+          InjectLinearStreamImpl(CGC, SCEV,
+                                 std::vector<Loop*>(DLI.LoopNest.begin(), DLI.LoopNest.end() - 1),
+                                 std::vector<LinearInfo*>(DLI.TripCount.begin(), DLI.TripCount.end() - 1),
+                                 PM->SoftPortNum, DFG->getUnroll(),
+                                 DType, DMO_Write, (Padding) 0, DMT_DMA);
+          int II = 1;
+          int Conc = -1;
+          if (auto CI = dyn_cast<ConstantInt>(CGC.SEE.expandCodeFor(DLI.TripCount[0]->Base))) {
+            auto CII = CI->getZExtValue();
+            int CanHide = CII * DType;
+            if (PM->Latency - CanHide > 0) {
+              II = PM->Latency - CanHide;
+              DSA_INFO << "Recur II: " << II;
+            } else {
+              II = 1;
+              DSA_WARNING << "To hide the latency " << PM->Latency << ", "
+                          << CII * DType << " elements are active";
+              DSA_WARNING << "This requires a " << CanHide - PM->Latency
+                          << "-deep FIFO buffer";
+            }
+            Conc = CII;
+          } else {
+            errs() << "[Warning] To hide the latency " << PM->Latency
+                   << ", make sure your variable recur distance will not overwhlem "
+                      "the FIFO buffer!";
+          }
+          PM->Meta.set("dest", "localport");
+          PM->Meta.set("dest", MP->Name());
+          {
+            std::ostringstream oss;
+            oss << Conc * DType;
+            PM->Meta.set("conc", oss.str());
+          }
+          PM->IntrinInjected = MP->IntrinInjected = true;
+          return;
+        }
+      }
+    }
+
+    CodeGenContext &CGC;
+    analysis::DFGLoopInfo DLI;
+    UpdateStreamInjector(CodeGenContext &CGC_, analysis::DFGLoopInfo DLI_) :
+      CGC(CGC_), DLI(DLI_.LoopNest, DLI_.TripCount) {}
+  };
+
   struct StreamIntrinsicInjector : DFGEntryVisitor {
 
     void Visit(IndMemPort *IMP) override {
@@ -879,11 +981,6 @@ void InjectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF) {
 
       if (MP->IntrinInjected)
         return;
-
-      // TODO(@were): Decouple this!
-      if (MP->InjectUpdateStream(IB)) {
-        return;
-      }
 
       // Wrappers
       auto DFG = MP->Parent;
@@ -1176,10 +1273,12 @@ void InjectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF) {
 
   for (auto DFG : DFGs) {
     auto DLI = analysis::AnalyzeDFGLoops(DFG, CGC.SE);
+    UpdateStreamInjector USI(CGC, DLI);
     StreamIntrinsicInjector SII(CGC, DLI);
     CGC.IB->SetInsertPoint(DFG->DefaultIP());
     CGC.SEE.setInsertPoint(DFG->DefaultIP());
     for (auto Elem : ReorderEntries(DFG)) {
+      Elem->Accept(&USI);
       Elem->Accept(&SII);
     }
   }

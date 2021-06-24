@@ -724,23 +724,6 @@ bool MemPort::InjectUpdateStream(IRBuilder<> *IB) {
       auto Analyzed = DFG->AnalyzeDataStream(
           Ptr0,
           MP->Load->getType()->getScalarType()->getScalarSizeInBits() / 8);
-      /* This portion of code is deprecated. I guess this is because LLVM's SCEV
-       * behaviour changed. for (int i = 0; i < n; ++i) for (int j = 0; j < m
-       * ++j)
-       *      // use a[j];
-       * i's n trip count used to be put in outer repeat.
-       * After adopting new version of LLVM, it seems to be a zero-step AddRecur
-       * now.
-       *
-       * if (!Analyzed.OuterRepeat) {
-       *   LLVM_DEBUG(dbgs() << "No outer repeat, skip!\n");
-       *   continue;
-       * }
-       * if (isOne(Analyzed.OuterRepeat)) {
-       *   LLVM_DEBUG(dbgs() << "One time update, skip!\n");
-       *   continue;
-       * }
-       */
       if (Analyzed.Dimensions.size() == 1) {
         LLVM_DEBUG(dbgs() << "One time update, skip!\n");
         continue;
