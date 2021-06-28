@@ -806,5 +806,13 @@ DFGLoopInfo AnalyzeDFGLoops(DFGBase *DB, ScalarEvolution &SE) {
   return DLA.DLI;
 }
 
+int DSUGetSet(int Elem, std::vector<int> &DSU) {
+  if (DSU[Elem] == Elem) {
+    return Elem;
+  }
+  return DSU[Elem] = DSUGetSet(DSU[Elem], DSU);
+}
+
+
 } // namespace analysis
 } // namespace dsa

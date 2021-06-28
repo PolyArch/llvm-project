@@ -107,6 +107,17 @@ bool StreamSpecialize::runOnFunction(Function &F) {
     if (dsa::utils::ModuleContext().EXTRACT) {
       continue;
     }
+    for (auto DFG : DF.DFGFilter<DFGBase>()) {
+      std::vector<int> DSU(DFG->Entries.size());
+      for (int i = 0, n = DSU.size(); i < n; ++i) {
+        DSU[i] = i;
+      }
+      dsa::analysis::GatherMemoryCoalescing<MemPort>(DFG, *SE, DSU);
+      dsa::analysis::GatherMemoryCoalescing<PortMem>(DFG, *SE, DSU);
+      for (int i = 0, n = DSU.size(); i < n; ++i) {
+        DSA_INFO << i << ", " << dsa::analysis::DSUGetSet(i, DSU) << ": " << DFG->Entries[i]->dump();
+      }
+    }
     dsa::xform::InjectStreamIntrinsics(CGC, DF);
     DF.EraseOffloadedInstructions();
   }
