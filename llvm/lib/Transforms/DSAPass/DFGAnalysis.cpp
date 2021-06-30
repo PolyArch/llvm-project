@@ -807,7 +807,7 @@ DFGLoopInfo AnalyzeDFGLoops(DFGBase *DB, ScalarEvolution &SE) {
 }
 
 
-int64_t IndexPairOffset(const SCEV *SA, const SCEV *SB, ScalarEvolution &SE, const DFGLoopInfo &DLI) {
+int64_t IndexPairOffset(const SCEV *SA, const SCEV *SB, ScalarEvolution &SE, const DFGLoopInfo &DLI, bool Signed) {
   auto A = AnalyzeIndexExpr(&SE, SA, DLI.LoopNest);
   auto B = AnalyzeIndexExpr(&SE, SB, DLI.LoopNest);
   bool SameDims = true;
@@ -821,9 +821,11 @@ int64_t IndexPairOffset(const SCEV *SA, const SCEV *SB, ScalarEvolution &SE, con
   if (SameDims) {
     if (auto Offset = dyn_cast<SCEVConstant>(SE.getAddExpr(A->Base, SE.getNegativeSCEV(B->Base)))) {
       DSA_INFO << *Offset << " " << Offset->getAPInt().getSExtValue();
-      return abs(Offset->getAPInt().getSExtValue());
+      auto Res = Offset->getAPInt().getSExtValue();
+      return Signed ? Res : abs(Res);
     }
   }
+  CHECK(!Signed) << "If signed, same access pattern should be garanteed!";
   return -1;
 }
 
