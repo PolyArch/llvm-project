@@ -404,6 +404,20 @@ struct DFGPrinter : dsa::DFGVisitor {
       }
     }
 
+    void Visit(MemPort *MP) override {
+      if (Parent->Sets[MP->ID].size() == 1) {
+        Visit(static_cast<InputPort*>(MP));
+      } else if (!Parent->Sets[MP->ID].empty()) {
+        auto &CM = Parent->Sets[MP->ID];
+        for (int i = 0; i < (int) CM.size(); ++i) {
+          auto Another = dyn_cast<MemPort>(MP->Parent->Entries[CM[i]]);
+          CHECK(Another);
+          MP->Load->getPointerOperand();
+          Another->Load->getPointerOperand();
+        }
+      }
+    }
+
     void Visit(Predicate *P) override {
       if (!utils::ModuleContext().PRED) {
         return;
@@ -520,27 +534,25 @@ struct DFGPrinter : dsa::DFGVisitor {
    */
   int TmpCnt{0};
 
-  DFGPrinter(raw_ostream &os_) : os(os_) {}
+  /*!
+   * \brief The information of memory coalescing.
+   */
+  std::vector<std::vector<int>> Sets;
+
+  DFGPrinter(raw_ostream &os_, std::vector<int> &DSU) : os(os_) {
+    Sets = utils::DSU2Sets(DSU);
+  }
 };
 
-void EmitDFG(raw_ostream *os, DFGFile *DFG) {
-  bool DeleteOS = false;
-  if (!os) {
-    std::error_code EC;
-    os = new raw_fd_ostream(DFG->getName(), EC);
-    DeleteOS = true;
-  }
-  DFGPrinter DP(*os);
+void EmitDFG(raw_ostream &os, DFGFile *DFG, std::vector<std::vector<int>> &MCDSU) {
   auto Graphs = DFG->DFGFilter<DFGBase>();
   for (int i = 0; i < (int)Graphs.size(); ++i) {
+    DFGPrinter DP(os, MCDSU[i]);
     auto Elem = Graphs[i];
     if (i) {
-      *os << "----\n";
+      os << "----\n";
     }
     Elem->Accept(&DP);
-  }
-  if (DeleteOS) {
-    delete os;
   }
 }
 
@@ -774,25 +786,6 @@ void InjectLinearStreamImpl(CodeGenContext &CGC, const SCEV *Idx,
   LinearInstantiation(IdxLI, LoopLI, Port, MO, P, MT, DType);
 }
 
-// void InjectLinearStreamImpl(ScalarEvolution *SE, SCEVExpander &SEE,
-//                             IRBuilder<> *IB, const SCEV *Idx,
-//                             std::vector<Loop *> LoopNest,
-//                             dsa::inject::RepeatInjector &RI,
-//                             dsa::inject::LinearInjector &LI, int Port,
-//                             int Unroll, int DType, MemoryOperation MO,
-//                             Padding Padding, MemoryType MT) {
-//   auto IdxLI = dsa::analysis::AnalyzeIndexExpr(SE, Idx, LoopNest);
-//   std::vector<dsa::analysis::LinearInfo *> LoopLI;
-//   for (int i = 0, N = LoopNest.size(); i < N; ++i) {
-//     auto CurDim = dsa::analysis::AnalyzeIndexExpr(
-//         SE, SE->getBackedgeTakenCount(LoopNest[i]), LoopNest);
-//     LoopLI.push_back(CurDim);
-//   }
-//   if (MO == MemoryOperation::DMO_Read) {
-//     RI.Inject(IdxLI, LoopLI, Port, Unroll);
-//   }
-//   LI.Inject(IdxLI, LoopLI, Port, MO, Padding, MT, DType);
-// }
 
 void InjectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF) {
 
@@ -1266,15 +1259,21 @@ void InjectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF) {
 
     CodeGenContext &CGC;
     analysis::DFGLoopInfo DLI;
-    StreamIntrinsicInjector(CodeGenContext &CGC_, analysis::DFGLoopInfo DLI_) :
-      CGC(CGC_), DLI(DLI_.LoopNest, DLI_.TripCount) {}
+    const std::vector<int> &DSU;
+    StreamIntrinsicInjector(CodeGenContext &CGC_, analysis::DFGLoopInfo DLI_, const std::vector<int> &DSU_) :
+      CGC(CGC_), DLI(DLI_.LoopNest, DLI_.TripCount), DSU(DSU_) {}
   };
-
 
   for (auto DFG : DFGs) {
     auto DLI = analysis::AnalyzeDFGLoops(DFG, CGC.SE);
+    std::vector<int> DSU(DFG->Entries.size());
+    for (int i = 0, n = DSU.size(); i < n; ++i) {
+      DSU[i] = i;
+    }
+    dsa::analysis::GatherMemoryCoalescingImpl<MemPort>(DFG, CGC.SE, DLI, DSU);
+    dsa::analysis::GatherMemoryCoalescingImpl<PortMem>(DFG, CGC.SE, DLI, DSU);
     UpdateStreamInjector USI(CGC, DLI);
-    StreamIntrinsicInjector SII(CGC, DLI);
+    StreamIntrinsicInjector SII(CGC, DLI, DSU);
     CGC.IB->SetInsertPoint(DFG->DefaultIP());
     CGC.SEE.setInsertPoint(DFG->DefaultIP());
     for (auto Elem : ReorderEntries(DFG)) {

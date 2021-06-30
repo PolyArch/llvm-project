@@ -29,7 +29,7 @@ std::vector<utils::StickyRegister> InjectDSARegisterFile(Function &F);
  * \param os Where the given DFG is emitted. If null, dump to the filename of
  * the given DFGFile.
  */
-void EmitDFG(raw_ostream *os, DFGFile *DF);
+void EmitDFG(raw_ostream &os, DFGFile *DF, std::vector<std::vector<int>> &DSUs);
 
 struct CodeGenContext {
   /*!

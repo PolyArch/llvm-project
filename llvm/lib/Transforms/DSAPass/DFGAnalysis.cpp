@@ -806,11 +806,42 @@ DFGLoopInfo AnalyzeDFGLoops(DFGBase *DB, ScalarEvolution &SE) {
   return DLA.DLI;
 }
 
-int DSUGetSet(int Elem, std::vector<int> &DSU) {
-  if (DSU[Elem] == Elem) {
-    return Elem;
+
+int64_t IndexPairOffset(const SCEV *SA, const SCEV *SB, ScalarEvolution &SE, const DFGLoopInfo &DLI) {
+  auto A = AnalyzeIndexExpr(&SE, SA, DLI.LoopNest);
+  auto B = AnalyzeIndexExpr(&SE, SB, DLI.LoopNest);
+  bool SameDims = true;
+  CHECK(A->Coef.size() == B->Coef.size());
+  for (int j = 0; j < (int) A->Coef.size(); ++j) {
+    if (A->Coef[j]->Base != B->Coef[j]->Base) {
+      DSA_INFO << *SE.getEqualPredicate(A->Coef[j]->Base, B->Coef[j]->Base);
+      SameDims = false;
+    }
   }
-  return DSU[Elem] = DSUGetSet(DSU[Elem], DSU);
+  if (SameDims) {
+    if (auto Offset = dyn_cast<SCEVConstant>(SE.getAddExpr(A->Base, SE.getNegativeSCEV(B->Base)))) {
+      DSA_INFO << *Offset << " " << Offset->getAPInt().getSExtValue();
+      return abs(Offset->getAPInt().getSExtValue());
+    }
+  }
+  return -1;
+}
+
+
+std::vector<std::vector<int>> GatherMemoryCoalescing(DFGFile &DF, ScalarEvolution &SE, const std::vector<DFGLoopInfo> &DLI) {
+  auto DFGs = DF.DFGFilter<DFGBase>();
+  CHECK(DLI.size() == DFGs.size());
+  std::vector<std::vector<int>> res;
+  for (int i = 0; i < (int) DFGs.size(); ++i) {
+    res.emplace_back();
+    res.back().resize(DFGs[i]->Entries.size());
+    for (int j = 0; j < (int) res.back().size(); ++j) {
+      res.back()[j] = j;
+    }
+    GatherMemoryCoalescingImpl<MemPort>(DFGs[i], SE, DLI[i], res.back());
+    GatherMemoryCoalescingImpl<PortMem>(DFGs[i], SE, DLI[i], res.back());
+  }
+  return res;
 }
 
 
