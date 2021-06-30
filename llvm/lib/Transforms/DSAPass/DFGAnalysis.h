@@ -99,11 +99,11 @@ void GatherMemoryCoalescingImpl(DFGBase *DB, ScalarEvolution &SE, const DFGLoopI
             auto IdxA = SE.getSCEV(Node1->UnderlyingInst()->getOperand(T::PtrOperandIdx));
             auto IdxB = SE.getSCEV(Node2->UnderlyingInst()->getOperand(T::PtrOperandIdx));
             auto Offset = IndexPairOffset(IdxA, IdxB, SE, DLI);
-            DSA_INFO << *IdxA << " " << *IdxB << " " << Offset;
+            // DSA_INFO << *IdxA << " " << *IdxB << " " << Offset;
             if (Offset != -1 && Offset <= 64) {
-              DSA_INFO << i << ", " << DSUGetSet(i, DSU) << "  " << j << ", "<< DSUGetSet(j, DSU);
-              if (utils::DSUGetSet(i, DSU) != DSUGetSet(j, DSU)) {
-                DSU[utils::DSUGetSet(i, DSU)] = DSUGetSet(j, DSU);
+              // DSA_INFO << i << ", " << utils::DSUGetSet(i, DSU) << "  " << j << ", "<< utils::DSUGetSet(j, DSU);
+              if (utils::DSUGetSet(i, DSU) != utils::DSUGetSet(j, DSU)) {
+                DSU[utils::DSUGetSet(i, DSU)] = utils::DSUGetSet(j, DSU);
                 Iterative = true;
                 break;
               }
@@ -115,13 +115,37 @@ void GatherMemoryCoalescingImpl(DFGBase *DB, ScalarEvolution &SE, const DFGLoopI
   }
 }
 
+struct CoalMemoryInfo {
+  /*!
+   * \brief Which set of memory coalescing this memory operation belongs to.
+   */
+  std::vector<int> Belong;
+
+  struct CoalescedEntry {
+    /*!
+     * \brief The ID of the DFGEntry.
+     */
+    int ID;
+    /*!
+     * \brief The offset relative to the first element of the cluster.
+     */
+    int Offset{INT_MIN};
+
+    CoalescedEntry(int ID_) : ID(ID_) {}
+  };
+  /*!
+   * \brief Each vector is a cluster of coalesced memory.
+   */
+  std::vector<std::vector<CoalescedEntry>> Clusters;
+};
+
 /*!
- * \brief 
- * \param DB 
+ * \brief
+ * \param DF 
  * \param SE 
  * \param DLI 
  */
-std::vector<std::vector<int>> GatherMemoryCoalescing(DFGFile &DF, ScalarEvolution &SE, const std::vector<DFGLoopInfo> &DLI);
+std::vector<CoalMemoryInfo> GatherMemoryCoalescing(DFGFile &DF, ScalarEvolution &SE, const std::vector<DFGLoopInfo> &DLI);
 
 } // namespace analysis
 } // namespace dsa

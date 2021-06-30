@@ -828,20 +828,49 @@ int64_t IndexPairOffset(const SCEV *SA, const SCEV *SB, ScalarEvolution &SE, con
 }
 
 
-std::vector<std::vector<int>> GatherMemoryCoalescing(DFGFile &DF, ScalarEvolution &SE, const std::vector<DFGLoopInfo> &DLI) {
+std::vector<CoalMemoryInfo> GatherMemoryCoalescing(DFGFile &DF, ScalarEvolution &SE, const std::vector<DFGLoopInfo> &DLI) {
   auto DFGs = DF.DFGFilter<DFGBase>();
   CHECK(DLI.size() == DFGs.size());
-  std::vector<std::vector<int>> res;
+  std::vector<CoalMemoryInfo> Res;
   for (int i = 0; i < (int) DFGs.size(); ++i) {
-    res.emplace_back();
-    res.back().resize(DFGs[i]->Entries.size());
-    for (int j = 0; j < (int) res.back().size(); ++j) {
-      res.back()[j] = j;
+    std::vector<int> DSU(DFGs[i]->Entries.size());
+    for (int j = 0; j < (int) DSU.size(); ++j) {
+      DSU[j] = j;
     }
-    GatherMemoryCoalescingImpl<MemPort>(DFGs[i], SE, DLI[i], res.back());
-    GatherMemoryCoalescingImpl<PortMem>(DFGs[i], SE, DLI[i], res.back());
+    GatherMemoryCoalescingImpl<MemPort>(DFGs[i], SE, DLI[i], DSU);
+    GatherMemoryCoalescingImpl<PortMem>(DFGs[i], SE, DLI[i], DSU);
+    CoalMemoryInfo Current;
+    std::map<int, int> DSU2Cluster;
+    for (int j = 0; j < (int) DSU.size(); ++j) {
+      int Set = utils::DSUGetSet(DSU[j], DSU);
+      if (!DSU2Cluster.count(Set)) {
+        DSU2Cluster[Set] = DSU2Cluster[Set] = DSU2Cluster.size();
+        Current.Clusters.emplace_back();
+        CHECK(Current.Clusters.size() == DSU2Cluster.size());
+      }
+      Current.Clusters[DSU2Cluster[Set]].emplace_back(j);
+    }
+    for (int j = 0; j < (int) Current.Clusters.size(); ++j) {
+      auto &Cluster = Current.Clusters[j];
+      Cluster[0].Offset = 0;
+      struct PtrExtractor : DFGEntryVisitor {
+        void Visit(MemPort *MP) override {
+          Ptr = MP->Load->getPointerOperand();
+        }
+        void Visit(PortMem *PM) override {
+          Ptr = PM->Store->getPointerOperand();
+        }
+        Value *Ptr{nullptr};
+      } Base;
+      DFGs[i]->Entries[Cluster[0].ID]->Accept(&Base);
+      for (int k = 1; k < (int) Cluster.size(); ++k) {
+        PtrExtractor PE;
+        DFGs[i]->Entries[Cluster[k].ID]->Accept(&PE);
+        Cluster[k].Offset = IndexPairOffset(SE.getSCEV(PE.Ptr), SE.getSCEV(PE.Ptr), SE, DLI[i]);
+      }
+    }
   }
-  return res;
+  return Res;
 }
 
 

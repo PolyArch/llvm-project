@@ -405,17 +405,17 @@ struct DFGPrinter : dsa::DFGVisitor {
     }
 
     void Visit(MemPort *MP) override {
-      if (Parent->Sets[MP->ID].size() == 1) {
-        Visit(static_cast<InputPort*>(MP));
-      } else if (!Parent->Sets[MP->ID].empty()) {
-        auto &CM = Parent->Sets[MP->ID];
-        for (int i = 0; i < (int) CM.size(); ++i) {
-          auto Another = dyn_cast<MemPort>(MP->Parent->Entries[CM[i]]);
-          CHECK(Another);
-          MP->Load->getPointerOperand();
-          Another->Load->getPointerOperand();
-        }
-      }
+      // if (Parent->CMI[].size() == 1) {
+      //   Visit(static_cast<InputPort*>(MP));
+      // } else if (!Parent->Sets[MP->ID].empty()) {
+      //   auto &CM = Parent->Sets[MP->ID];
+      //   for (int i = 0; i < (int) CM.size(); ++i) {
+      //     auto Another = dyn_cast<MemPort>(MP->Parent->Entries[CM[i]]);
+      //     CHECK(Another);
+      //     MP->Load->getPointerOperand();
+      //     Another->Load->getPointerOperand();
+      //   }
+      // }
     }
 
     void Visit(Predicate *P) override {
@@ -537,17 +537,15 @@ struct DFGPrinter : dsa::DFGVisitor {
   /*!
    * \brief The information of memory coalescing.
    */
-  std::vector<std::vector<int>> Sets;
+  analysis::CoalMemoryInfo CMI;
 
-  DFGPrinter(raw_ostream &os_, std::vector<int> &DSU) : os(os_) {
-    Sets = utils::DSU2Sets(DSU);
-  }
+  DFGPrinter(raw_ostream &os_, analysis::CoalMemoryInfo &CMI_) : os(os_), CMI(CMI_) {}
 };
 
-void EmitDFG(raw_ostream &os, DFGFile *DFG, std::vector<std::vector<int>> &MCDSU) {
+void EmitDFG(raw_ostream &os, DFGFile *DFG, std::vector<analysis::CoalMemoryInfo> &CMIs) {
   auto Graphs = DFG->DFGFilter<DFGBase>();
   for (int i = 0; i < (int)Graphs.size(); ++i) {
-    DFGPrinter DP(os, MCDSU[i]);
+    DFGPrinter DP(os, CMIs[i]);
     auto Elem = Graphs[i];
     if (i) {
       os << "----\n";
