@@ -383,15 +383,17 @@ struct DFGPrinter : dsa::DFGVisitor {
       if (Parent->CMI.Clusters[Belong].size() == 1) {
         Visit(static_cast<InputPort*>(MP));
       } else {
+        int Degree = (MP->ShouldUnroll() ? MP->Parent->getUnroll() : 1);
         os << "# Cluster " << Belong << "\n";
         Visit(static_cast<DFGEntry*>(MP));
         auto &Cluster = CMI.Clusters[Belong];
         int Bits = MP->UnderlyingInst()->getType()->getScalarSizeInBits();
         int Bytes = Bits / 8;
+        int MaxOffset = Cluster.back().Offset;
+        os << "# Vector Port Width: " << (MaxOffset / Bytes + 1) << " * " << Degree << "\n";
         if (!Parent->Emitted[Belong]) {
-          int MaxOffset = Cluster.back().Offset;
           os << "Input" << Bits << ": ICluster_" << MP->Parent->ID << "_"
-             << Belong << "_[" << (MaxOffset / Bytes + 1) << "]" << "\n";
+             << Belong << "_[" << (MaxOffset / Bytes + 1) * Degree << "]" << "\n";
           Parent->Emitted[Belong] = true;
         }
         auto FCond = [MP](analysis::CoalMemoryInfo::CoalescedEntry &CE) {
@@ -399,8 +401,11 @@ struct DFGPrinter : dsa::DFGVisitor {
         };
         auto Entry = std::find_if(Cluster.begin(), Cluster.end(), FCond);
         CHECK(Entry != Cluster.end());
-        os << MP->Name(0) << " = " << "ICluster_" << MP->Parent->ID << "_"
-           << Belong << "_" << (Entry->Offset / Bytes) << "\n";
+        for (int i = 0; i < Degree; ++i) {
+          os << MP->Name(i) << " = " << "ICluster_" << MP->Parent->ID << "_"
+             << Belong << "_" << (Entry->Offset / Bytes) + i * (MaxOffset / Bytes + 1)
+             << "\n";
+        }
       }
     }
 
@@ -410,11 +415,14 @@ struct DFGPrinter : dsa::DFGVisitor {
       if (Parent->CMI.Clusters[Belong].size() == 1) {
         Visit(static_cast<OutputPort*>(PM));
       } else {
-        os << "# Cluster " << Belong << "\n";
-        Visit(static_cast<DFGEntry*>(PM));
-        auto &Cluster = CMI.Clusters[Belong];
+        int Degree = (PM->ShouldUnroll() ? PM->Parent->getUnroll() : 1);
         int Bits = PM->Store->getValueOperand()->getType()->getScalarSizeInBits();
         int Bytes = Bits / 8;
+        auto &Cluster = CMI.Clusters[Belong];
+        int MaxOffset = Cluster.back().Offset;
+        os << "# Cluster " << Belong << "\n";
+        Visit(static_cast<DFGEntry*>(PM));
+        os << "# Vector Port Width: " << (MaxOffset / Bytes + 1) << " * " << Degree << "\n";
         auto FCond = [PM](analysis::CoalMemoryInfo::CoalescedEntry &CE) {
           return CE.ID == PM->ID;
         };
@@ -422,13 +430,15 @@ struct DFGPrinter : dsa::DFGVisitor {
         CHECK(OV);
         auto Entry = std::find_if(Cluster.begin(), Cluster.end(), FCond);
         CHECK(Entry != Cluster.end());
-        os << "OCluster_" << PM->Parent->ID << "_"
-           << Belong << "_" << (Entry->Offset / Bytes) << " = " << OV->Name(0) << "\n";
+        for (int i = 0; i < Degree; ++i) {
+          os << "OCluster_" << PM->Parent->ID << "_"
+             << Belong << "_" << (Entry->Offset / Bytes) + i * (MaxOffset / Bytes + 1)
+             << " = " << OV->Name(i) << "\n";
+        }
         if (!Parent->Emitted[Belong]) {
-          int MaxOffset = Cluster.back().Offset;
           std::ostringstream OSS;
           OSS << "Output" << Bits << ": OCluster_" << PM->Parent->ID << "_"
-              << Belong << "_[" << (MaxOffset / Bytes + 1) << "]";
+              << Belong << "_[" << (MaxOffset / Bytes + 1) * Degree << "]";
           Parent->DelayEmission.push_back(OSS.str());
           Parent->Emitted[Belong] = true;
         }
