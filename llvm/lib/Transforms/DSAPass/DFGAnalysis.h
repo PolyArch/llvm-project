@@ -96,9 +96,12 @@ void GatherMemoryCoalescingImpl(DFGBase *DB, ScalarEvolution &SE, const DFGLoopI
       if (auto Node1 = dyn_cast<T>(DB->Entries[i])) {
         for (int j = i + 1; j < n; ++j) {
           if (auto Node2 = dyn_cast<T>(DB->Entries[j])) {
-            auto IdxA = SE.getSCEV(Node1->UnderlyingInst()->getOperand(T::PtrOperandIdx));
-            auto IdxB = SE.getSCEV(Node2->UnderlyingInst()->getOperand(T::PtrOperandIdx));
-            auto Offset = IndexPairOffset(IdxA, IdxB, SE, DLI, false);
+            auto PtrA = Node1->UnderlyingInst()->getOperand(T::PtrOperandIdx);
+            auto PtrB = Node2->UnderlyingInst()->getOperand(T::PtrOperandIdx);
+            if (PtrA->getType() != PtrB->getType()) {
+              continue;
+            }
+            auto Offset = IndexPairOffset(SE.getSCEV(PtrA), SE.getSCEV(PtrB), SE, DLI, false);
             if (Offset != -1 && Offset <= 64) {
               if (utils::DSUGetSet(i, DSU) != utils::DSUGetSet(j, DSU)) {
                 DSU[utils::DSUGetSet(i, DSU)] = utils::DSUGetSet(j, DSU);

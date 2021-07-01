@@ -844,6 +844,7 @@ std::vector<CoalMemoryInfo> GatherMemoryCoalescing(DFGFile &DF, ScalarEvolution 
     GatherMemoryCoalescingImpl<PortMem>(DFGs[i], SE, DLIs[i], DSU);
     Res.emplace_back();
     CoalMemoryInfo &Current = Res.back();
+    Current.Belong.resize(Entries.size(), -1);
     std::map<int, int> DSU2Cluster;
     for (int j = 0; j < (int) DSU.size(); ++j) {
       int Set = utils::DSUGetSet(DSU[j], DSU);
@@ -853,6 +854,7 @@ std::vector<CoalMemoryInfo> GatherMemoryCoalescing(DFGFile &DF, ScalarEvolution 
         CHECK(Current.Clusters.size() == DSU2Cluster.size());
       }
       Current.Clusters[DSU2Cluster[Set]].emplace_back(j);
+      Current.Belong[j] = DSU2Cluster[Set];
     }
     for (int j = 0; j < (int) Current.Clusters.size(); ++j) {
       auto &Cluster = Current.Clusters[j];

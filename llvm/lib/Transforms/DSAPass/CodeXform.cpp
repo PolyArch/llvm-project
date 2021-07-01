@@ -376,19 +376,65 @@ struct DFGPrinter : dsa::DFGVisitor {
       }
     }
 
+    // TODO(@were): Support unroll
     void Visit(MemPort *MP) override {
-      // if (Parent->CMI[].size() == 1) {
-      //   Visit(static_cast<InputPort*>(MP));
-      // } else if (!Parent->Sets[MP->ID].empty()) {
-      //   auto &CM = Parent->Sets[MP->ID];
-      //   for (int i = 0; i < (int) CM.size(); ++i) {
-      //     auto Another = dyn_cast<MemPort>(MP->Parent->Entries[CM[i]]);
-      //     CHECK(Another);
-      //     MP->Load->getPointerOperand();
-      //     Another->Load->getPointerOperand();
-      //   }
-      // }
-      Visit(static_cast<InputPort*>(MP));
+      auto &CMI = Parent->CMI;
+      auto Belong = CMI.Belong[MP->ID];
+      if (Parent->CMI.Clusters[Belong].size() == 1) {
+        Visit(static_cast<InputPort*>(MP));
+      } else {
+        os << "# Cluster " << Belong << "\n";
+        Visit(static_cast<DFGEntry*>(MP));
+        auto &Cluster = CMI.Clusters[Belong];
+        int Bits = MP->UnderlyingInst()->getType()->getScalarSizeInBits();
+        int Bytes = Bits / 8;
+        if (!Parent->Emitted[Belong]) {
+          auto FReduce = [](int Res, analysis::CoalMemoryInfo::CoalescedEntry &CE) -> int {
+            return std::max(Res, CE.Offset);
+          };
+          int MaxOffset = std::accumulate(Cluster.begin(), Cluster.end(), INT_MIN, FReduce);
+          os << "Input" << Bits << ": ICluster_" << Belong << "_[" << (MaxOffset / Bytes + 1) << "]" << "\n";
+          Parent->Emitted[Belong] = true;
+        }
+        auto FCond = [MP](analysis::CoalMemoryInfo::CoalescedEntry &CE) {
+          return CE.ID == MP->ID;
+        };
+        auto Entry = std::find_if(Cluster.begin(), Cluster.end(), FCond);
+        CHECK(Entry != Cluster.end());
+        os << MP->Name(0) << " = " << "ICluster_" << Belong << "_" << (Entry->Offset / Bytes) << "\n";
+      }
+    }
+
+    void Visit(PortMem *PM) override {
+      auto &CMI = Parent->CMI;
+      auto Belong = CMI.Belong[PM->ID];
+      if (Parent->CMI.Clusters[Belong].size() == 1) {
+        Visit(static_cast<OutputPort*>(PM));
+      } else {
+        os << "# Cluster " << Belong << "\n";
+        Visit(static_cast<DFGEntry*>(PM));
+        auto &Cluster = CMI.Clusters[Belong];
+        int Bits = PM->Store->getValueOperand()->getType()->getScalarSizeInBits();
+        int Bytes = Bits / 8;
+        auto FCond = [PM](analysis::CoalMemoryInfo::CoalescedEntry &CE) {
+          return CE.ID == PM->ID;
+        };
+        auto OV = PM->Parent->InThisDFG(PM->Output);
+        CHECK(OV);
+        auto Entry = std::find_if(Cluster.begin(), Cluster.end(), FCond);
+        CHECK(Entry != Cluster.end());
+        os << "OCluster_" << Belong << "_" << (Entry->Offset / Bytes) << " = " << OV->Name(0) << "\n";
+        if (!Parent->Emitted[Belong]) {
+          auto FReduce = [](int Res, analysis::CoalMemoryInfo::CoalescedEntry &CE) -> int {
+            return std::max(Res, CE.Offset);
+          };
+          int MaxOffset = std::accumulate(Cluster.begin(), Cluster.end(), INT_MIN, FReduce);
+          std::ostringstream OSS;
+          OSS << "Output" << Bits << ": OCluster_" << Belong << "_[" << (MaxOffset / Bytes + 1) << "]";
+          Parent->DelayEmission.push_back(OSS.str());
+          Parent->Emitted[Belong] = true;
+        }
+      }
     }
 
     void Visit(Predicate *P) override {
@@ -511,8 +557,17 @@ struct DFGPrinter : dsa::DFGVisitor {
    * \brief The information of memory coalescing.
    */
   analysis::CoalMemoryInfo CMI;
+  /*!
+   * \brief If this CMI cluster is emitted.
+   */
+  std::vector<bool> Emitted;
+  /*!
+   * \brief Clustered output should be delayed.
+   */
+  std::vector<std::string> DelayEmission;
 
-  DFGPrinter(raw_ostream &os_, analysis::CoalMemoryInfo &CMI_) : os(os_), CMI(CMI_) {}
+  DFGPrinter(raw_ostream &os_, analysis::CoalMemoryInfo &CMI_) :
+    os(os_), CMI(CMI_), Emitted(CMI.Clusters.size(), false) {}
 };
 
 void EmitDFG(raw_ostream &os, DFGFile *DFG, std::vector<analysis::CoalMemoryInfo> &CMIs) {
@@ -525,6 +580,9 @@ void EmitDFG(raw_ostream &os, DFGFile *DFG, std::vector<analysis::CoalMemoryInfo
       os << "----\n";
     }
     Elem->Accept(&DP);
+    for (auto &CO : DP.DelayEmission) {
+      os << CO << "\n";
+    }
   }
 }
 
