@@ -678,7 +678,7 @@ void ExtractDFGFromScope(DFGFile &DF, IntrinsicInst *Start, IntrinsicInst *End,
   }
 }
 
-ConfigInfo ExtractDFGPorts(std::string FName, DFGFile &DF) {
+ConfigInfo ExtractDFGPorts(std::string FName, DFGFile &DF, std::vector<CoalMemoryInfo> &CMIs) {
   std::ifstream ifs(FName + ".h");
   auto DFGs = DF.DFGFilter<DFGBase>();
 
@@ -744,6 +744,14 @@ ConfigInfo ExtractDFGPorts(std::string FName, DFGFile &DF) {
           CHECK(false) << "DSAPass port information gathering unreachable!";
         }
         // #define dfgx_size size
+      } else if (Token.find(PortPrefix + "ICluster") == 0 || Token.find(PortPrefix + "OCluster") == 0) {
+        Token = Token.substr(std::string(PortPrefix + "ICluster").size());
+        int X, Y, Port;
+        CHECK(sscanf(Token.c_str(), "_%d_%d_", &X, &Y) == 2);
+        iss >> Port;
+        CHECK(X >= 0 && X < (int) CMIs.size());
+        CHECK(Y >= 0 && Y < (int) CMIs[X].ClusterPortNum.size()) << Y;
+        CMIs[X].ClusterPortNum[Y] = Port;
       } else if (Token.find(formatv("{0}_size", Stripped).str()) == 0) {
         iss >> ConfigSize;
       } else if (Token.find(PortPrefix + "indirect_") == 0) {
@@ -762,6 +770,8 @@ ConfigInfo ExtractDFGPorts(std::string FName, DFGFile &DF) {
           iss >> Port;
           IMP->IndexOutPort = Port;
         }
+      } else {
+        CHECK(false) << "Unrecognized token: " << Token;
       }
       // char dfgx_config[size] = "filename:dfgx.sched";
     } else if (Token == "char") {
@@ -854,6 +864,7 @@ std::vector<CoalMemoryInfo> GatherMemoryCoalescing(DFGFile &DF, ScalarEvolution 
         CHECK(Current.Clusters.size() == DSU2Cluster.size());
       }
       Current.Clusters[DSU2Cluster[Set]].emplace_back(j);
+      Current.ClusterPortNum.push_back(-1);
       Current.Belong[j] = DSU2Cluster[Set];
     }
     for (int j = 0; j < (int) Current.Clusters.size(); ++j) {

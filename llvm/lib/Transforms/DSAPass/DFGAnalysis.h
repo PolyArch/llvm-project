@@ -7,6 +7,8 @@
 namespace dsa {
 namespace analysis {
 
+struct CoalMemoryInfo;
+
 /*!
  * \brief Gather all the pairs of dsa.config.start/end
  * \param F The function to be analyzed.
@@ -39,8 +41,9 @@ struct ConfigInfo {
  * \brief Extract the port number from the generated schedule.
  * \param FName The emitted file to be analyzed.
  * \param Ports Write the result in the allocated vector buffer.
+ * \param CMIs The coalesced memory.
  */
-ConfigInfo ExtractDFGPorts(std::string FName, DFGFile &DF);
+ConfigInfo ExtractDFGPorts(std::string FName, DFGFile &DF, std::vector<CoalMemoryInfo> &CMIs);
 
 /*!
  * \brief Analyze DFG loops for code generation.
@@ -138,6 +141,10 @@ struct CoalMemoryInfo {
    * \brief Each vector is a cluster of coalesced memory.
    */
   std::vector<std::vector<CoalescedEntry>> Clusters;
+  /*!
+   * \brief The port number of each coalesced port.
+   */
+  std::vector<int> ClusterPortNum;
 };
 
 /*!

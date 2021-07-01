@@ -393,7 +393,8 @@ struct DFGPrinter : dsa::DFGVisitor {
             return std::max(Res, CE.Offset);
           };
           int MaxOffset = std::accumulate(Cluster.begin(), Cluster.end(), INT_MIN, FReduce);
-          os << "Input" << Bits << ": ICluster_" << Belong << "_[" << (MaxOffset / Bytes + 1) << "]" << "\n";
+          os << "Input" << Bits << ": ICluster_" << MP->Parent->ID << "_"
+             << Belong << "_[" << (MaxOffset / Bytes + 1) << "]" << "\n";
           Parent->Emitted[Belong] = true;
         }
         auto FCond = [MP](analysis::CoalMemoryInfo::CoalescedEntry &CE) {
@@ -401,7 +402,8 @@ struct DFGPrinter : dsa::DFGVisitor {
         };
         auto Entry = std::find_if(Cluster.begin(), Cluster.end(), FCond);
         CHECK(Entry != Cluster.end());
-        os << MP->Name(0) << " = " << "ICluster_" << Belong << "_" << (Entry->Offset / Bytes) << "\n";
+        os << MP->Name(0) << " = " << "ICluster_" << MP->Parent->ID << "_"
+           << Belong << "_" << (Entry->Offset / Bytes) << "\n";
       }
     }
 
@@ -423,14 +425,16 @@ struct DFGPrinter : dsa::DFGVisitor {
         CHECK(OV);
         auto Entry = std::find_if(Cluster.begin(), Cluster.end(), FCond);
         CHECK(Entry != Cluster.end());
-        os << "OCluster_" << Belong << "_" << (Entry->Offset / Bytes) << " = " << OV->Name(0) << "\n";
+        os << "OCluster_" << PM->Parent->ID << "_"
+           << Belong << "_" << (Entry->Offset / Bytes) << " = " << OV->Name(0) << "\n";
         if (!Parent->Emitted[Belong]) {
           auto FReduce = [](int Res, analysis::CoalMemoryInfo::CoalescedEntry &CE) -> int {
             return std::max(Res, CE.Offset);
           };
           int MaxOffset = std::accumulate(Cluster.begin(), Cluster.end(), INT_MIN, FReduce);
           std::ostringstream OSS;
-          OSS << "Output" << Bits << ": OCluster_" << Belong << "_[" << (MaxOffset / Bytes + 1) << "]";
+          OSS << "Output" << Bits << ": OCluster_" << PM->Parent->ID << "_"
+              << Belong << "_[" << (MaxOffset / Bytes + 1) << "]";
           Parent->DelayEmission.push_back(OSS.str());
           Parent->Emitted[Belong] = true;
         }

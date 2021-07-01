@@ -107,7 +107,7 @@ bool StreamSpecialize::runOnFunction(Function &F) {
     //   Ports[i].resize(Graphs[i]->Entries.size(), -1);
     // }
     // DF.InspectSPADs();
-    auto CI = dsa::analysis::ExtractDFGPorts(Name, DF);
+    auto CI = dsa::analysis::ExtractDFGPorts(Name, DF, CMIs);
     dsa::xform::InjectConfiguration(CGC, CI, Start, End);
     if (dsa::utils::ModuleContext().EXTRACT) {
       continue;
