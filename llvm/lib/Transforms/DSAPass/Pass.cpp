@@ -86,9 +86,11 @@ bool StreamSpecialize::runOnFunction(Function &F) {
       DLIs.emplace_back(dsa::analysis::AnalyzeDFGLoops(DFG, *SE));
     }
     auto CMIs = dsa::analysis::GatherMemoryCoalescing(DF, *SE, DLIs);
-    std::error_code EC;
-    llvm::raw_fd_ostream RFO(DF.getName(), EC);
-    dsa::xform::EmitDFG(RFO, &DF, CMIs);
+    {
+      std::error_code EC;
+      llvm::raw_fd_ostream RFO(DF.getName(), EC);
+      dsa::xform::EmitDFG(RFO, &DF, CMIs);
+    }
     // If extraction only, we do not schedule and analyze.
     if (dsa::utils::ModuleContext().EXTRACT) {
       continue;

@@ -26,6 +26,8 @@ enum EntryKind {
 #undef MACRO
 };
 
+extern const char *KindStr[];
+
 struct Predicate;
 
 /*!

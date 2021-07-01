@@ -819,8 +819,7 @@ int64_t IndexPairOffset(const SCEV *SA, const SCEV *SB, ScalarEvolution &SE, con
     }
   }
   if (SameDims) {
-    if (auto Offset = dyn_cast<SCEVConstant>(SE.getAddExpr(A->Base, SE.getNegativeSCEV(B->Base)))) {
-      DSA_INFO << *Offset << " " << Offset->getAPInt().getSExtValue();
+    if (auto Offset = dyn_cast<SCEVConstant>(SE.getAddExpr(B->Base, SE.getNegativeSCEV(A->Base)))) {
       auto Res = Offset->getAPInt().getSExtValue();
       return Signed ? Res : abs(Res);
     }
@@ -830,17 +829,19 @@ int64_t IndexPairOffset(const SCEV *SA, const SCEV *SB, ScalarEvolution &SE, con
 }
 
 
-std::vector<CoalMemoryInfo> GatherMemoryCoalescing(DFGFile &DF, ScalarEvolution &SE, const std::vector<DFGLoopInfo> &DLI) {
+std::vector<CoalMemoryInfo> GatherMemoryCoalescing(DFGFile &DF, ScalarEvolution &SE, const std::vector<DFGLoopInfo> &DLIs) {
   auto DFGs = DF.DFGFilter<DFGBase>();
-  CHECK(DLI.size() == DFGs.size());
+  CHECK(DLIs.size() == DFGs.size());
   std::vector<CoalMemoryInfo> Res;
   for (int i = 0; i < (int) DFGs.size(); ++i) {
-    std::vector<int> DSU(DFGs[i]->Entries.size());
+    auto &Entries = DFGs[i]->Entries;
+    auto &DLI = DLIs[i];
+    std::vector<int> DSU(Entries.size());
     for (int j = 0; j < (int) DSU.size(); ++j) {
       DSU[j] = j;
     }
-    GatherMemoryCoalescingImpl<MemPort>(DFGs[i], SE, DLI[i], DSU);
-    GatherMemoryCoalescingImpl<PortMem>(DFGs[i], SE, DLI[i], DSU);
+    GatherMemoryCoalescingImpl<MemPort>(DFGs[i], SE, DLIs[i], DSU);
+    GatherMemoryCoalescingImpl<PortMem>(DFGs[i], SE, DLIs[i], DSU);
     Res.emplace_back();
     CoalMemoryInfo &Current = Res.back();
     std::map<int, int> DSU2Cluster;
@@ -864,17 +865,22 @@ std::vector<CoalMemoryInfo> GatherMemoryCoalescing(DFGFile &DF, ScalarEvolution 
           Ptr = PM->Store->getPointerOperand();
         }
         Value *Ptr{nullptr};
-      } Base;
-      DFGs[i]->Entries[Cluster[0].ID]->Accept(&Base);
-      for (int k = 1; k < (int) Cluster.size(); ++k) {
-        PtrExtractor PE;
-        DFGs[i]->Entries[Cluster[k].ID]->Accept(&PE);
-        Cluster[k].Offset = IndexPairOffset(SE.getSCEV(PE.Ptr), SE.getSCEV(PE.Ptr), SE, DLI[i], true);
-      }
-      for (int k = 0; k < (int) Cluster.size(); ++k) {
-        DSA_INFO << DFGs[i]->Entries[Cluster[k].ID]->dump();
-        DSA_INFO << Cluster[k].Offset;
-      }
+      };
+      auto FCompOffset = [&Entries, &Cluster, &SE, &DLI]() {
+        PtrExtractor Base;
+        Entries[Cluster[0].ID]->Accept(&Base);
+        for (int k = 1; k < (int) Cluster.size(); ++k) {
+          PtrExtractor PE;
+          Entries[Cluster[k].ID]->Accept(&PE);
+          Cluster[k].Offset = IndexPairOffset(SE.getSCEV(Base.Ptr), SE.getSCEV(PE.Ptr), SE, DLI, true);
+        }
+      };
+      auto FCmp = [] (const CoalMemoryInfo::CoalescedEntry &A, const CoalMemoryInfo::CoalescedEntry &B) {
+        return A.Offset < B.Offset;
+      };
+      FCompOffset();
+      std::sort(Cluster.begin(), Cluster.end(), FCmp);
+      FCompOffset();
     }
   }
   return Res;

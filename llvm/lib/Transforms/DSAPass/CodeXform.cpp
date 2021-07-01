@@ -125,34 +125,6 @@ std::string GetOperationStr(Instruction *Inst, bool isAcc, bool predicated) {
   return formatv("{0}{1}", OpStr, BitWidth);
 }
 
-const char *KindStr[] = {
-    "DFGEntry",
-
-    // Computation {
-    "ComputeStarts", "ComputeBody", "Duplicate", "Accumulator", "ComputeEnds",
-    // }
-
-    // Predicate {
-    "Predicate",
-    // }
-
-    // Port {
-    "PortStarts", "PortBase",
-
-    // InPort {
-    "InPortStarts", "InputPort", "MemPort", "IndMemPort", "CtrlMemPort",
-    "InputConst", "StreamInPort", "CtrlSignal", "InPortEnds",
-    // }
-
-    // OutPort {
-    "OutPortStarts", "OutputPort", "PortMem", "AtomicPortMem", "StreamOutPort",
-    "OutPortEnds",
-    // }
-
-    "PortEnds"
-    // }
-};
-
 /*!
  * \brief I anyways need the DFG entries to be reordered in which the order the
  * are emitted. \param DB The DFG to reorder the entries.
@@ -467,8 +439,8 @@ struct DFGPrinter : dsa::DFGVisitor {
       os << oss.str();
       auto Entry = OP->Parent->InThisDFG(OP->Output);
       CHECK(Entry);
-      for (int i = 0; i < (Entry->ShouldUnroll() ? OP->Parent->getUnroll() : 1);
-           ++i) {
+      int N = (Entry->ShouldUnroll() ? OP->Parent->getUnroll() : 1);
+      for (int i = 0; i < N; ++i) {
         os << OP->Name(i) << " = " << Entry->Name(i) << "\n";
       }
       os << "Output" << OP->Output->getType()->getScalarSizeInBits() << ": "
