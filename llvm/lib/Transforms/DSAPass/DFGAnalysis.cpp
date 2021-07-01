@@ -841,7 +841,8 @@ std::vector<CoalMemoryInfo> GatherMemoryCoalescing(DFGFile &DF, ScalarEvolution 
     }
     GatherMemoryCoalescingImpl<MemPort>(DFGs[i], SE, DLI[i], DSU);
     GatherMemoryCoalescingImpl<PortMem>(DFGs[i], SE, DLI[i], DSU);
-    CoalMemoryInfo Current;
+    Res.emplace_back();
+    CoalMemoryInfo &Current = Res.back();
     std::map<int, int> DSU2Cluster;
     for (int j = 0; j < (int) DSU.size(); ++j) {
       int Set = utils::DSUGetSet(DSU[j], DSU);
@@ -868,7 +869,11 @@ std::vector<CoalMemoryInfo> GatherMemoryCoalescing(DFGFile &DF, ScalarEvolution 
       for (int k = 1; k < (int) Cluster.size(); ++k) {
         PtrExtractor PE;
         DFGs[i]->Entries[Cluster[k].ID]->Accept(&PE);
-        Cluster[k].Offset = IndexPairOffset(SE.getSCEV(PE.Ptr), SE.getSCEV(PE.Ptr), SE, DLI[i]);
+        Cluster[k].Offset = IndexPairOffset(SE.getSCEV(PE.Ptr), SE.getSCEV(PE.Ptr), SE, DLI[i], true);
+      }
+      for (int k = 0; k < (int) Cluster.size(); ++k) {
+        DSA_INFO << DFGs[i]->Entries[Cluster[k].ID]->dump();
+        DSA_INFO << Cluster[k].Offset;
       }
     }
   }

@@ -416,6 +416,7 @@ struct DFGPrinter : dsa::DFGVisitor {
       //     Another->Load->getPointerOperand();
       //   }
       // }
+      Visit(static_cast<InputPort*>(MP));
     }
 
     void Visit(Predicate *P) override {
@@ -544,6 +545,7 @@ struct DFGPrinter : dsa::DFGVisitor {
 
 void EmitDFG(raw_ostream &os, DFGFile *DFG, std::vector<analysis::CoalMemoryInfo> &CMIs) {
   auto Graphs = DFG->DFGFilter<DFGBase>();
+  CHECK(CMIs.size() == Graphs.size()) << CMIs.size() << " == " << Graphs.size();
   for (int i = 0; i < (int)Graphs.size(); ++i) {
     DFGPrinter DP(os, CMIs[i]);
     auto Elem = Graphs[i];

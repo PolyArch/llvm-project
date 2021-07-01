@@ -74,9 +74,9 @@ DFGLoopInfo AnalyzeDFGLoops(DFGBase *DB, ScalarEvolution &SE);
  * \param SB The second index.
  * \param SE Scalar evolution for memory stream analysis.
  * \param DLI The loop information associated to the DFG.
- * \return int64_t 
+ * \param Signed If result of analysis is signed.
  */
-int64_t IndexPairOffset(const SCEV *SA, const SCEV *SB, ScalarEvolution &SE, const DFGLoopInfo &DLI);
+int64_t IndexPairOffset(const SCEV *SA, const SCEV *SB, ScalarEvolution &SE, const DFGLoopInfo &DLI, bool Signed);
 
 /*!
  * \brief The implementation of coalescing memory operations.
@@ -98,10 +98,8 @@ void GatherMemoryCoalescingImpl(DFGBase *DB, ScalarEvolution &SE, const DFGLoopI
           if (auto Node2 = dyn_cast<T>(DB->Entries[j])) {
             auto IdxA = SE.getSCEV(Node1->UnderlyingInst()->getOperand(T::PtrOperandIdx));
             auto IdxB = SE.getSCEV(Node2->UnderlyingInst()->getOperand(T::PtrOperandIdx));
-            auto Offset = IndexPairOffset(IdxA, IdxB, SE, DLI);
-            // DSA_INFO << *IdxA << " " << *IdxB << " " << Offset;
+            auto Offset = IndexPairOffset(IdxA, IdxB, SE, DLI, false);
             if (Offset != -1 && Offset <= 64) {
-              // DSA_INFO << i << ", " << utils::DSUGetSet(i, DSU) << "  " << j << ", "<< utils::DSUGetSet(j, DSU);
               if (utils::DSUGetSet(i, DSU) != utils::DSUGetSet(j, DSU)) {
                 DSU[utils::DSUGetSet(i, DSU)] = utils::DSUGetSet(j, DSU);
                 Iterative = true;
