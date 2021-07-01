@@ -112,7 +112,7 @@ bool StreamSpecialize::runOnFunction(Function &F) {
     if (dsa::utils::ModuleContext().EXTRACT) {
       continue;
     }
-    dsa::xform::InjectStreamIntrinsics(CGC, DF);
+    dsa::xform::InjectStreamIntrinsics(CGC, DF, CMIs);
     DF.EraseOffloadedInstructions();
   }
   if (!dsa::utils::ModuleContext().EXTRACT) {

@@ -146,7 +146,7 @@ void InjectConfiguration(CodeGenContext &CGC, analysis::ConfigInfo &CI,
  * \brief Inject stream intrinsics.
  * \param CGC The context of code injection.
  */
-void InjectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF);
+void InjectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, std::vector<analysis::CoalMemoryInfo> &CMIs);
 
 } // namespace xform
 } // namespace dsa

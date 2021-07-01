@@ -389,10 +389,7 @@ struct DFGPrinter : dsa::DFGVisitor {
         int Bits = MP->UnderlyingInst()->getType()->getScalarSizeInBits();
         int Bytes = Bits / 8;
         if (!Parent->Emitted[Belong]) {
-          auto FReduce = [](int Res, analysis::CoalMemoryInfo::CoalescedEntry &CE) -> int {
-            return std::max(Res, CE.Offset);
-          };
-          int MaxOffset = std::accumulate(Cluster.begin(), Cluster.end(), INT_MIN, FReduce);
+          int MaxOffset = Cluster.back().Offset;
           os << "Input" << Bits << ": ICluster_" << MP->Parent->ID << "_"
              << Belong << "_[" << (MaxOffset / Bytes + 1) << "]" << "\n";
           Parent->Emitted[Belong] = true;
@@ -428,10 +425,7 @@ struct DFGPrinter : dsa::DFGVisitor {
         os << "OCluster_" << PM->Parent->ID << "_"
            << Belong << "_" << (Entry->Offset / Bytes) << " = " << OV->Name(0) << "\n";
         if (!Parent->Emitted[Belong]) {
-          auto FReduce = [](int Res, analysis::CoalMemoryInfo::CoalescedEntry &CE) -> int {
-            return std::max(Res, CE.Offset);
-          };
-          int MaxOffset = std::accumulate(Cluster.begin(), Cluster.end(), INT_MIN, FReduce);
+          int MaxOffset = Cluster.back().Offset;
           std::ostringstream OSS;
           OSS << "Output" << Bits << ": OCluster_" << PM->Parent->ID << "_"
               << Belong << "_[" << (MaxOffset / Bytes + 1) << "]";
@@ -720,7 +714,7 @@ InjectComputedRepeat(CodeGenContext &CGC,
 }
 
 
-void InjectLinearStreamImpl(CodeGenContext &CGC, const SCEV *Idx,
+void InjectLinearStreamImpl(CodeGenContext &CGC, const SCEV *Idx, int MaxOffset,
                             std::vector<Loop*> LoopNest,
                             std::vector<dsa::analysis::LinearInfo *> LoopLI,
                             int Port, int Unroll, int DType, MemoryOperation MO,
@@ -750,9 +744,9 @@ void InjectLinearStreamImpl(CodeGenContext &CGC, const SCEV *Idx,
     }
   };
 
-  auto LinearInstantiation = [&](analysis::LinearInfo *LI,
-                                    const std::vector<analysis::LinearInfo *> &Loops, int Port,
-                                    MemoryOperation MO, Padding P, MemoryType MT, int DType) {
+  auto LinearInstantiation = [&](analysis::LinearInfo *LI, int MaxOffset,
+                                 const std::vector<analysis::LinearInfo *> &Loops, int Port,
+                                 MemoryOperation MO, Padding P, MemoryType MT, int DType) {
     auto IB = CGC.IB;
     auto &SEE = CGC.SEE;
     if (auto LII = LI->Invariant()) {
@@ -767,6 +761,18 @@ void InjectLinearStreamImpl(CodeGenContext &CGC, const SCEV *Idx,
     CHECK(0 <= Dim && Dim <= 3) << Dim;
     auto Start = SEE.expandCodeFor(LI->Base);
     int i = LI->PatialInvariant();
+    DSA_INFO << *Start;
+    auto CoalesceStrideAndWord = [IB, DType, MaxOffset] (Value *&Stride1D, Value *&N1D) {
+      if (auto CI = dyn_cast<ConstantInt>(Stride1D)) {
+        int Multiplier = (MaxOffset / DType) + 1;
+        DSA_INFO << *N1D << " " << *Stride1D;
+        if ((CI->getSExtValue() / DType) == Multiplier) {
+          Stride1D = IB->getInt64(DType);
+          N1D = IB->CreateMul(N1D, IB->getInt64(Multiplier));
+        }
+        DSA_INFO << *N1D << " " << *Stride1D;
+      }
+    };
     switch (Dim) {
     case 0: {
       CGC.INSTANTIATE_1D_STREAM(Start, IB->getInt64(0), IB->getInt64(1), Port,
@@ -774,32 +780,26 @@ void InjectLinearStreamImpl(CodeGenContext &CGC, const SCEV *Idx,
       break;
     }
     case 1: {
-      auto N = Loops[i]->Invariant();
-      CHECK(N) << "No stretch should be in 1d stream! " << Loops[i]->toString();
-      auto Stride = LI->Coef[i]->Invariant();
-      CHECK(Stride) << "Stride should not be stretched!";
-      CGC.INSTANTIATE_1D_STREAM(
-          Start, SEE.expandCodeFor(LI->Coef[i]->Invariant()),
-          IB->CreateAdd(SEE.expandCodeFor(Loops[i]->Invariant()),
-                        IB->getInt64(1)),
-          Port, P, DSA_Access, MO, MT, DType, 0);
+      auto N1D = IB->CreateAdd(SEE.expandCodeFor(Loops[i]->Invariant()), IB->getInt64(1));
+      auto Stride1D = SEE.expandCodeFor(LI->Coef[i]->Invariant());
+      CoalesceStrideAndWord(Stride1D, N1D);
+      CGC.INSTANTIATE_1D_STREAM(Start, Stride1D, N1D, Port, P, DSA_Access, MO, MT, DType, 0);
       break;
     }
     case 2: {
+      auto N1D = IB->CreateAdd(SEE.expandCodeFor(Loops[i]->Invariant()), IB->getInt64(1));
+      auto Stride1D = SEE.expandCodeFor(LI->Coef[i]->Invariant());
+      CoalesceStrideAndWord(Stride1D, N1D);
       // TODO(@were): Make assumption check!
-      auto Length1D =
-          IB->CreateAdd(SEE.expandCodeFor(Loops[i]->Base), IB->getInt64(1));
       Value *Stretch = IB->getInt64(0);
       if (!Loops[i]->Coef.empty()) {
         Stretch = SEE.expandCodeFor(Loops[i]->Coef[i + 1]->Base);
       }
-      auto Length2D = IB->CreateAdd(SEE.expandCodeFor(Loops[i + 1]->Base),
-                                    IB->getInt64(1));
-      auto Stride1D = SEE.expandCodeFor(LI->Coef[i]->Invariant());
+      auto Length2D = IB->CreateAdd(SEE.expandCodeFor(Loops[i + 1]->Base), IB->getInt64(1));
       auto Stride2D =
           IB->CreateSDiv(SEE.expandCodeFor(LI->Coef[i + 1]->Invariant()),
                          IB->getInt64(DType));
-      CGC.INSTANTIATE_2D_STREAM(Start, Stride1D, Length1D, Stride2D, Stretch,
+      CGC.INSTANTIATE_2D_STREAM(Start, Stride1D, N1D, Stride2D, Stretch,
                                 Length2D, Port, P, DSA_Access, MO, MT, DType,
                                 0);
       break;
@@ -817,11 +817,11 @@ void InjectLinearStreamImpl(CodeGenContext &CGC, const SCEV *Idx,
   if (MO == MemoryOperation::DMO_Read) {
     InjectRepeat(IdxLI, LoopLI, Port, Unroll);
   }
-  LinearInstantiation(IdxLI, LoopLI, Port, MO, P, MT, DType);
+  LinearInstantiation(IdxLI, MaxOffset, LoopLI, Port, MO, P, MT, DType);
 }
 
 
-void InjectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF) {
+void InjectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, std::vector<analysis::CoalMemoryInfo> &CMIs) {
 
   auto DFGs = DF.DFGFilter<DFGBase>();
 
@@ -862,7 +862,7 @@ void InjectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF) {
           }
           using LinearInfo = dsa::analysis::LinearInfo;
           auto DType = MP->Load->getType()->getScalarSizeInBits() / 8;
-          InjectLinearStreamImpl(CGC, SCEV,
+          InjectLinearStreamImpl(CGC, SCEV, /*TODO(@were): Support this later*/0,
                                  std::vector<Loop*>(DLI.LoopNest.begin(), DLI.LoopNest.end() - 1),
                                  std::vector<LinearInfo*>(DLI.TripCount.begin(), DLI.TripCount.end() - 1),
                                  MP->SoftPortNum, DFG->getUnroll(),
@@ -882,7 +882,7 @@ void InjectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF) {
             CHECK(false) << "Not supported yet";
           }
 
-          InjectLinearStreamImpl(CGC, SCEV,
+          InjectLinearStreamImpl(CGC, SCEV, /*TODO(@were): Support this later*/0,
                                  std::vector<Loop*>(DLI.LoopNest.begin(), DLI.LoopNest.end() - 1),
                                  std::vector<LinearInfo*>(DLI.TripCount.begin(), DLI.TripCount.end() - 1),
                                  PM->SoftPortNum, DFG->getUnroll(),
@@ -971,7 +971,8 @@ void InjectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF) {
       auto Index = IMP->Index->Load->getPointerOperand();
       auto Analyzed = IMP->Parent->AnalyzeDataStream(
           Index, IMP->Index->Load->getType()->getScalarSizeInBits() / 8);
-      InjectLinearStreamImpl(CGC, CGC.SE.getSCEV(Index), DLI.LoopNest, DLI.TripCount, IMP->Index->SoftPortNum,
+      InjectLinearStreamImpl(CGC, CGC.SE.getSCEV(Index), /*TODO(@were): Support SLP*/0,
+                             DLI.LoopNest, DLI.TripCount, IMP->Index->SoftPortNum,
                              IMP->Parent->getUnroll(), IMP->Index->Load->getType()->getScalarSizeInBits() / 8,
                              DMO_Read, DP_NoPadding, DMT_DMA);
       // IMP->Parent->InjectRepeat(Analyzed.AR, nullptr, IMP->SoftPortNum);
@@ -1011,34 +1012,50 @@ void InjectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF) {
 
       // Wrappers
       auto DFG = MP->Parent;
-
+      int Belong = CMI.Belong[MP->ID];
+      int MaxOffset = CMI.Clusters[Belong].back().Offset;
+      int ID = CMI.Clusters[Belong].front().ID;
+      auto MP0 = dyn_cast<MemPort>(DFG->Entries[ID]);
+      int Port = CMI.Clusters[Belong].size() == 1 ? MP->SoftPortNum : CMI.ClusterPortNum[Belong];
       // Handle data stream with predicate
       if (MP->getPredicate()) {
-        assert(false && "Predicated stream should be handled in CtrlMemPort.");
+        CHECK(false) << "Predicated stream should be handled in CtrlMemPort.";
       }
-
-      auto SCEVIdx = CGC.SE.getSCEV(MP->Load->getPointerOperand());
+      auto SCEVIdx = CGC.SE.getSCEV(MP0->Load->getPointerOperand());
       int DType = MP->Load->getType()->getScalarSizeInBits() / 8;
-      InjectLinearStreamImpl(CGC, SCEVIdx, DLI.LoopNest, DLI.TripCount, MP->SoftPortNum,
+      InjectLinearStreamImpl(CGC, SCEVIdx, MaxOffset, DLI.LoopNest, DLI.TripCount, Port,
                              DFG->getUnroll(), DType, DMO_Read, (Padding) MP->FillMode(),
                              DMT_DMA);
 
-      MP->IntrinInjected = true;
+      for (auto &Elem : CMI.Clusters[Belong]) {
+        auto PB = dyn_cast<PortBase>(DFG->Entries[Elem.ID]);
+        CHECK(PB);
+        PB->IntrinInjected = true;
+      }
     }
 
     void Visit(PortMem *PM) override {
       auto DFG = PM->Parent;
       if (PM->IntrinInjected)
         return;
+      int Belong = CMI.Belong[PM->ID];
+      int MaxOffset = CMI.Clusters[Belong].back().Offset;
+      int ID = CMI.Clusters[Belong].front().ID;
+      auto PM0 = dyn_cast<MemPort>(DFG->Entries[ID]);
+      int Port = CMI.Clusters[Belong].size() == 1 ? PM0->SoftPortNum : CMI.ClusterPortNum[Belong];
 
       CGC.IB->SetInsertPoint(DFG->DefaultIP());
       CGC.SEE.setInsertPoint(DFG->DefaultIP());
       auto SCEVIdx = CGC.SE.getSCEV(PM->Store->getPointerOperand());
       int DType = PM->Store->getValueOperand()->getType()->getScalarSizeInBits() / 8;
-      InjectLinearStreamImpl(CGC, SCEVIdx, DLI.LoopNest, DLI.TripCount, PM->SoftPortNum,
+      InjectLinearStreamImpl(CGC, SCEVIdx, MaxOffset, DLI.LoopNest, DLI.TripCount, Port,
                              DFG->getUnroll(), DType, DMO_Write, DP_NoPadding, DMT_DMA);
 
-      PM->IntrinInjected = true;
+      for (auto &Elem : CMI.Clusters[Belong]) {
+        auto PB = dyn_cast<PortBase>(DFG->Entries[Elem.ID]);
+        CHECK(PB);
+        PB->IntrinInjected = true;
+      }
     }
 
     void Visit(InputConst *IC) {
@@ -1292,22 +1309,17 @@ void InjectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF) {
     }
 
     CodeGenContext &CGC;
-    analysis::DFGLoopInfo DLI;
-    const std::vector<int> &DSU;
-    StreamIntrinsicInjector(CodeGenContext &CGC_, analysis::DFGLoopInfo DLI_, const std::vector<int> &DSU_) :
-      CGC(CGC_), DLI(DLI_.LoopNest, DLI_.TripCount), DSU(DSU_) {}
+    analysis::DFGLoopInfo &DLI;
+    analysis::CoalMemoryInfo &CMI;
+    StreamIntrinsicInjector(CodeGenContext &CGC_, analysis::DFGLoopInfo &DLI_, analysis::CoalMemoryInfo &CMI_) :
+      CGC(CGC_), DLI(DLI_), CMI(CMI_) {}
   };
 
-  for (auto DFG : DFGs) {
+  for (int i = 0; i < (int) DFGs.size(); ++i) {
+    auto DFG = DFGs[i];
     auto DLI = analysis::AnalyzeDFGLoops(DFG, CGC.SE);
-    std::vector<int> DSU(DFG->Entries.size());
-    for (int i = 0, n = DSU.size(); i < n; ++i) {
-      DSU[i] = i;
-    }
-    dsa::analysis::GatherMemoryCoalescingImpl<MemPort>(DFG, CGC.SE, DLI, DSU);
-    dsa::analysis::GatherMemoryCoalescingImpl<PortMem>(DFG, CGC.SE, DLI, DSU);
     UpdateStreamInjector USI(CGC, DLI);
-    StreamIntrinsicInjector SII(CGC, DLI, DSU);
+    StreamIntrinsicInjector SII(CGC, DLI, CMIs[i]);
     CGC.IB->SetInsertPoint(DFG->DefaultIP());
     CGC.SEE.setInsertPoint(DFG->DefaultIP());
     for (auto Elem : ReorderEntries(DFG)) {
