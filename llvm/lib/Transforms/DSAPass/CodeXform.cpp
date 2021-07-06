@@ -132,16 +132,16 @@ std::string GetOperationStr(Instruction *Inst, bool isAcc, bool predicated) {
 static std::vector<DFGEntry *> ReorderEntries(DFGBase *DB) {
   std::vector<DFGEntry *> Res;
   Res.reserve(DB->Entries.size());
-  for (auto Elem : DB->EntryFilter<InputPort>()) {
+  for (auto *Elem : DB->EntryFilter<InputPort>()) {
     Res.push_back(Elem);
   }
-  for (auto Elem : DB->Entries) {
+  for (auto *Elem : DB->Entries) {
     if (isa<InputPort>(Elem) || isa<OutputPort>(Elem)) {
       continue;
     }
     Res.push_back(Elem);
   }
-  for (auto Elem : DB->EntryFilter<OutputPort>()) {
+  for (auto *Elem : DB->EntryFilter<OutputPort>()) {
     Res.push_back(Elem);
   }
   return Res;
@@ -525,7 +525,7 @@ struct DFGPrinter : dsa::DFGVisitor {
     DFGVisitor::Visit(TD);
   }
 
-  void Visit(DFGBase *DB) {
+  void Visit(DFGBase *DB) override {
     // FIXME(@were): Add block freqency an attribute of DFG.
     // auto BF = Parent->Query->BFI->getBlockFreq(getBlocks()[0]);
     // os << "#pragma group frequency " << 1 << "\n";
@@ -534,7 +534,8 @@ struct DFGPrinter : dsa::DFGVisitor {
     auto Reordered = ReorderEntries(DB);
 
     DFGEntryEmitter DEE(os, this);
-    for (auto Elem : DB->Entries) {
+    for (auto Elem : Reordered) {
+      DSA_INFO << Elem->dump();
       Elem->Accept(&DEE);
     }
 
