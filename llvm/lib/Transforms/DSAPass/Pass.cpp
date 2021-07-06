@@ -81,6 +81,7 @@ bool StreamSpecialize::runOnFunction(Function &F) {
     auto *End = ScopePairs[I].second;
     DFGFile DF(Name, Start, End, this);
     dsa::analysis::ExtractDFGFromScope(DF, Start, End, DT, LI);
+
     std::vector<dsa::analysis::DFGLoopInfo> DLIs;
     for (auto *DFG : DF.DFGFilter<DFGBase>()) {
       DLIs.emplace_back(dsa::analysis::AnalyzeDFGLoops(DFG, *SE));

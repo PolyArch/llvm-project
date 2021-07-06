@@ -35,7 +35,7 @@ namespace {
  * \param Insts The instructions to be removed.
  */
 void EliminateInstructions(const std::vector<Instruction *> &Insts) {
-  for (auto I : Insts) {
+  for (auto *I : Insts) {
     I->replaceAllUsesWith(UndefValue::get(I->getType()));
     I->eraseFromParent();
   }
@@ -47,7 +47,7 @@ void EliminateTemporal(Function &F) {
   std::vector<Instruction *> ToRemove;
   for (auto &BB : F) {
     for (auto &I : BB) {
-      if (auto Intrin = dyn_cast<IntrinsicInst>(&I)) {
+      if (auto *Intrin = dyn_cast<IntrinsicInst>(&I)) {
         switch (Intrin->getIntrinsicID()) {
         case Intrinsic::ss_temporal_region_start:
         case Intrinsic::ss_temporal_region_end:
@@ -67,12 +67,12 @@ std::vector<utils::StickyRegister> InjectDSARegisterFile(Function &F) {
   IB.SetInsertPoint(&F.getEntryBlock().back());
   std::vector<utils::StickyRegister> Res;
   std::string TyName("reg.type");
-  auto RegType = StructType::create(TyName, IB.getInt64Ty(), IB.getInt8Ty());
+  auto *RegType = StructType::create(TyName, IB.getInt64Ty(), IB.getInt8Ty());
   for (int i = 0; i < DSARF::TOTAL_REG; ++i) {
-    auto A = IB.CreateAlloca(RegType, nullptr, REG_NAMES[i]);
-    auto R = IB.CreateInBoundsGEP(A, {IB.getInt32(0), IB.getInt32(0)},
+    auto *A = IB.CreateAlloca(RegType, nullptr, REG_NAMES[i]);
+    auto *R = IB.CreateInBoundsGEP(A, {IB.getInt32(0), IB.getInt32(0)},
                                   std::string(REG_NAMES[i]) + ".r.ptr");
-    auto S = IB.CreateInBoundsGEP(A, {IB.getInt32(0), IB.getInt32(1)},
+    auto *S = IB.CreateInBoundsGEP(A, {IB.getInt32(0), IB.getInt32(1)},
                                   std::string(REG_NAMES[i]) + ".s.ptr");
     IB.CreateStore(IB.getInt64(REG_STICKY[i]), R);
     IB.CreateStore(IB.getInt8(i == DSARF::TBC), S);
@@ -83,28 +83,26 @@ std::vector<utils::StickyRegister> InjectDSARegisterFile(Function &F) {
 
 std::string ValueToOperandText(Value *Val) {
 
-  if (auto CI = dyn_cast<ConstantInt>(Val)) {
+  if (auto *CI = dyn_cast<ConstantInt>(Val)) {
     return formatv("{0}", CI->getValue().getSExtValue());
-  } else if (auto CFP = dyn_cast<ConstantFP>(Val)) {
-    // TODO: Support more data types
-    double FPV = CFP->getValueAPF().convertToDouble();
-    uint64_t *RI = reinterpret_cast<uint64_t *>(&FPV);
-    return formatv("{0}", *RI);
   }
-
-  CHECK(false) << "Cannot dump " << *Val;
-  return "";
+  auto *CFP = dyn_cast<ConstantFP>(Val);
+  CHECK(CFP) << "Cannot dump " << *Val;
+  // TODO: Support more data types
+  double FPV = CFP->getValueAPF().convertToDouble();
+  uint64_t *RI = reinterpret_cast<uint64_t *>(&FPV);
+  return formatv("{0}", *RI);
 }
 
 std::string GetOperationStr(Instruction *Inst, bool isAcc, bool predicated) {
   std::string OpStr;
   int BitWidth = Inst->getType()->getScalarSizeInBits();
 
-  if (auto Cmp = dyn_cast<CmpInst>(Inst)) {
+  if (auto *Cmp = dyn_cast<CmpInst>(Inst)) {
     // TODO: Support floating point
     OpStr = "compare";
     BitWidth = Cmp->getOperand(0)->getType()->getScalarSizeInBits();
-  } else if (auto Call = dyn_cast<CallInst>(Inst)) {
+  } else if (auto *Call = dyn_cast<CallInst>(Inst)) {
     OpStr = Call->getCalledFunction()->getName().str();
   } else {
     OpStr = Inst->getOpcodeName();
@@ -154,7 +152,7 @@ struct DFGPrinter : dsa::DFGVisitor {
     Predicate *Pred{nullptr};
 
     void addControlledMemoryStream(int Idx, DFGEntry *DE) {
-      if (auto CMP = dyn_cast<CtrlMemPort>(DE)) {
+      if (auto *CMP = dyn_cast<CtrlMemPort>(DE)) {
         if (Pred == nullptr) {
           Pred = CMP->Pred;
         } else {
@@ -215,7 +213,7 @@ struct DFGPrinter : dsa::DFGVisitor {
          << DE->ID << "\n";
       int i = 0;
       auto Insts = DE->UnderlyingInsts();
-      for (auto Elem : Insts) {
+      for (auto *Elem : Insts) {
         os << "# Inst";
         if (Insts.size() != 1) {
           os << i++;
@@ -224,19 +222,19 @@ struct DFGPrinter : dsa::DFGVisitor {
       }
     }
 
-    void Visit(Accumulator *Acc) {
+    void Visit(Accumulator *Acc) override {
 
       Visit(cast<DFGEntry>(Acc));
-      auto Inst = Acc->Operation;
+      auto *Inst = Acc->Operation;
       std::queue<std::string> Q;
       auto Reduce = GetOperationStr(Inst, false, false);
       ControlBit CtrlBit;
 
       for (int vec = 0; vec < Acc->Parent->getUnroll(); ++vec) {
         for (size_t j = 0; j < 2; ++j) {
-          auto Operand = Inst->getOperand(j);
+          auto *Operand = Inst->getOperand(j);
           if (!isa<PHINode>(Operand)) {
-            auto Entry = Acc->Parent->InThisDFG(Operand);
+            auto *Entry = Acc->Parent->InThisDFG(Operand);
             CHECK(Entry);
             Q.push(Entry->Name(vec));
           }
@@ -255,7 +253,7 @@ struct DFGPrinter : dsa::DFGVisitor {
         Q.push(formatv("TMP{0}", Parent->TmpCnt++));
       }
 
-      auto P = Acc->getPredicate();
+      auto *P = Acc->getPredicate();
       os << Acc->Name() << " = " << GetOperationStr(Inst, true, P != nullptr)
          << "(" << Q.front() << ", ";
 
@@ -273,7 +271,7 @@ struct DFGPrinter : dsa::DFGVisitor {
       os << ")\n";
     }
 
-    void Visit(CtrlSignal *CS) {
+    void Visit(CtrlSignal *CS) override {
       if (!CS->Controlled->getPredicate() ||
           !dsa::utils::ModuleContext().PRED) {
         Visit(cast<DFGEntry>(CS));
@@ -281,7 +279,7 @@ struct DFGPrinter : dsa::DFGVisitor {
       }
     }
 
-    void Visit(InputConst *IC) {
+    void Visit(InputConst *IC) override {
       Visit(cast<DFGEntry>(IC));
       os << "Input" << IC->Val->getType()->getScalarSizeInBits() << ": "
          << IC->Name() << "\n";
@@ -289,14 +287,14 @@ struct DFGPrinter : dsa::DFGVisitor {
 
     void Visit(InputPort *IP) override {
       if (!utils::ModuleContext().PRED) {
-        for (auto User : IP->UnderlyingInst()->users()) {
-          auto Entry = IP->Parent->InThisDFG(User);
+        for (auto *User : IP->UnderlyingInst()->users()) {
+          auto *Entry = IP->Parent->InThisDFG(User);
           if (Entry && !isa<Predicate>(Entry)) {
             return;
           }
         }
       }
-      if (auto IMP = dyn_cast<IndMemPort>(IP)) {
+      if (auto *IMP = dyn_cast<IndMemPort>(IP)) {
         if (IMP->duplicated()) {
           return;
         }
@@ -352,10 +350,10 @@ struct DFGPrinter : dsa::DFGVisitor {
         bool isCall = isa<CallInst>(CB->Operation);
         for (int i = 0; i < (int)(CB->Operation->getNumOperands() - isCall);
              ++i) {
-          auto Val = CB->Operation->getOperand(i);
+          auto *Val = CB->Operation->getOperand(i);
           if (i)
             os << ", ";
-          if (auto EntryOp = CB->Parent->InThisDFG(Val)) {
+          if (auto *EntryOp = CB->Parent->InThisDFG(Val)) {
             os << EntryOp->Name(vec);
             CtrlBit.addControlledMemoryStream(i, EntryOp);
           } else {
@@ -426,7 +424,7 @@ struct DFGPrinter : dsa::DFGVisitor {
         auto FCond = [PM](analysis::CoalMemoryInfo::CoalescedEntry &CE) {
           return CE.ID == PM->ID;
         };
-        auto OV = PM->Parent->InThisDFG(PM->Output);
+        auto *OV = PM->Parent->InThisDFG(PM->Output);
         CHECK(OV);
         auto Entry = std::find_if(Cluster.begin(), Cluster.end(), FCond);
         CHECK(Entry != Cluster.end());
@@ -453,7 +451,7 @@ struct DFGPrinter : dsa::DFGVisitor {
       {
         // TODO(@were): Finalize this.
         os << "# [Predication] Combination\n";
-        for (auto I : P->Cond) {
+        for (auto *I : P->Cond) {
           os << "# " << *I << "\n";
         }
       }
@@ -462,13 +460,13 @@ struct DFGPrinter : dsa::DFGVisitor {
       os << P->Name(-1) << " = Compare"
          << P->Cond[0]->getOperand(0)->getType()->getScalarSizeInBits() << "(";
       for (size_t i = 0; i < P->Cond[0]->getNumOperands(); ++i) {
-        auto Val = P->Cond[0]->getOperand(i);
+        auto *Val = P->Cond[0]->getOperand(i);
         if (i)
           os << ", ";
-        if (auto EntryOp = P->Parent->InThisDFG(Val)) {
+        if (auto *EntryOp = P->Parent->InThisDFG(Val)) {
           os << EntryOp->Name(-1);
           CtrlBit.addControlledMemoryStream(i, EntryOp);
-          if (auto CMP = dyn_cast<CtrlMemPort>(EntryOp))
+          if (auto *CMP = dyn_cast<CtrlMemPort>(EntryOp))
             CMP->ForPredicate = true;
         } else {
           os << ValueToOperandText(Val);
@@ -486,12 +484,12 @@ struct DFGPrinter : dsa::DFGVisitor {
       os << ")\n";
     }
 
-    void Visit(OutputPort *OP) {
+    void Visit(OutputPort *OP) override {
       Visit(cast<DFGEntry>(OP));
       std::ostringstream oss;
       OP->Meta.to_pragma(oss);
       os << oss.str();
-      auto Entry = OP->Parent->InThisDFG(OP->Output);
+      auto *Entry = OP->Parent->InThisDFG(OP->Output);
       CHECK(Entry);
       int N = (Entry->ShouldUnroll() ? OP->Parent->getUnroll() : 1);
       for (int i = 0; i < N; ++i) {
@@ -534,8 +532,7 @@ struct DFGPrinter : dsa::DFGVisitor {
     auto Reordered = ReorderEntries(DB);
 
     DFGEntryEmitter DEE(os, this);
-    for (auto Elem : Reordered) {
-      DSA_INFO << Elem->dump();
+    for (auto *Elem : Reordered) {
       Elem->Accept(&DEE);
     }
 
@@ -545,7 +542,7 @@ struct DFGPrinter : dsa::DFGVisitor {
     //   Elem->EmitAtomic(os);
 
     // TODO(@were): Move this to a DFG.
-    for (auto Elem : DB->EntryFilter<IndMemPort>()) {
+    for (auto *Elem : DB->EntryFilter<IndMemPort>()) {
       os << "\n\n----\n\n";
       os << "Input" << Elem->Index->Load->getType()->getScalarSizeInBits()
          << ": indirect_in_" << DB->ID << "_" << Elem->ID << "\n";
@@ -584,7 +581,7 @@ void EmitDFG(raw_ostream &os, DFGFile *DFG, std::vector<analysis::CoalMemoryInfo
   CHECK(CMIs.size() == Graphs.size()) << CMIs.size() << " == " << Graphs.size();
   for (int i = 0; i < (int)Graphs.size(); ++i) {
     DFGPrinter DP(os, CMIs[i]);
-    auto Elem = Graphs[i];
+    auto *Elem = Graphs[i];
     if (i) {
       os << "----\n";
     }
@@ -602,8 +599,8 @@ void CodeGenContext::InjectFusionHints(std::string Mnemonic, REG &a, REG &b,
     if (Val->getType()->isPointerTy()) {
       return IB->CreatePtrToInt(Val, IB->getInt64Ty());
     }
-    auto Ty = IB->getIntNTy(Val->getType()->getScalarSizeInBits());
-    auto RI = IB->CreateBitCast(Val, Ty);
+    auto *Ty = IB->getIntNTy(Val->getType()->getScalarSizeInBits());
+    auto *RI = IB->CreateBitCast(Val, Ty);
     if (RI->getType()->getScalarSizeInBits() < 64) {
       RI = IB->CreateSExt(RI, IB->getInt64Ty());
     }
@@ -623,9 +620,9 @@ void CodeGenContext::InjectFusionHints(std::string Mnemonic, REG &a, REG &b,
     int idx = (c >> (i * 5)) & 31;
     int sticky = (c >> (10 + i)) & 1;
     if (idx) {
-      auto AA = IB->CreateLoad(Regs[idx].Reg);
-      auto AS = IB->CreateLoad(Regs[idx].Sticky);
-      auto AV = MakeInt64(a.value(IB));
+      auto *AA = IB->CreateLoad(Regs[idx].Reg);
+      auto *AS = IB->CreateLoad(Regs[idx].Sticky);
+      auto *AV = MakeInt64(a.value(IB));
       IB->CreateStore(AV, Regs[idx].Reg);
       IB->CreateStore(IB->getInt8(sticky), Regs[idx].Sticky);
       IntrinsicImpl("equal.hint.v1", "r", {IB->CreateICmpEQ(AA, AV)},
@@ -633,7 +630,7 @@ void CodeGenContext::InjectFusionHints(std::string Mnemonic, REG &a, REG &b,
       IntrinsicImpl("equal.hint.s1", "r",
                     {IB->CreateICmpEQ(AS, IB->getInt8(sticky))},
                     IB->getVoidTy());
-      auto V = IB->CreateLoad(Regs[idx].Reg);
+      auto *V = IB->CreateLoad(Regs[idx].Reg);
       (i ? b : a) = V;
     }
   }
@@ -652,18 +649,18 @@ void CodeGenContext::IntrinsicImpl(const std::string &Mnemonic,
     }
   }
   std::vector<Type *> Types;
-  for (auto Arg : Args) {
+  for (auto *Arg : Args) {
     Types.push_back(Arg->getType());
   }
-  auto FTy = FunctionType::get(ResTy, Types, false);
-  auto IA = InlineAsm::get(FTy, MOSS.str(), OpConstrain, true);
+  auto *FTy = FunctionType::get(ResTy, Types, false);
+  auto *IA = InlineAsm::get(FTy, MOSS.str(), OpConstrain, true);
   res.push_back(IB->CreateCall(IA, Args));
   if (Mnemonic == "ss_lin_strm" || Mnemonic == "ss_ind_strm" ||
       Mnemonic == "ss_recv" || Mnemonic == "ss_wr_rd") {
     for (int i = 0; i < DSARF::TOTAL_REG; ++i) {
-      auto C = IB->CreateTrunc(IB->CreateLoad(Regs[i].Sticky), IB->getInt1Ty());
-      auto SV = IB->CreateLoad(Regs[i].Reg);
-      auto Reset = IB->CreateSelect(C, SV, IB->getInt64(REG_STICKY[i]));
+      auto *C = IB->CreateTrunc(IB->CreateLoad(Regs[i].Sticky), IB->getInt1Ty());
+      auto *SV = IB->CreateLoad(Regs[i].Reg);
+      auto *Reset = IB->CreateSelect(C, SV, IB->getInt64(REG_STICKY[i]));
       IB->CreateStore(Reset, Regs[i].Reg);
     }
   }
@@ -671,9 +668,9 @@ void CodeGenContext::IntrinsicImpl(const std::string &Mnemonic,
 
 void InjectConfiguration(CodeGenContext &CGC, analysis::ConfigInfo &CI,
                          Instruction *Start, Instruction *End) {
-  auto IB = CGC.IB;
+  auto *IB = CGC.IB;
   IB->SetInsertPoint(Start);
-  auto GV = IB->CreateGlobalString(CI.Bitstream, CI.Name + "_bitstream",
+  auto *GV = IB->CreateGlobalString(CI.Bitstream, CI.Name + "_bitstream",
                                    GlobalValue::ExternalLinkage);
   CGC.SS_CONFIG(GV, IB->getInt64(CI.Size));
   IB->SetInsertPoint(End);
@@ -693,7 +690,7 @@ std::pair<Value*, Value*>
 InjectComputedRepeat(CodeGenContext &CGC,
                      std::vector<dsa::analysis::LinearInfo*> Loops, int N,
                      int Unroll) {
-  auto IB = CGC.IB;
+  auto *IB = CGC.IB;
   auto &SEE = CGC.SEE;
   Value *Stretch = nullptr;
   Value *Repeat = IB->getInt64(1);
@@ -705,13 +702,13 @@ InjectComputedRepeat(CodeGenContext &CGC,
         if (j == 1) {
           continue;
         }
-        auto CI = Loops[i]->Coef[j]->ConstInt();
+        const auto *CI = Loops[i]->Coef[j]->ConstInt();
         CHECK(CI && *CI == 0);
       }
       // FIXME(@were): Fix this for fixed point.
       Stretch = SEE.expandCodeFor(Loops[0]->Coef[1]->Base);
     }
-    auto Current = IB->CreateAdd(SEE.expandCodeFor(Loops[i]->Base), IB->getInt64(1));
+    auto *Current = IB->CreateAdd(SEE.expandCodeFor(Loops[i]->Base), IB->getInt64(1));
     if (i == 0 && Unroll != 1) {
       Current = CeilDiv(Current, IB->getInt64(Unroll), IB);
       if (Stretch) {
@@ -738,13 +735,13 @@ void InjectLinearStreamImpl(CodeGenContext &CGC, const SCEV *Idx, int MaxOffset,
     int N = LI->Coef.empty() ? Loops.size() : LI->PatialInvariant();
     // Sanity check on the loop invariants.
     for (int i = 0; i < N; ++i) {
-      auto Coef = LI->Coef[i]->ConstInt();
+      const auto *Coef = LI->Coef[i]->ConstInt();
       CHECK(Coef && *Coef == 0);
     }
     auto CR = InjectComputedRepeat(CGC, Loops, N, Unroll);
-    auto Repeat = CR.first;
-    auto Stretch = CR.second;
-    if (auto CI = dyn_cast<ConstantInt>(Repeat)) {
+    auto *Repeat = CR.first;
+    auto *Stretch = CR.second;
+    if (auto *CI = dyn_cast<ConstantInt>(Repeat)) {
       if (CI->getSExtValue() == 1) {
         return;
       }
@@ -758,9 +755,9 @@ void InjectLinearStreamImpl(CodeGenContext &CGC, const SCEV *Idx, int MaxOffset,
   auto LinearInstantiation = [&](analysis::LinearInfo *LI, int MaxOffset,
                                  const std::vector<analysis::LinearInfo *> &Loops, int Port,
                                  MemoryOperation MO, Padding P, MemoryType MT, int DType) {
-    auto IB = CGC.IB;
+    auto *IB = CGC.IB;
     auto &SEE = CGC.SEE;
-    if (auto LII = LI->Invariant()) {
+    if (const auto *LII = LI->Invariant()) {
       CGC.INSTANTIATE_1D_STREAM(SEE.expandCodeFor(LII), IB->getInt64(0),
                                 IB->getInt64(1), Port, P, DSA_Access, MO, MT,
                                 DType, 0);
@@ -770,10 +767,10 @@ void InjectLinearStreamImpl(CodeGenContext &CGC, const SCEV *Idx, int MaxOffset,
         << Loops.size() << " != " << LI->Coef.size();
     int Dim = Loops.size() - LI->PatialInvariant();
     CHECK(0 <= Dim && Dim <= 3) << Dim;
-    auto Start = SEE.expandCodeFor(LI->Base);
+    auto *Start = SEE.expandCodeFor(LI->Base);
     int i = LI->PatialInvariant();
     auto CoalesceStrideAndWord = [IB, DType, MaxOffset] (Value *&Stride1D, Value *&N1D) {
-      if (auto CI = dyn_cast<ConstantInt>(Stride1D)) {
+      if (auto *CI = dyn_cast<ConstantInt>(Stride1D)) {
         int Multiplier = (MaxOffset / DType) + 1;
         if ((CI->getSExtValue() / DType) == Multiplier) {
           Stride1D = IB->getInt64(DType);
@@ -788,23 +785,23 @@ void InjectLinearStreamImpl(CodeGenContext &CGC, const SCEV *Idx, int MaxOffset,
       break;
     }
     case 1: {
-      auto N1D = IB->CreateAdd(SEE.expandCodeFor(Loops[i]->Invariant()), IB->getInt64(1));
-      auto Stride1D = SEE.expandCodeFor(LI->Coef[i]->Invariant());
+      auto *N1D = IB->CreateAdd(SEE.expandCodeFor(Loops[i]->Invariant()), IB->getInt64(1));
+      auto *Stride1D = SEE.expandCodeFor(LI->Coef[i]->Invariant());
       CoalesceStrideAndWord(Stride1D, N1D);
       CGC.INSTANTIATE_1D_STREAM(Start, Stride1D, N1D, Port, P, DSA_Access, MO, MT, DType, 0);
       break;
     }
     case 2: {
-      auto N1D = IB->CreateAdd(SEE.expandCodeFor(Loops[i]->Invariant()), IB->getInt64(1));
-      auto Stride1D = SEE.expandCodeFor(LI->Coef[i]->Invariant());
+      auto *N1D = IB->CreateAdd(SEE.expandCodeFor(Loops[i]->Invariant()), IB->getInt64(1));
+      auto *Stride1D = SEE.expandCodeFor(LI->Coef[i]->Invariant());
       CoalesceStrideAndWord(Stride1D, N1D);
       // TODO(@were): Make assumption check!
       Value *Stretch = IB->getInt64(0);
       if (!Loops[i]->Coef.empty()) {
         Stretch = SEE.expandCodeFor(Loops[i]->Coef[i + 1]->Base);
       }
-      auto Length2D = IB->CreateAdd(SEE.expandCodeFor(Loops[i + 1]->Base), IB->getInt64(1));
-      auto Stride2D =
+      auto *Length2D = IB->CreateAdd(SEE.expandCodeFor(Loops[i + 1]->Base), IB->getInt64(1));
+      auto *Stride2D =
           IB->CreateSDiv(SEE.expandCodeFor(LI->Coef[i + 1]->Invariant()),
                          IB->getInt64(DType));
       CGC.INSTANTIATE_2D_STREAM(Start, Stride1D, N1D, Stride2D, Stretch,
@@ -821,7 +818,7 @@ void InjectLinearStreamImpl(CodeGenContext &CGC, const SCEV *Idx, int MaxOffset,
     }
   };
 
-  auto IdxLI = dsa::analysis::AnalyzeIndexExpr(&CGC.SE, Idx, LoopNest);
+  auto *IdxLI = dsa::analysis::AnalyzeIndexExpr(&CGC.SE, Idx, LoopNest);
   if (MO == MemoryOperation::DMO_Read) {
     InjectRepeat(IdxLI, LoopLI, Port, Unroll);
   }
@@ -840,21 +837,21 @@ void InjectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, std::vector<analys
       if (DLI.TripCount.size() <= 1) {
         return;
       }
-      auto DFG = MP->Parent;
+      auto *DFG = MP->Parent;
       if (!isa<DedicatedDFG>(DFG)) {
         return;
       }
       auto &SE = CGC.SE;
-      auto IB = CGC.IB;
+      auto *IB = CGC.IB;
       for (auto &PM : DFG->EntryFilter<PortMem>()) {
         if (!PM->IsInMajor() || PM->IntrinInjected)
           continue;
-        auto Ptr0 = dyn_cast<Instruction>(MP->Load->getPointerOperand());
-        auto Ptr1 = dyn_cast<Instruction>(PM->Store->getPointerOperand());
+        auto *Ptr0 = dyn_cast<Instruction>(MP->Load->getPointerOperand());
+        auto *Ptr1 = dyn_cast<Instruction>(PM->Store->getPointerOperand());
         if (Ptr0 == Ptr1) {
           DSA_INFO << "Rec: " << *MP->Load << " " << *PM->Store;
-          auto SCEV = SE.getSCEV(Ptr0);
-          auto Analyzed = dsa::analysis::AnalyzeIndexExpr(&SE, SE.getSCEV(Ptr0), DLI.LoopNest);
+          const auto *SCEV = SE.getSCEV(Ptr0);
+          auto *Analyzed = dsa::analysis::AnalyzeIndexExpr(&SE, SE.getSCEV(Ptr0), DLI.LoopNest);
           // No repeat!
           if (Analyzed->PatialInvariant() != 0) {
             return;
@@ -863,7 +860,7 @@ void InjectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, std::vector<analys
           if (!Analyzed->Coef.back()->Coef.empty()) {
             return;
           }
-          if (auto O = dyn_cast<ConstantInt>(CGC.SEE.expandCodeFor(Analyzed->Coef.back()->Base))) {
+          if (auto *O = dyn_cast<ConstantInt>(CGC.SEE.expandCodeFor(Analyzed->Coef.back()->Base))) {
             if (O->getSExtValue()) {
               return;
             }
@@ -879,13 +876,11 @@ void InjectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, std::vector<analys
 
           if (DLI.TripCount.size() == 2) {
             // TODO(@were): Support stretch later.
-            auto InnerN = CGC.SEE.expandCodeFor(DLI.TripCount[0]->Base);
-            auto OuterN = CGC.SEE.expandCodeFor(DLI.TripCount[1]->Base);
+            auto *InnerN = CGC.SEE.expandCodeFor(DLI.TripCount[0]->Base);
+            auto *OuterN = CGC.SEE.expandCodeFor(DLI.TripCount[1]->Base);
             CGC.SS_RECURRENCE(PM->SoftPortNum, MP->SoftPortNum,
                               IB->CreateMul(IB->CreateAdd(InnerN, IB->getInt64(1)), OuterN),
                               DType);
-            DSA_INFO << *InnerN << ", " << *OuterN;
-            DSA_INFO << *CGC.res.back();
           } else {
             CHECK(false) << "Not supported yet";
           }
@@ -897,7 +892,7 @@ void InjectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, std::vector<analys
                                  DType, DMO_Write, (Padding) 0, DMT_DMA);
           int II = 1;
           int Conc = -1;
-          if (auto CI = dyn_cast<ConstantInt>(CGC.SEE.expandCodeFor(DLI.TripCount[0]->Base))) {
+          if (auto *CI = dyn_cast<ConstantInt>(CGC.SEE.expandCodeFor(DLI.TripCount[0]->Base))) {
             auto CII = CI->getZExtValue();
             int CanHide = CII * DType;
             if (PM->Latency - CanHide > 0) {
@@ -941,7 +936,7 @@ void InjectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, std::vector<analys
       if (IMP->IntrinInjected)
         return;
 
-      auto IB = CGC.IB;
+      auto *IB = CGC.IB;
 
       if (!dsa::utils::ModuleContext().IND) {
         CGC.SS_CONST(IMP->SoftPortNum, IMP->Load, IB->getInt64(1),
@@ -971,35 +966,33 @@ void InjectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, std::vector<analys
       }
 
       CHECK(Together[0] == IMP);
-
+      DSA_INFO << "Prime port " << IMP;
       for (size_t i = 1; i < Together.size(); ++i) {
+        DSA_INFO << "Broadcast index to " << INDs[i];
         CGC.SS_CONFIG_PORT(INDs[i], DPF_PortBroadcast, true);
       }
 
-      auto Index = IMP->Index->Load->getPointerOperand();
+      auto *Index = IMP->Index->Load->getPointerOperand();
       auto Analyzed = IMP->Parent->AnalyzeDataStream(
           Index, IMP->Index->Load->getType()->getScalarSizeInBits() / 8);
       InjectLinearStreamImpl(CGC, CGC.SE.getSCEV(Index), /*TODO(@were): Support SLP*/0,
                              DLI.LoopNest, DLI.TripCount, IMP->Index->SoftPortNum,
-                             IMP->Parent->getUnroll(), IMP->Index->Load->getType()->getScalarSizeInBits() / 8,
+                             IMP->Parent->getUnroll(),
+                             IMP->Index->Load->getType()->getScalarSizeInBits() / 8,
                              DMO_Read, DP_NoPadding, DMT_DMA);
-      // IMP->Parent->InjectRepeat(Analyzed.AR, nullptr, IMP->SoftPortNum);
-      // auto ActualSrc = dsa::inject::InjectLinearStream(
-      //     IB, CGC.Regs, IMP->Index->SoftPortNum, Analyzed, DMO_Read,
-      //     DP_NoPadding, DMT_DMA,
-      //     IMP->Index->Load->getType()->getScalarSizeInBits() / 8);
 
       for (size_t i = 0; i < Together.size(); ++i) {
-        auto Cur = Together[i];
+        auto *Cur = Together[i];
         int IBits = Cur->Index->Load->getType()->getScalarSizeInBits();
-        auto Num = IB->CreateUDiv(Analyzed.BytesFromMemory(IB),
+        auto *Num = IB->CreateUDiv(Analyzed.BytesFromMemory(IB),
                                   IB->getInt64(IBits / 8));
-        auto GEP = dyn_cast<GetElementPtrInst>(Cur->Load->getPointerOperand());
+        auto *GEP = dyn_cast<GetElementPtrInst>(Cur->Load->getPointerOperand());
         CGC.INSTANTIATE_1D_INDIRECT(
-            IMP->SoftPortNum, IMP->Load->getType()->getScalarSizeInBits() / 8,
-            IMP->IndexOutPort, IMP->Index->Load->getType()->getScalarSizeInBits() / 8,
+            Cur->SoftPortNum, Cur->Load->getType()->getScalarSizeInBits() / 8,
+            Cur->IndexOutPort, Cur->Index->Load->getType()->getScalarSizeInBits() / 8,
             GEP->getOperand(0), Cur->Load->getType()->getScalarSizeInBits() / 8,
             Num, DMT_DMA, DMO_Read);
+        DSA_INFO << Cur->SoftPortNum << " <- " << Cur->IndexOutPort;
 
         // TODO: Support indirect read on the SPAD(?)
         Cur->Meta.set("src", dsa::dfg::MetaPort::DataText[(int)DMT_DMA]);
@@ -1008,65 +1001,64 @@ void InjectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, std::vector<analys
 
         Cur->IntrinInjected = true;
       }
-      IMP->IntrinInjected = true;
     }
 
     void Visit(MemPort *MP) override {
-      auto IB = CGC.IB;
+      auto *IB = CGC.IB;
       IB->SetInsertPoint(MP->Parent->DefaultIP());
 
       if (MP->IntrinInjected)
         return;
 
       // Wrappers
-      auto DFG = MP->Parent;
+      auto *DFG = MP->Parent;
       int Belong = CMI.Belong[MP->ID];
       int MaxOffset = CMI.Clusters[Belong].back().Offset;
       int ID = CMI.Clusters[Belong].front().ID;
-      auto MP0 = dyn_cast<MemPort>(DFG->Entries[ID]);
+      auto *MP0 = dyn_cast<MemPort>(DFG->Entries[ID]);
       int Port = CMI.Clusters[Belong].size() == 1 ? MP->SoftPortNum : CMI.ClusterPortNum[Belong];
       // Handle data stream with predicate
       if (MP->getPredicate()) {
         CHECK(false) << "Predicated stream should be handled in CtrlMemPort.";
       }
-      auto SCEVIdx = CGC.SE.getSCEV(MP0->Load->getPointerOperand());
+      const auto *SCEVIdx = CGC.SE.getSCEV(MP0->Load->getPointerOperand());
       int DType = MP->Load->getType()->getScalarSizeInBits() / 8;
       InjectLinearStreamImpl(CGC, SCEVIdx, MaxOffset, DLI.LoopNest, DLI.TripCount, Port,
                              DFG->getUnroll(), DType, DMO_Read, (Padding) MP->FillMode(),
                              DMT_DMA);
 
       for (auto &Elem : CMI.Clusters[Belong]) {
-        auto PB = dyn_cast<PortBase>(DFG->Entries[Elem.ID]);
+        auto *PB = dyn_cast<PortBase>(DFG->Entries[Elem.ID]);
         CHECK(PB);
         PB->IntrinInjected = true;
       }
     }
 
     void Visit(PortMem *PM) override {
-      auto DFG = PM->Parent;
+      auto *DFG = PM->Parent;
       if (PM->IntrinInjected)
         return;
       int Belong = CMI.Belong[PM->ID];
       int MaxOffset = CMI.Clusters[Belong].back().Offset;
       int ID = CMI.Clusters[Belong].front().ID;
-      auto PM0 = dyn_cast<PortMem>(DFG->Entries[ID]);
+      auto *PM0 = dyn_cast<PortMem>(DFG->Entries[ID]);
       int Port = CMI.Clusters[Belong].size() == 1 ? PM0->SoftPortNum : CMI.ClusterPortNum[Belong];
 
       CGC.IB->SetInsertPoint(DFG->DefaultIP());
       CGC.SEE.setInsertPoint(DFG->DefaultIP());
-      auto SCEVIdx = CGC.SE.getSCEV(PM->Store->getPointerOperand());
+      const auto *SCEVIdx = CGC.SE.getSCEV(PM->Store->getPointerOperand());
       int DType = PM->Store->getValueOperand()->getType()->getScalarSizeInBits() / 8;
       InjectLinearStreamImpl(CGC, SCEVIdx, MaxOffset, DLI.LoopNest, DLI.TripCount, Port,
                              DFG->getUnroll(), DType, DMO_Write, DP_NoPadding, DMT_DMA);
 
       for (auto &Elem : CMI.Clusters[Belong]) {
-        auto PB = dyn_cast<PortBase>(DFG->Entries[Elem.ID]);
+        auto *PB = dyn_cast<PortBase>(DFG->Entries[Elem.ID]);
         CHECK(PB);
         PB->IntrinInjected = true;
       }
     }
 
-    void Visit(InputConst *IC) {
+    void Visit(InputConst *IC) override {
       auto &LoopNest = DLI.LoopNest;
       for (int i = 0; i < (int) LoopNest.size(); ++i) {
         CHECK(LoopNest[i]->isLoopInvariant(IC->Val))
@@ -1079,12 +1071,12 @@ void InjectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, std::vector<analys
       IC->IntrinInjected = true;
     }
 
-    void Visit(CtrlSignal *CS) {
-      auto DD = dyn_cast<DedicatedDFG>(CS->Parent);
+    void Visit(CtrlSignal *CS) override {
+      auto *DD = dyn_cast<DedicatedDFG>(CS->Parent);
       CHECK(DD);
-      auto InsertBefore = DD->DefaultIP();
-      auto One = CGC.IB->getInt64(1);
-      auto Two = CGC.IB->getInt64(2);
+      auto *InsertBefore = DD->DefaultIP();
+      auto *One = CGC.IB->getInt64(1);
+      auto *Two = CGC.IB->getInt64(2);
 
       if (CS->Controlled->getPredicate()) {
         if (dsa::utils::ModuleContext().PRED) {
@@ -1100,17 +1092,16 @@ void InjectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, std::vector<analys
       }
 
       CHECK(!CS->IntrinInjected);
-      auto CR = CS->Controlled->NumValuesProduced();
+      auto *CR = CS->Controlled->NumValuesProduced();
       assert(CR);
 
       /// {
-      auto IB = CGC.IB;
-      auto Iters =
-          IB->CreateUDiv(DD->ProdTripCount(DD->LoopNest.size(), InsertBefore),
-                         CR, "const.iters");
-      auto Unroll = IB->getInt64(DD->UnrollFactor);
-      auto Ceil = CeilDiv(CR, Unroll, InsertBefore);
-      auto RepeatTwo = IB->CreateSub(Ceil, One, "repeat.two", InsertBefore);
+      auto *IB = CGC.IB;
+      auto *Iters = IB->CreateUDiv(DD->ProdTripCount(DD->LoopNest.size(), InsertBefore),
+                                   CR, "const.iters");
+      auto *Unroll = IB->getInt64(DD->UnrollFactor);
+      auto *Ceil = CeilDiv(CR, Unroll, InsertBefore);
+      auto *RepeatTwo = IB->CreateSub(Ceil, One, "repeat.two", InsertBefore);
       CGC.SS_2D_CONST(CS->SoftPortNum, Two, RepeatTwo, One, One, Iters,
                       Two->getType()->getScalarSizeInBits() / 8);
       /// }
@@ -1118,11 +1109,11 @@ void InjectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, std::vector<analys
       CS->IntrinInjected = true;
     }
 
-    void Visit(CtrlMemPort *CMP) {
+    void Visit(CtrlMemPort *CMP) override {
 
-      auto IB = CGC.IB;
-      auto One = IB->getInt64(1);
-      auto Zero = IB->getInt64(0);
+      auto *IB = CGC.IB;
+      auto *One = IB->getInt64(1);
+      auto *Zero = IB->getInt64(0);
       IB->SetInsertPoint(CMP->Parent->DefaultIP());
 
       if (!dsa::utils::ModuleContext().PRED) {
@@ -1131,7 +1122,7 @@ void InjectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, std::vector<analys
         if (CMP->SoftPortNum != -1) {
           CGC.SS_CONST(CMP->SoftPortNum, CMP->Load, One,
                        CMP->Load->getType()->getScalarSizeInBits() / 8);
-          auto DD = dyn_cast<DedicatedDFG>(CMP->Parent);
+          auto *DD = dyn_cast<DedicatedDFG>(CMP->Parent);
           CHECK(DD && "This node only exists in stream DFGs");
           CGC.SS_CONST(CMP->SoftPortNum, Zero, One);
         }
@@ -1141,7 +1132,7 @@ void InjectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, std::vector<analys
 
       // If this stream is for the predicate, we require users to put sentinal
       // at the end the next word of the array.
-      int DType = CMP->Load->getType()->getScalarSizeInBits();
+      int DType = CMP->Load->getType()->getScalarSizeInBits() / 8;
       CGC.INSTANTIATE_1D_STREAM(CMP->Start, DType, CMP->TripCnt,
                                 CMP->SoftPortNum, 0, DSA_Access, DMO_Read,
                                 DMT_DMA, DType, 0);
@@ -1149,50 +1140,38 @@ void InjectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, std::vector<analys
       CMP->Meta.set("op", "read");
       CMP->Meta.set("src", "memory");
 
-      // If this stream is NOT for the predicate, we pad two zero values to
-      // produce the final result.
       if (!CMP->ForPredicate) {
+        // If this stream is NOT for the predicate, we pad two zero values to
+        // produce the final result.
         CGC.SS_CONST(CMP->SoftPortNum, IB->getInt64(0), IB->getInt64(1), DType);
+      } else {
+        // This is kinda ad-hoc, because we current do not support a
+        // runtime-determined length stream. This assumption does not work on that
+        // case.
+        auto *Sentinal = IB->getInt64(1ull << (DType * 8 - 1));
+        CGC.SS_CONST(CMP->SoftPortNum, Sentinal, IB->getInt64(1));
       }
-
-      // This is kinda ad-hoc, because we current do not support a
-      // runtime-determined length stream. This assumption does not work on that
-      // case.
-
-      // FIXME: Automatically inject sentinal tail
-      // if (CMP->ForPredicate) {
-      //  auto Sentinal = createConstant(getCtx(), 1ull << (Bits - 1), Bits);
-      //  createAssembleCall(VoidTy, "ss_const $0, $1, $2", "r,r,i",
-      //                     {Sentinal, One, createConstant(getCtx(),
-      //                     CMP->SoftPortNum)}, DFG->DefaultIP());
-      //} else {
-      //  createAssembleCall(VoidTy, "ss_const $0, $1, $2", "r,r,i",
-      //                     {createConstant(getCtx(), 0), One,
-      //                     createConstant(getCtx(), CMP->SoftPortNum)},
-      //                     DFG->DefaultIP());
-      //}
 
       CMP->IntrinInjected = true;
     }
 
-    void Visit(OutputPort *OP) {
-      auto Recv = CGC.SS_RECV(OP->SoftPortNum,
-                              OP->Output->getType()->getScalarSizeInBits() / 8)
-                      .value(CGC.IB);
+    void Visit(OutputPort *OP) override {
+      auto *Recv = CGC.SS_RECV(OP->SoftPortNum,
+                              OP->Output->getType()->getScalarSizeInBits() / 8).value(CGC.IB);
       Recv = CGC.IB->CreateBitCast(Recv, OP->Output->getType());
       std::set<Instruction *> Equiv;
       FindEquivPHIs(OP->Output, Equiv);
-      for (auto Iter : Equiv) {
+      for (auto *Iter : Equiv) {
         Iter->replaceAllUsesWith(Recv);
       }
       OP->IntrinInjected = true;
     }
 
-    void Visit(StreamInPort *SIP) {
-      auto f = [this, SIP] () -> StreamOutPort* {
-        for (auto DFG : SIP->Parent->Parent->DFGFilter<DFGBase>()) {
-          for (auto Elem : DFG->Entries) {
-            if (auto Casted = dyn_cast<StreamOutPort>(Elem)) {
+    void Visit(StreamInPort *SIP) override {
+      auto F = [SIP] () -> StreamOutPort* {
+        for (auto *DFG : SIP->Parent->Parent->DFGFilter<DFGBase>()) {
+          for (auto *Elem : DFG->Entries) {
+            if (auto *Casted = dyn_cast<StreamOutPort>(Elem)) {
               if (SIP->DataFrom == Casted->UnderlyingInst()) {
                 return Casted;
               }
@@ -1202,11 +1181,11 @@ void InjectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, std::vector<analys
         CHECK(false);
         return nullptr;
       };
-      StreamOutPort *SOP = f();
-      auto IB = CGC.IB;
+      StreamOutPort *SOP = F();
+      auto *IB = CGC.IB;
       auto &SEE = CGC.SEE;
       assert(!SIP->IntrinInjected);
-      if (auto DD = dyn_cast<DedicatedDFG>(SIP->Parent)) {
+      if (auto *DD = dyn_cast<DedicatedDFG>(SIP->Parent)) {
         int Bytes =
             SOP->Output->getType()->getScalarType()->getScalarSizeInBits() / 8;
         int i = 0;
@@ -1233,12 +1212,12 @@ void InjectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, std::vector<analys
       SIP->IntrinInjected = true;
     }
 
-    void Visit(StreamOutPort *SOP) {
+    void Visit(StreamOutPort *SOP) override {
       assert(!SOP->IntrinInjected);
       SOP->IntrinInjected = true;
     }
 
-    void Visit(AtomicPortMem *APM) {
+    void Visit(AtomicPortMem *APM) override {
       // Open these when bringing APM back.
       CHECK(false) << "Not implemented yet!";
       // if (!dsa::utils::ModuleContext().IND) {
@@ -1319,18 +1298,18 @@ void InjectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, std::vector<analys
     CodeGenContext &CGC;
     analysis::DFGLoopInfo &DLI;
     analysis::CoalMemoryInfo &CMI;
-    StreamIntrinsicInjector(CodeGenContext &CGC_, analysis::DFGLoopInfo &DLI_, analysis::CoalMemoryInfo &CMI_) :
-      CGC(CGC_), DLI(DLI_), CMI(CMI_) {}
+    StreamIntrinsicInjector(CodeGenContext &CGC, analysis::DFGLoopInfo &DLI, analysis::CoalMemoryInfo &CMI) :
+      CGC(CGC), DLI(DLI), CMI(CMI) {}
   };
 
   for (int i = 0; i < (int) DFGs.size(); ++i) {
-    auto DFG = DFGs[i];
+    auto *DFG = DFGs[i];
     auto DLI = analysis::AnalyzeDFGLoops(DFG, CGC.SE);
     UpdateStreamInjector USI(CGC, DLI);
     StreamIntrinsicInjector SII(CGC, DLI, CMIs[i]);
     CGC.IB->SetInsertPoint(DFG->DefaultIP());
     CGC.SEE.setInsertPoint(DFG->DefaultIP());
-    for (auto Elem : ReorderEntries(DFG)) {
+    for (auto *Elem : ReorderEntries(DFG)) {
       Elem->Accept(&USI);
       Elem->Accept(&SII);
     }

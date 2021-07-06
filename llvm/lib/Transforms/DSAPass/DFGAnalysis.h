@@ -101,6 +101,7 @@ void GatherMemoryCoalescingImpl(DFGBase *DB, ScalarEvolution &SE, const DFGLoopI
           if (auto Node2 = dyn_cast<T>(DB->Entries[j])) {
             auto PtrA = Node1->UnderlyingInst()->getOperand(T::PtrOperandIdx);
             auto PtrB = Node2->UnderlyingInst()->getOperand(T::PtrOperandIdx);
+            DSA_INFO << *PtrA << " " << *PtrB;
             if (PtrA->getType() != PtrB->getType()) {
               continue;
             }

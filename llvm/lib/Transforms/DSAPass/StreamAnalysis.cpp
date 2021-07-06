@@ -68,7 +68,7 @@ std::string LinearInfo::toString(const std::vector<Loop *> &Loops) {
 
 int LinearInfo::PatialInvariant() const {
   for (int i = 0, N = Coef.size(); i < N; ++i) {
-    auto CI = Coef[i]->ConstInt();
+    const auto *CI = Coef[i]->ConstInt();
     if (CI && *CI == 0) {
       continue;
     }
@@ -82,11 +82,13 @@ LinearInfo *AnalyzeIndexExpr(ScalarEvolution *SE, const SCEV *Raw,
   LinearInfo *LI = new LinearInfo();
   int i = 0;
   auto AppendZero = [SE, LI, &Loops]() {
-    auto Coef = LinearInfo::LoopInvariant(SE, Loops.size(),
+    auto *Coef = LinearInfo::LoopInvariant(SE, Loops.size(),
                                           SE->getConstant(APInt(64, 0)));
     LI->Coef.push_back(Coef);
   };
   for (int N = Loops.size(); i < N; ++i) {
+    DSA_INFO << Raw << " " << i;
+    DSA_INFO << *Raw;
     if (!SE->isLoopInvariant(Raw, Loops[i])) {
       break;
     }
@@ -100,7 +102,7 @@ LinearInfo *AnalyzeIndexExpr(ScalarEvolution *SE, const SCEV *Raw,
     return LI;
   }
   for (int N = Loops.size(); i < N; ++i) {
-    if (auto SARE = dyn_cast<SCEVAddRecExpr>(Raw)) {
+    if (const auto *SARE = dyn_cast<SCEVAddRecExpr>(Raw)) {
       if (!Loops.back()->contains(SARE->getLoop())) {
         CHECK(SE->isLoopInvariant(Raw, Loops[i]))
             << "I do not know how to handle this yet.";

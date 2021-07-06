@@ -531,7 +531,6 @@ struct DFGEntryAnalyzer : DFGVisitor {
     }
 
     for (auto *Inst : Visited) {
-      DSA_INFO << *Inst;
       if (!isa<LoadInst>(Inst)) {
         inspectOperands(Inst);
         inspectConsumers(Inst);
@@ -542,9 +541,6 @@ struct DFGEntryAnalyzer : DFGVisitor {
       CHECK(Visited.size() == 1 && isa<LoadInst>(Visited[0]));
       DD.Entries.push_back(differentiateMemoryStream(dyn_cast<LoadInst>(Visited[0])));
       inspectConsumers(Visited[0]);
-      for (auto *Elem : DD.Entries) {
-        DSA_INFO << *Elem;
-      }
     }
 
     CHECK(!DD.Entries.empty());
@@ -805,8 +801,12 @@ DFGLoopInfo AnalyzeDFGLoops(DFGBase *DB, ScalarEvolution &SE) {
       auto &LoopNest = DD->LoopNest;
       DLI.LoopNest = LoopNest;
       for (int I = 0; I < (int) LoopNest.size(); ++I) {
-        DLI.TripCount.push_back(
-          analysis::AnalyzeIndexExpr(&SE, SE.getBackedgeTakenCount(LoopNest[I]), LoopNest));
+        auto *NSCEV = SE.getBackedgeTakenCount(LoopNest[I]);
+        if (isa<SCEVCouldNotCompute>(NSCEV)) {
+          DLI.TripCount.push_back(nullptr);
+        } else {
+          DLI.TripCount.push_back(analysis::AnalyzeIndexExpr(&SE, NSCEV, LoopNest));
+        }
       }
     }
 
@@ -815,7 +815,7 @@ DFGLoopInfo AnalyzeDFGLoops(DFGBase *DB, ScalarEvolution &SE) {
     DFGLoopInfo DLI;
     ScalarEvolution &SE;
 
-    DFGLoopAnalyzer(ScalarEvolution &SE_) : SE(SE_) {}
+    DFGLoopAnalyzer(ScalarEvolution &SE) : SE(SE) {}
   };
 
   DFGLoopAnalyzer DLA(SE);
@@ -824,11 +824,15 @@ DFGLoopInfo AnalyzeDFGLoops(DFGBase *DB, ScalarEvolution &SE) {
 }
 
 
-int64_t IndexPairOffset(const SCEV *SA, const SCEV *SB, ScalarEvolution &SE, const DFGLoopInfo &DLI, bool Signed) {
+int64_t IndexPairOffset(const SCEV *SA, const SCEV *SB, ScalarEvolution &SE,
+                        const DFGLoopInfo &DLI, bool Signed) {
   auto *A = AnalyzeIndexExpr(&SE, SA, DLI.LoopNest);
   auto *B = AnalyzeIndexExpr(&SE, SB, DLI.LoopNest);
   bool SameDims = true;
-  CHECK(A->Coef.size() == B->Coef.size());
+  if (A->Coef.size() == B->Coef.size()) {
+    CHECK(!Signed);
+    return -1;
+  }
   for (int J = 0; J < (int) A->Coef.size(); ++J) {
     if (A->Coef[J]->Base != B->Coef[J]->Base) {
       DSA_INFO << *SE.getEqualPredicate(A->Coef[J]->Base, B->Coef[J]->Base);
