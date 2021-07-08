@@ -81,6 +81,7 @@ bool StreamSpecialize::runOnFunction(Function &F) {
     auto *End = ScopePairs[I].second;
     DFGFile DF(Name, Start, End, this);
     dsa::analysis::ExtractDFGFromScope(DF, Start, End, DT, LI);
+    auto SI = dsa::analysis::ExtractSpadFromScope(Start, End);
 
     std::vector<dsa::analysis::DFGLoopInfo> DLIs;
     for (auto *DFG : DF.DFGFilter<DFGBase>()) {
@@ -113,7 +114,7 @@ bool StreamSpecialize::runOnFunction(Function &F) {
     if (dsa::utils::ModuleContext().EXTRACT) {
       continue;
     }
-    dsa::xform::InjectStreamIntrinsics(CGC, DF, CMIs);
+    dsa::xform::InjectStreamIntrinsics(CGC, DF, CMIs, SI);
     DF.EraseOffloadedInstructions();
   }
   if (!dsa::utils::ModuleContext().EXTRACT) {

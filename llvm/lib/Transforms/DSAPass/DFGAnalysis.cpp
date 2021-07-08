@@ -1,6 +1,7 @@
 #include "dsa/debug.h"
 
 #include "./DFGAnalysis.h"
+#include "llvm/ADT/iterator_range.h"
 
 #define DEBUG_TYPE "dfg-analysis"
 
@@ -607,6 +608,33 @@ struct DFGEntryAnalyzer : DFGVisitor {
   DFGEntryAnalyzer(DominatorTree *DT) : DT(DT) {}
 };
 
+SpadInfo ExtractSpadFromScope(IntrinsicInst *Start, IntrinsicInst *End) {
+  std::map<AllocaInst*, int> Offset;
+  int Total = 0;
+  for (auto *BB : breadth_first(Start->getParent())) {
+    iterator_range<BasicBlock::InstListType::iterator> Range(BB->begin(), BB->end());
+    if (BB == Start->getParent()) {
+      Range = iterator_range<BasicBlock::InstListType::iterator>(Start->getIterator(), BB->end());
+    } else if (BB == End->getParent()) {
+      Range = iterator_range<BasicBlock::InstListType::iterator>(BB->begin(), End->getIterator());
+    }
+    for (auto &Inst : Range) {
+      if (auto *GEP = dyn_cast<GetElementPtrInst>(&Inst)) {
+        if (auto *Alloc = dyn_cast<AllocaInst>(GEP->getPointerOperand())) {
+          if (auto *AT = dyn_cast<ArrayType>(Alloc->getType()->getElementType())) {
+            if (!Offset.count(Alloc)) {
+              int Size = AT->getNumElements() * AT->getElementType()->getScalarSizeInBits() / 8;
+              Offset[Alloc] = Total;
+              Total += Size;
+            }
+          }
+        }
+      }
+    }
+  }
+  return SpadInfo(Offset, Total);
+}
+
 void ExtractDFGFromScope(DFGFile &DF, IntrinsicInst *Start, IntrinsicInst *End,
                          DominatorTree *DT, LoopInfo *LI) {
   // Extract the sketch of dedicated and temporal DFGs respectively.
@@ -694,6 +722,10 @@ ConfigInfo ExtractDFGPorts(std::string FName, DFGFile &DF, std::vector<CoalMemor
 
   std::string Line;
   std::string PortPrefix(formatv("P_{0}_", Stripped).str());
+  std::string IOPortPrefix = PortPrefix + "sub";
+  std::string IClusterPrefix = PortPrefix + "ICluster";
+  std::string OClusterPrefix = PortPrefix + "OCluster";
+  std::string IndirectPrefix = PortPrefix + "indirect_";
   while (std::getline(Ifs, Line)) {
     std::istringstream Iss(Line);
     std::string Token;
@@ -702,9 +734,9 @@ ConfigInfo ExtractDFGPorts(std::string FName, DFGFile &DF, std::vector<CoalMemor
     if (Token == "#define") {
       Iss >> Token;
       // #define P_dfgX_subY_vZ
-      if (Token.find(PortPrefix + "sub") == 0) {
+      if (Token.find(IOPortPrefix) == 0) {
         int X, Y;
-        Token = Token.substr(PortPrefix.size() + 3, Token.size());
+        Token = Token.substr(IOPortPrefix.size());
         CHECK(sscanf(Token.c_str(), "%d_v%d", &X, &Y) == 2);
         int Port;
         Iss >> Port;
@@ -747,8 +779,8 @@ ConfigInfo ExtractDFGPorts(std::string FName, DFGFile &DF, std::vector<CoalMemor
           CHECK(false) << "DSAPass port information gathering unreachable!";
         }
         // #define dfgx_size size
-      } else if (Token.find(PortPrefix + "ICluster") == 0 || Token.find(PortPrefix + "OCluster") == 0) {
-        Token = Token.substr(std::string(PortPrefix + "ICluster").size());
+      } else if (Token.find(IClusterPrefix.size()) == 0 || Token.find(OClusterPrefix) == 0) {
+        Token = Token.substr(IClusterPrefix.size());
         int X, Y, Port;
         CHECK(sscanf(Token.c_str(), "_%d_%d_", &X, &Y) == 2);
         Iss >> Port;
@@ -757,22 +789,26 @@ ConfigInfo ExtractDFGPorts(std::string FName, DFGFile &DF, std::vector<CoalMemor
         CMIs[X].ClusterPortNum[Y] = Port;
       } else if (Token.find(formatv("{0}_size", Stripped).str()) == 0) {
         Iss >> ConfigSize;
-      } else if (Token.find(PortPrefix + "indirect_") == 0) {
-        Token = Token.substr(std::string(PortPrefix + "indirect_").size());
+      } else if (Token.find(IndirectPrefix) == 0) {
+        Token = Token.substr(IndirectPrefix.size());
         int X, Y;
-        int Port;
         if (sscanf(Token.c_str(), "in_%d_%d", &X, &Y) == 2) {
           auto *IMP = dyn_cast<IndMemPort>(DFGs[X]->Entries[Y]);
           CHECK(IMP);
-          Iss >> Port;
-          IMP->Index->SoftPortNum = Port;
+          Iss >> IMP->Index->SoftPortNum;
         } else {
           CHECK(sscanf(Token.c_str(), "out_%d_%d", &X, &Y) == 2);
           auto *IMP = dyn_cast<IndMemPort>(DFGs[X]->Entries[Y]);
           CHECK(IMP);
-          Iss >> Port;
-          IMP->IndexOutPort = Port;
+          Iss >> IMP->IndexOutPort;
         }
+      } else if (Token.find(PortPrefix + "Operand_") == 0) {
+        Token = Token.substr(std::string(PortPrefix + "Operand_").size());
+        int X, Y;
+        CHECK(sscanf(Token.c_str(), "sub%d_v%d_", &X, &Y) == 2);
+        auto *APM = dyn_cast<AtomicPortMem>(DFGs[X]->Entries[Y]);
+        CHECK(APM);
+        Iss >> APM->OperandPort;
       } else {
         CHECK(false) << "Unrecognized token: " << Token;
       }
@@ -908,6 +944,40 @@ std::vector<CoalMemoryInfo> GatherMemoryCoalescing(DFGFile &DF, ScalarEvolution 
     }
   }
   return Res;
+}
+
+bool SpadInfo::isSpad(Value *Ptr) {
+  auto Cond = [this](Value *Val) -> bool {
+    if (auto *AI = dyn_cast<AllocaInst>(Val)) {
+      return Offset.count(AI);
+    }
+    return false;
+  };
+  if (Cond(Ptr)) {
+    return true;
+  }
+  if (auto *Inst = dyn_cast<Instruction>(Ptr)) {
+    std::queue<Instruction*> Q;
+    std::set<Instruction*> Visited;
+    Q.push(Inst);
+    Visited.insert(Inst);
+    while (!Q.empty()) {
+      auto *Cur = Q.front();
+      Q.pop();
+      for (auto &Use : Cur->uses()) {
+        if (auto *Prev = dyn_cast<Instruction>(Use)) {
+          if (!Visited.count(Prev)) {
+            Q.push(Prev);
+            Visited.insert(Prev);
+            if (Cond(Prev)) {
+              return true;
+            }
+          }
+        }
+      }
+    }
+  }
+  return false;
 }
 
 
