@@ -774,7 +774,6 @@ void InjectLinearStreamImpl(CodeGenContext &CGC, const SCEV *Idx, int MaxOffset,
     CHECK(0 <= Dim && Dim <= 3) << Dim;
     auto *Start = SEE.expandCodeFor(LI->Base);
     auto MT = SI.isSpad(Start) ? DMT_SPAD : DMT_DMA;
-    DSA_INFO << SI.isSpad(Start) << " " << MT;
     if (const auto *LII = LI->Invariant()) {
       CGC.INSTANTIATE_1D_STREAM(SEE.expandCodeFor(LII), IB->getInt64(0),
                                 IB->getInt64(1), Port, P, DSA_Access, MO, MT,
@@ -802,6 +801,9 @@ void InjectLinearStreamImpl(CodeGenContext &CGC, const SCEV *Idx, int MaxOffset,
       auto *Stride1D = SEE.expandCodeFor(LI->Coef[i]->Invariant());
       CoalesceStrideAndWord(Stride1D, N1D);
       CGC.INSTANTIATE_1D_STREAM(Start, Stride1D, N1D, Port, P, DSA_Access, MO, MT, DType, 0);
+      LOG(CODEGEN)
+        << "[1-d Linear] Start: " << *Start << ", Stride: " << *Stride1D << ", N: " << *N1D
+        << ", DType: " << DType << ", Port: " << Port << " -> " << (MT == DMT_DMA ? "DMA" : "SPAD");
       break;
     }
     case 2: {
@@ -1251,6 +1253,13 @@ void InjectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF,
       CHECK(APM->OpCode == 0);
 
       int IdxPort = -1;
+      auto *IB = CGC.IB;
+      // FIXME(@were): A more systematic trip count required.
+      auto *Index = APM->Index->Load->getPointerOperand();
+      auto Analyzed = DFG->AnalyzeDataStream(
+        Index, APM->Index->Load->getType()->getScalarSizeInBits() / 8);
+      auto *N = IB->CreateSDiv(Analyzed.BytesFromMemory(IB),
+                               IB->getInt64(APM->Index->Load->getType()->getScalarSizeInBits() / 8));
       for (int i = 0; i < (int) DFG->Entries.size(); ++i) { // NOLINT
         if (auto *IMP = dyn_cast<IndMemPort>(DFG->Entries[i])) {
           if (IMP->Index->UnderlyingInst() == APM->Index->UnderlyingInst()) {
@@ -1262,74 +1271,35 @@ void InjectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF,
             IdxPort = IMP->IndexOutPort;
           }
         }
+        // FIXME(@were): Is this too ad-hoc? This is doing const atomic operand.
+        if (auto *CB = dyn_cast<ComputeBody>(DFG->Entries[i])) {
+          if (DFG->Entries.size() != 3) {
+            continue;
+          }
+          auto *Inst = CB->UnderlyingInst();
+          for (int j = 0; j < (int) Inst->getNumOperands(); ++j) { // NOLINT
+            if (!DFG->InThisDFG(Inst->getOperand(j))) {
+              LOG(CODEGEN)
+                << "[Const Sream] (" << *Inst->getOperand(j) << ") * ("
+                << *N << ") -> " << APM->OperandPort;
+              CGC.SS_CONST(APM->OperandPort, Inst->getOperand(j), N);
+            }
+          }
+        }
       }
-
-      auto *IB = CGC.IB;
-      // FIXME(@were): A more systematic trip count required.
-      auto *Index = APM->Index->Load->getPointerOperand();
-      auto Analyzed = DFG->AnalyzeDataStream(
-        Index, APM->Index->Load->getType()->getScalarSizeInBits() / 8);
-      auto *N = IB->CreateSDiv(Analyzed.BytesFromMemory(IB),
-                               IB->getInt64(APM->Index->Load->getType()->getScalarSizeInBits() / 8));
-      CGC.INSTANTIATE_1D_INDIRECT(APM->SoftPortNum, APM->Op->getType()->getScalarSizeInBits() / 8,
-                                  IdxPort, APM->Index->Load->getType()->getScalarSizeInBits() / 8,
-                                  IB->getInt64(0), APM->Op->getType()->getScalarSizeInBits() / 8,
+      int DType = APM->Op->getType()->getScalarSizeInBits() / 8;
+      int IdxType = APM->Index->Load->getType()->getScalarSizeInBits() / 8;
+      auto *GEP = dyn_cast<GetElementPtrInst>(APM->Store->getPointerOperand());
+      CHECK(GEP);
+      CGC.INSTANTIATE_1D_INDIRECT(APM->SoftPortNum, DType, IdxPort, IdxType,
+                                  GEP->getOperand(0), DType,
                                   N, DMT_SPAD, DMO_Add);
+      LOG(CODEGEN)
+        << "[AtomicSpad] WritePort: " << APM->SoftPortNum << ", DType: " << DType
+        << ", IdxPort: " << IdxPort << ", IdxType: " << IdxType << ", Start: " << GEP->getOperand(0)
+        << ", N: " << *N << ", SPAD Add";
+
       APM->IntrinInjected = true;
-      // Parent->InjectRepeat(Analyzed.AR, nullptr, SoftPortNum);
-      // auto ActualSrc =
-      //   dsa::inject::InjectLinearStream(IB, Parent->Parent->Query->DSARegs,
-      //                                   SoftPortNum, Analyzed, DMO_Read,
-      //                                   DP_NoPadding, DMT_DMA,
-      //                                   this->Index->Load->getType()->getScalarSizeInBits()
-      //                                   / 8);
-      // int OperandPort = -1;
-      // auto DD = dyn_cast<DedicatedDFG>(Parent);
-      // assert(DD);
-      // // FIXME: Is trip count a temporary solution?
-      // auto TripCnt = DD->ProdTripCount(DD->LoopNest.size(), DD->DefaultIP());
-
-      // if (auto DFGEntry = Parent->InThisDFG(Operand)) {
-      //   if (auto CB = dyn_cast<ComputeBody>(DFGEntry)) {
-      //     assert(CB->isImmediateAtomic());
-      //     OperandPort = CB->SoftPortNum;
-      //   } else if (auto IP = dyn_cast<InputPort>(DFGEntry)) {
-      //     OperandPort = IP->SoftPortNum;
-      //   }
-      // } else {
-      //   OperandPort = Parent->getNextReserved();
-      //   uint64_t CI = stoul(ValueToOperandText(Operand));
-      //   int DBits =
-      //   this->Store->getValueOperand()->getType()->getScalarSizeInBits();
-      //   createAssembleCall(IB->getVoidTy(), "ss_const $0, $1, $2", "r,r,i",
-      //                      {IB->getInt64(CI), TripCnt,
-      //                       IB->getInt64(OperandPort | ((TBits(DBits) + 1) <<
-      //                       9))},
-      //                      Parent->DefaultIP());
-      // }
-
-      // int IBits = this->Index->Load->getType()->getScalarSizeInBits();
-      // int DBits =
-      // this->Store->getValueOperand()->getType()->getScalarSizeInBits();
-
-      // auto TImm = IB->getInt64((TBits(DBits) << 4) | (TBits(DBits) << 2) |
-      // TBits(IBits)); auto NumUpdates = IB->getInt64(1); auto TupleLen =
-      // IB->getInt64(1); createAssembleCall(IB->getVoidTy(), "ss_cfg_atom_op
-      // $0, $1, $2", "r,r,i",
-      //                    {TupleLen, NumUpdates, TImm},
-      //                    Parent->DefaultIP());
-      // Meta.set("src", dsa::dfg::MetaPort::DataText[(int) ActualSrc]);
-      // Meta.set("dest", "spad");
-      // Meta.set("op", "atomic");
-      // // FIXME: offset is not always 0
-      // uint32_t OffsetList = 0;
-      // auto AddrPort = IB->getInt64(OffsetList | (SoftPortNum << 24));
-      // auto ValuePort = IB->getInt64((OperandPort << 2) | ((int) OpCode));
-      // createAssembleCall(IB->getVoidTy(), "ss_atom_op $0, $1, $2", "r,r,i",
-      //                    {AddrPort, TripCnt, ValuePort},
-      //                    Parent->DefaultIP());
-
-      // IntrinInjected = true;
     }
 
     CodeGenContext &CGC;

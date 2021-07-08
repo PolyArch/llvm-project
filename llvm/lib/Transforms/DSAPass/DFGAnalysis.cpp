@@ -625,6 +625,7 @@ SpadInfo ExtractSpadFromScope(IntrinsicInst *Start, IntrinsicInst *End) {
             if (!Offset.count(Alloc)) {
               int Size = AT->getNumElements() * AT->getElementType()->getScalarSizeInBits() / 8;
               Offset[Alloc] = Total;
+              LOG(SPAD) << *Alloc << ": " << Total;
               Total += Size;
             }
           }
