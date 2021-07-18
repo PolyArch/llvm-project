@@ -55,7 +55,7 @@ struct LinearInfo {
    * \brief Return the loop level from which, this value is no longer a loop
    * nest invariant.
    */
-  int PatialInvariant() const;
+  int PartialInvariant() const;
 };
 
 LinearInfo AnalyzeIndexExpr(ScalarEvolution *SE, const SCEV *Index,

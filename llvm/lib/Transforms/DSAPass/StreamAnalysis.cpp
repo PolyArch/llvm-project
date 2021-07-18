@@ -67,7 +67,7 @@ std::string LinearInfo::toString(const std::vector<Loop *> &Loops) {
   return RSO.str();
 }
 
-int LinearInfo::PatialInvariant() const {
+int LinearInfo::PartialInvariant() const {
   for (int i = 0, N = Coef.size(); i < N; ++i) { // NOLINT
     const auto *CI = Coef[i].ConstInt();
     if (CI && *CI == 0) {

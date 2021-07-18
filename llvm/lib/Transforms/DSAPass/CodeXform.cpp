@@ -760,7 +760,7 @@ void InjectLinearStreamImpl(CodeGenContext &CGC, const SCEV *Idx, int MaxOffset,
                              const std::vector<analysis::LinearInfo> &Loops,
                              int Port, int Unroll) {
     CHECK(Loops.size() == LI.Coef.size() || LI.Coef.empty());
-    int N = LI.Coef.empty() ? Loops.size() : LI.PatialInvariant();
+    int N = LI.Coef.empty() ? Loops.size() : LI.PartialInvariant();
     // Sanity check on the loop invariants.
     for (int i = 0; i < N; ++i) { // NOLINT
       const auto *Coef = LI.Coef[i].ConstInt();
@@ -794,7 +794,7 @@ void InjectLinearStreamImpl(CodeGenContext &CGC, const SCEV *Idx, int MaxOffset,
                                 DType, 0);
       return;
     }
-    int Dim = Loops.size() - LI.PatialInvariant();
+    int Dim = Loops.size() - LI.PartialInvariant();
     CHECK(0 <= Dim && Dim <= 3) << Dim;
     if (const auto *LII = LI.Invariant()) {
       CGC.INSTANTIATE_1D_STREAM(SEE.expandCodeFor(LII), IB->getInt64(0),
@@ -802,7 +802,7 @@ void InjectLinearStreamImpl(CodeGenContext &CGC, const SCEV *Idx, int MaxOffset,
                                 DType, 0);
       return;
     }
-    int i = LI.PatialInvariant(); // NOLINT
+    int i = LI.PartialInvariant(); // NOLINT
     switch (Dim) {
     case 0: {
       CGC.INSTANTIATE_1D_STREAM(Start, IB->getInt64(0), IB->getInt64(1), Port,
@@ -854,6 +854,9 @@ void InjectLinearStreamImpl(CodeGenContext &CGC, const SCEV *Idx, int MaxOffset,
   if (MO == MemoryOperation::DMO_Read) {
     InjectRepeat(IdxLI, LoopLI, Port, Unroll);
   }
+  int PI = IdxLI.PartialInvariant();
+  IdxLI.Coef.erase(IdxLI.Coef.begin(), IdxLI.Coef.begin() + PI);
+  LoopLI.erase(LoopLI.begin(), LoopLI.begin() + PI);
   if (MaxOffset) {
     LoopLI.insert(LoopLI.begin(), analysis::LinearInfo());
     LoopLI.front().Base = CGC.SE.getConstant(CGC.IB->getInt64(MaxOffset / DType));
@@ -869,6 +872,9 @@ void InjectLinearStreamImpl(CodeGenContext &CGC, const SCEV *Idx, int MaxOffset,
     if (const auto *S1D = IdxLI.Coef.front().ConstInt()) {
       if (((int) *S1D) == DType) {
         if (const auto *N = LoopLI[0].ConstInt()) {
+          if ((*N + 1) % Unroll) {
+            break;
+          }
           if (const auto *S2D = IdxLI.Coef[1].ConstInt()) {
             // TODO(@were): Relax this condition.
             if (LoopLI[1].Invariant()) {
@@ -926,7 +932,7 @@ void InjectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF,
           const auto *SCEV = SE.getSCEV(Ptr0);
           auto Analyzed = dsa::analysis::AnalyzeIndexExpr(&SE, SE.getSCEV(Ptr0), DLI.LoopNest);
           // No repeat!
-          if (Analyzed.PatialInvariant() != 0) {
+          if (Analyzed.PartialInvariant() != 0) {
             return;
           }
           // Outer should not be stretched!
