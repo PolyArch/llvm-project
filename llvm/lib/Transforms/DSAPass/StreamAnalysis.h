@@ -25,7 +25,7 @@ struct LinearInfo {
   /*!
    * \brief The coefficient of each loop variable.
    */
-  std::vector<LinearInfo *> Coef;
+  std::vector<LinearInfo> Coef;
   /*!
    * \brief The base coefficient
    */
@@ -34,8 +34,7 @@ struct LinearInfo {
    * \brief Create loop invariant.
    * \param N The number of levels of loop nest.
    */
-  static LinearInfo *LoopInvariant(ScalarEvolution *SE, int N,
-                                   const SCEV *Base);
+  static LinearInfo LoopInvariant(ScalarEvolution *SE, int N, const SCEV *Base);
   /*!
    * \brief Dump this result of analysis for debugging.
    * \param Loops The loops on which analysis is based.
@@ -59,8 +58,8 @@ struct LinearInfo {
   int PatialInvariant() const;
 };
 
-LinearInfo *AnalyzeIndexExpr(ScalarEvolution *SE, const SCEV *Index,
-                             const std::vector<Loop *> &LoopNest);
+LinearInfo AnalyzeIndexExpr(ScalarEvolution *SE, const SCEV *Index,
+                            const std::vector<Loop *> &LoopNest);
 
 } // namespace analysis
 } // namespace dsa

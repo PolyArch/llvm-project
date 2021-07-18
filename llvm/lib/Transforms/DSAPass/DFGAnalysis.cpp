@@ -780,7 +780,7 @@ ConfigInfo ExtractDFGPorts(std::string FName, DFGFile &DF, std::vector<CoalMemor
           CHECK(false) << "DSAPass port information gathering unreachable!";
         }
         // #define dfgx_size size
-      } else if (Token.find(IClusterPrefix.size()) == 0 || Token.find(OClusterPrefix) == 0) {
+      } else if (Token.find(IClusterPrefix) == 0 || Token.find(OClusterPrefix) == 0) {
         Token = Token.substr(IClusterPrefix.size());
         int X, Y, Port;
         CHECK(sscanf(Token.c_str(), "_%d_%d_", &X, &Y) == 2);
@@ -840,7 +840,7 @@ DFGLoopInfo AnalyzeDFGLoops(DFGBase *DB, ScalarEvolution &SE) {
       for (int I = 0; I < (int) LoopNest.size(); ++I) {
         auto *NSCEV = SE.getBackedgeTakenCount(LoopNest[I]);
         if (isa<SCEVCouldNotCompute>(NSCEV)) {
-          DLI.TripCount.push_back(nullptr);
+          DLI.TripCount.push_back(LinearInfo());
         } else {
           DLI.TripCount.push_back(analysis::AnalyzeIndexExpr(&SE, NSCEV, LoopNest));
         }
@@ -863,21 +863,21 @@ DFGLoopInfo AnalyzeDFGLoops(DFGBase *DB, ScalarEvolution &SE) {
 
 int64_t IndexPairOffset(const SCEV *SA, const SCEV *SB, ScalarEvolution &SE,
                         const DFGLoopInfo &DLI, bool Signed) {
-  auto *A = AnalyzeIndexExpr(&SE, SA, DLI.LoopNest);
-  auto *B = AnalyzeIndexExpr(&SE, SB, DLI.LoopNest);
+  auto A = AnalyzeIndexExpr(&SE, SA, DLI.LoopNest);
+  auto B = AnalyzeIndexExpr(&SE, SB, DLI.LoopNest);
   bool SameDims = true;
-  if (A->Coef.size() == B->Coef.size()) {
+  if (A.Coef.size() != B.Coef.size()) {
     CHECK(!Signed);
     return -1;
   }
-  for (int J = 0; J < (int) A->Coef.size(); ++J) {
-    if (A->Coef[J]->Base != B->Coef[J]->Base) {
-      DSA_INFO << *SE.getEqualPredicate(A->Coef[J]->Base, B->Coef[J]->Base);
+  for (int J = 0; J < (int) A.Coef.size(); ++J) {
+    if (A.Coef[J].Base != B.Coef[J].Base) {
+      DSA_INFO << *SE.getEqualPredicate(A.Coef[J].Base, B.Coef[J].Base);
       SameDims = false;
     }
   }
   if (SameDims) {
-    if (auto *Offset = dyn_cast<SCEVConstant>(SE.getAddExpr(B->Base, SE.getNegativeSCEV(A->Base)))) {
+    if (auto *Offset = dyn_cast<SCEVConstant>(SE.getAddExpr(B.Base, SE.getNegativeSCEV(A.Base)))) {
       auto Res = Offset->getAPInt().getSExtValue();
       return Signed ? Res : std::abs(Res);
     }
@@ -927,21 +927,23 @@ std::vector<CoalMemoryInfo> GatherMemoryCoalescing(DFGFile &DF, ScalarEvolution 
         }
         Value *Ptr{nullptr};
       };
-      auto FCompOffset = [&Entries, &Cluster, &SE, &DLI]() {
+      auto NormalizeOffset = [&Entries, &Cluster, &SE, &DLI]() {
         PtrExtractor Base;
         Entries[Cluster[0].ID]->Accept(&Base);
-        for (int K = 1; K < (int) Cluster.size(); ++K) {
+        Cluster[0].Offset = 0;
+        for (int k = 1; k < (int) Cluster.size(); ++k) { // NOLINT
           PtrExtractor PE;
-          Entries[Cluster[K].ID]->Accept(&PE);
-          Cluster[K].Offset = IndexPairOffset(SE.getSCEV(Base.Ptr), SE.getSCEV(PE.Ptr), SE, DLI, true);
+          Entries[Cluster[k].ID]->Accept(&PE);
+          Cluster[k].Offset =
+            IndexPairOffset(SE.getSCEV(Base.Ptr), SE.getSCEV(PE.Ptr), SE, DLI, true);
         }
       };
       auto FCmp = [] (const CoalMemoryInfo::CoalescedEntry &A, const CoalMemoryInfo::CoalescedEntry &B) {
         return A.Offset < B.Offset;
       };
-      FCompOffset();
+      NormalizeOffset();
       std::sort(Cluster.begin(), Cluster.end(), FCmp);
-      FCompOffset();
+      NormalizeOffset();
     }
   }
   return Res;

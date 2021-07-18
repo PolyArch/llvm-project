@@ -2,7 +2,9 @@
 
 #include "llvm/ADT/BreadthFirstIterator.h"
 #include "llvm/IR/ModuleSlotTracker.h"
+#include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Utils/UnrollLoop.h"
+#include <sstream>
 
 #include "StreamAnalysis.h"
 
@@ -11,11 +13,10 @@
 namespace dsa {
 namespace analysis {
 
-LinearInfo *LinearInfo::LoopInvariant(ScalarEvolution *SE, int N,
-                                      const SCEV *Base) {
-  auto *LI = new LinearInfo();
-  LI->Base = Base;
-  return LI;
+LinearInfo LinearInfo::LoopInvariant(ScalarEvolution *SE, int N, const SCEV *Base) {
+  LinearInfo Res;
+  Res.Base = Base;
+  return Res;
 }
 
 const uint64_t *LinearInfo::ConstInt() const {
@@ -59,7 +60,7 @@ std::string LinearInfo::toString(const std::vector<Loop *> &Loops) {
       } else {
         RSO << "i" << i;
       }
-      RSO << " * " << Coef[i]->toString(Loops) << " + ";
+      RSO << " * " << Coef[i].toString(Loops) << " + ";
     }
     RSO << *Base << ")";
   }
@@ -68,7 +69,7 @@ std::string LinearInfo::toString(const std::vector<Loop *> &Loops) {
 
 int LinearInfo::PatialInvariant() const {
   for (int i = 0, N = Coef.size(); i < N; ++i) { // NOLINT
-    const auto *CI = Coef[i]->ConstInt();
+    const auto *CI = Coef[i].ConstInt();
     if (CI && *CI == 0) {
       continue;
     }
@@ -77,14 +78,13 @@ int LinearInfo::PatialInvariant() const {
   return Coef.size();
 }
 
-LinearInfo *AnalyzeIndexExpr(ScalarEvolution *SE, const SCEV *Raw,
-                             const std::vector<Loop *> &Loops) {
-  LinearInfo *LI = new LinearInfo();
+LinearInfo AnalyzeIndexExpr(ScalarEvolution *SE, const SCEV *Raw,
+                            const std::vector<Loop *> &Loops) {
+  LinearInfo Res;
   int i = 0; // NOLINT
-  auto AppendZero = [SE, LI, &Loops]() {
-    auto *Coef = LinearInfo::LoopInvariant(SE, Loops.size(),
-                                          SE->getConstant(APInt(64, 0)));
-    LI->Coef.push_back(Coef);
+  auto AppendZero = [SE, &Res, &Loops]() {
+    auto Coef = LinearInfo::LoopInvariant(SE, Loops.size(), SE->getConstant(APInt(64, 0)));
+    Res.Coef.push_back(Coef);
   };
   for (int N = Loops.size(); i < N; ++i) {
     if (!SE->isLoopInvariant(Raw, Loops[i])) {
@@ -94,37 +94,38 @@ LinearInfo *AnalyzeIndexExpr(ScalarEvolution *SE, const SCEV *Raw,
   }
   if (!isa<SCEVAddRecExpr>(Raw) || i == (int)Loops.size()) {
     CHECK(i == (int)Loops.size()) << i << " != " << Loops.size() << ": " << *Raw;
-    LI->Coef.clear();
-    LI->Coef.shrink_to_fit();
-    LI->Base = Raw;
-    return LI;
+    Res.Coef.clear();
+    Res.Coef.shrink_to_fit();
+    Res.Base = Raw;
+    return Res;
   }
+  auto *Cur = Raw;
   for (int N = Loops.size(); i < N; ++i) {
-    if (const auto *SARE = dyn_cast<SCEVAddRecExpr>(Raw)) {
+    if (const auto *SARE = dyn_cast<SCEVAddRecExpr>(Cur)) {
       if (!Loops.back()->contains(SARE->getLoop())) {
-        CHECK(SE->isLoopInvariant(Raw, Loops[i]))
-            << "I do not know how to handle this yet.";
         AppendZero();
         continue;
       }
       if (SARE->getLoop() != Loops[i]) {
-        auto *Coef = LinearInfo::LoopInvariant(SE, Loops.size(),
-                                              SE->getConstant(APInt(64, 0)));
-        LI->Coef.push_back(Coef);
+        CHECK(SE->isLoopInvariant(Cur, Loops[i]))
+          << "\n" << *Raw << "\n" << *Cur << "\nNot an invariant in loop " << *Loops[i]
+          << "\nCurrent Loop: " << *SARE->getLoop()
+          << "\nOuter Most: " << *Loops.back();
+        auto Coef = LinearInfo::LoopInvariant(SE, Loops.size(), SE->getConstant(APInt(64, 0)));
+        Res.Coef.push_back(Coef);
         continue;
       }
-      LI->Coef.push_back(
-          AnalyzeIndexExpr(SE, SARE->getStepRecurrence(*SE), Loops));
-      Raw = SARE->getStart();
+      Res.Coef.push_back(AnalyzeIndexExpr(SE, SARE->getStepRecurrence(*SE), Loops));
+      Cur = SARE->getStart();
     } else {
-      CHECK(SE->isLoopInvariant(Raw, Loops[i]))
-          << "I do not know how to handle this yet.";
+        CHECK(SE->isLoopInvariant(Cur, Loops[i]))
+          << "\n" << *Raw << "\n" << *Cur << "\nNot an invariant in loop " << *Loops[i];
       AppendZero();
     }
   }
-  CHECK(LI->Coef.size() == Loops.size()) << LI->Coef.size() << " != " << Loops.size();
-  LI->Base = Raw;
-  return LI;
+  CHECK(Res.Coef.size() == Loops.size()) << Res.Coef.size() << " != " << Loops.size();
+  Res.Base = Cur;
+  return Res;
 }
 
 namespace test {
@@ -139,20 +140,21 @@ struct StreamAnalysisPass : public FunctionPass {
   std::vector<Loop *> Loops;
 
   void AnalyzeLoopNest(const std::vector<Loop *> &Loops) { // NOLINT
+    CHECK(!Loops.empty());
     auto *L = Loops.front();
     for (auto &BB : L->getBlocks()) {
       for (auto &I : *BB) {
         if (auto *Load = dyn_cast<LoadInst>(&I)) {
           auto *Index = Load->getPointerOperand();
           CHECK(SE->isSCEVable(Index->getType()));
-          auto *LI = AnalyzeIndexExpr(SE, SE->getSCEV(Index), Loops);
-          LOG(LOOP) << LI->toString();
+          auto LI = AnalyzeIndexExpr(SE, SE->getSCEV(Index), Loops);
+          LOG(LOOP) << LI.toString();
         }
       }
     }
     for (auto *L : Loops) {
-      auto *LI = AnalyzeIndexExpr(SE, SE->getBackedgeTakenCount(L), Loops);
-      LOG(LOOP) << LI->toString();
+      auto LI = AnalyzeIndexExpr(SE, SE->getBackedgeTakenCount(L), Loops);
+      LOG(LOOP) << LI.toString();
     }
   }
 
@@ -160,9 +162,21 @@ struct StreamAnalysisPass : public FunctionPass {
     Loops.insert(Loops.begin(), L);
     if (L->empty()) {
       if (GetUnrollMetadata(L->getLoopID(), "llvm.loop.ss.dedicated")) {
+        LOG(LOOP) << "Offload: " << *L;
         auto I = Loops.begin();
         decltype(Loops) Slice;
         while (I < Loops.end()) {
+          auto *IndVar = (*I)->getCanonicalInductionVariable();
+          std::string S;
+          llvm::raw_string_ostream OSS(S);
+          if (IndVar) {
+            OSS << *IndVar;
+          } else if ((*I)->getInductionVariable(*SE)) {
+            OSS << *(*I)->getInductionVariable(*SE);
+          } else {
+            OSS << "Non-Canonical";
+          }
+          LOG(LOOP) << "Loop: " << *(*I) << " " << S;
           if (GetUnrollMetadata((*I)->getLoopID(), "llvm.loop.ss.stream")) {
             Slice = decltype(Loops)(Loops.begin(), I + 1);
             break;

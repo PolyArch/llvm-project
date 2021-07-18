@@ -81,11 +81,11 @@ struct DFGLoopInfo {
   /*!
    * \brief The trip count of each loop level, corresponding to the loop nest above.
    */
-  std::vector<analysis::LinearInfo*> TripCount;
+  std::vector<analysis::LinearInfo> TripCount;
 
   DFGLoopInfo() {}
 
-  DFGLoopInfo(const std::vector<Loop*> &L, const std::vector<analysis::LinearInfo*> &T) :
+  DFGLoopInfo(const std::vector<Loop*> &L, const std::vector<analysis::LinearInfo> &T) :
     LoopNest(L), TripCount(T) {}
 };
 
@@ -160,7 +160,7 @@ struct CoalMemoryInfo {
      */
     int Offset{INT_MIN};
 
-    CoalescedEntry(int ID_) : ID(ID_) {}
+    CoalescedEntry(int ID) : ID(ID) {}
   };
   /*!
    * \brief Each vector is a cluster of coalesced memory.
