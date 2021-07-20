@@ -545,40 +545,6 @@ struct DFGEntryAnalyzer : DFGVisitor {
     }
 
     CHECK(!DD.Entries.empty());
-
-
-    // TODO(@were): Open this to support data move.
-    // for (auto Inst : Visited) {
-    //   auto Load = dyn_cast<LoadInst>(Inst);
-
-    //   if (!Load)
-    //     continue;
-
-    //   if (!DD.InThisDFG(Load)) {
-    //     auto MP = dyn_cast<PortBase>(DifferentiateMemoryStream(Load));
-    //     CHECK(MP);
-    //     Entries.push_back(MP);
-    //     size_t j = Entries.size();
-    //     InspectConsumers(Load);
-    //     // FIXME: For now we only support one consumer.
-    //     CHECK(j + 1 == DD.Entries.size()) << "A load without usage?";
-    //     for (; j < Entries.size(); ++j) {
-    //       auto Entry = Entries[j];
-    //       if (auto PM = dyn_cast<PortMem>(Entry)) {
-    //         // FIXME(@were): Deprecate the reserved ports.
-    //         (void) PM; // Pretend I used this variable to avoid warnings.
-    //         CHECK(false) << "Data movement not supported yet!";
-    //       } else if (auto APM = dyn_cast<AtomicPortMem>(Entry)) {
-    //         assert(APM->Store->getValueOperand() == MP->UnderlyingInst());
-    //         APM->Op = MP->UnderlyingInst();
-    //         // FIXME: This is not correct...
-    //         // MP->SoftPortNum = getNextReserved();
-    //       } else {
-    //         assert(false && "This should not happen");
-    //       }
-    //     }
-    //   }
-    // }
   }
 
   void Visit(TemporalDFG *TD) override {

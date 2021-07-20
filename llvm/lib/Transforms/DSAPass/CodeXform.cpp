@@ -196,7 +196,11 @@ struct DFGPrinter : dsa::DFGVisitor {
           if (!SubCtrl[i].str().empty()) {
             SubCtrl[i] << "|";
           }
-          SubCtrl[i] << "a";
+          if (isAcc) {
+            SubCtrl[i] << "a";
+          } else {
+            SubCtrl[i] << "d";
+          }
         } else if (isAcc) {
           if (!SubCtrl[i].str().empty()) {
             SubCtrl[i] << "|";
@@ -803,6 +807,12 @@ void InjectLinearStreamImpl(CodeGenContext &CGC, const SCEV *Idx, int MaxOffset,
       return;
     }
     int i = LI.PartialInvariant(); // NOLINT
+    std::vector<Value*> N;
+    std::vector<Value*> Stride;
+    for (int j = i; j < (int) Loops.size(); ++j) { // NOLINT
+      N.push_back(IB->CreateAdd(SEE.expandCodeFor(Loops[j].Base), IB->getInt64(1)));
+      Stride.push_back(SEE.expandCodeFor(LI.Coef[j].Base));
+    }
     switch (Dim) {
     case 0: {
       CGC.INSTANTIATE_1D_STREAM(Start, IB->getInt64(0), IB->getInt64(1), Port,
@@ -810,8 +820,8 @@ void InjectLinearStreamImpl(CodeGenContext &CGC, const SCEV *Idx, int MaxOffset,
       break;
     }
     case 1: {
-      auto *N1D = IB->CreateAdd(SEE.expandCodeFor(Loops[i].Invariant()), IB->getInt64(1));
-      auto *Stride1D = SEE.expandCodeFor(LI.Coef[i].Invariant());
+      auto *N1D = N[0];
+      auto *Stride1D = Stride[0];
       CGC.INSTANTIATE_1D_STREAM(Start, Stride1D, N1D, Port, P, DSA_Access, MO, MT, DType, 0);
       LOG(CODEGEN)
         << "[1-d Linear] Start: " << *Start << ", Stride: " << *Stride1D << ", N: " << *N1D
@@ -820,29 +830,33 @@ void InjectLinearStreamImpl(CodeGenContext &CGC, const SCEV *Idx, int MaxOffset,
       break;
     }
     case 2: {
-      auto *N1D = IB->CreateAdd(SEE.expandCodeFor(Loops[i].Base), IB->getInt64(1));
-      auto *Stride1D = SEE.expandCodeFor(LI.Coef[i].Invariant());
+      auto *N1D = N[0];
+      auto *Stride1D = Stride[0];
       // TODO(@were): Make assumption check!
       Value *Stretch = IB->getInt64(0);
       if (!Loops[i].Coef.empty()) {
         Stretch = SEE.expandCodeFor(Loops[i].Coef[i + 1].Base);
       }
-      auto *Length2D = IB->CreateAdd(SEE.expandCodeFor(Loops[i + 1].Base), IB->getInt64(1));
-      auto *Stride2D =
-          IB->CreateSDiv(SEE.expandCodeFor(LI.Coef[i + 1].Invariant()),
-                         IB->getInt64(DType));
+      auto *N2D = N[1];
+      auto *Stride2D = IB->CreateSDiv(Stride[1], IB->getInt64(DType));
       CGC.INSTANTIATE_2D_STREAM(Start, Stride1D, N1D, Stride2D, Stretch,
-                                Length2D, Port, P, DSA_Access, MO, MT, DType,
+                                N2D, Port, P, DSA_Access, MO, MT, DType,
                                 0);
       LOG(CODEGEN)
         << "[1-d Linear] Start: " << *Start << ", S1D: " << *Stride1D << ", N: " << *N1D
-        << ", S2D: " << *Stride2D << ", Stretch: " << *Stretch << ", M: " << *Length2D
+        << ", S2D: " << *Stride2D << ", Stretch: " << *Stretch << ", M: " << *N2D
         << ", DType: " << DType << ", Port: " << Port << " -> " << (MT == DMT_DMA ? "DMA" : "SPAD")
         << (MO == DMO_Read ? ", Read" : ", Write");
       break;
     }
     case 3: {
-      CHECK(false) << "Unsupported dimension: " << Dim;
+      // TODO(@were): Support 3D stretch!
+      auto *Zero = IB->getInt64(0);
+      CGC.INSTANTIATE_3D_STREAM(Start, Stride[0], N[0],
+                                IB->CreateSDiv(Stride[1], IB->getInt64(DType)),
+                                Zero, N[1], Zero, Zero, Zero, Zero,
+                                IB->CreateSDiv(Stride[2], IB->getInt64(DType)), N[2],
+                                Port, P, DSA_Access, MO, MT, DType, 0);
       break;
     }
     default:
@@ -1151,7 +1165,6 @@ void InjectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF,
     void Visit(CtrlSignal *CS) override {
       auto *DD = dyn_cast<DedicatedDFG>(CS->Parent);
       CHECK(DD);
-      auto *InsertBefore = DD->DefaultIP();
       auto *One = CGC.IB->getInt64(1);
       auto *Two = CGC.IB->getInt64(2);
 
@@ -1169,19 +1182,40 @@ void InjectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF,
       }
 
       CHECK(!CS->IntrinInjected);
-      auto *CR = CS->Controlled->NumValuesProduced();
-      assert(CR);
 
-      /// {
+      auto &SEE = CGC.SEE;
       auto *IB = CGC.IB;
-      auto *Iters = IB->CreateUDiv(DD->ProdTripCount(DD->LoopNest.size(), InsertBefore),
-                                   CR, "const.iters");
-      auto *Unroll = IB->getInt64(DD->UnrollFactor);
-      auto *Ceil = CeilDiv(CR, Unroll, InsertBefore);
-      auto *RepeatTwo = IB->CreateSub(Ceil, One, "repeat.two", InsertBefore);
-      CGC.SS_2D_CONST(CS->SoftPortNum, Two, RepeatTwo, One, One, Iters,
-                      Two->getType()->getScalarSizeInBits() / 8);
-      /// }
+      auto *Rep = IB->CreateAdd(SEE.expandCodeFor(DLI.TripCount[0].Base), IB->getInt64(1));
+      Rep = CeilDiv(Rep, IB->getInt64(CS->Parent->getUnroll()), IB);
+      OutputPort *OP = nullptr;
+      for (auto *Entry : CS->Parent->EntryFilter<OutputPort>()) {
+        if (Entry->Output == CS->Controlled->UnderlyingInst()) {
+          CHECK(!OP || OP == Entry)
+            << *CS->Controlled->UnderlyingInst() << " has more than one endsup.";
+          OP = Entry;
+          break;
+        }
+      }
+      CHECK(OP);
+      LOG(CTRL_SIGNAL) << CS->Controlled->dump();
+      LOG(CTRL_SIGNAL) << OP->dump();
+      Value *Outer = IB->getInt64(1);
+      bool UseLevel = false;
+      for (int i = 1; i < (int) DLI.TripCount.size(); ++i) { // NOLINT
+        LOG(CTRL_SIGNAL) << "Loop: " << *DLI.LoopNest[i];
+        auto *TripCnt = IB->CreateAdd(SEE.expandCodeFor(DLI.TripCount[i].Base), IB->getInt64(1));
+        UseLevel = DLI.LoopNest[i]->contains(OP->UnderlyingInst());
+        if (UseLevel) {
+          LOG(CTRL_SIGNAL) << "Outer!";
+          Outer = IB->CreateMul(Outer, TripCnt);
+        } else {
+          Rep = IB->CreateMul(Rep, TripCnt);
+        }
+      }
+
+      DSA_INFO << "Outer: " << *Outer;
+      CGC.SS_2D_CONST(CS->SoftPortNum, IB->getInt64(2), IB->CreateSub(Rep, IB->getInt64(1)),
+                      IB->getInt64(1), IB->getInt64(1), Outer, 64 / 8);
 
       CS->IntrinInjected = true;
     }
