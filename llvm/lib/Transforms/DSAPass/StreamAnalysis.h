@@ -34,7 +34,7 @@ struct LinearInfo {
    * \brief Create loop invariant.
    * \param N The number of levels of loop nest.
    */
-  static LinearInfo LoopInvariant(ScalarEvolution *SE, int N, const SCEV *Base);
+  static LinearInfo loopInvariant(ScalarEvolution *SE, int N, const SCEV *Base);
   /*!
    * \brief Dump this result of analysis for debugging.
    * \param Loops The loops on which analysis is based.
@@ -45,21 +45,25 @@ struct LinearInfo {
    * \brief If this LinearInfo is a constant int, return the value, o.w. return
    * nullptr.
    */
-  const uint64_t *ConstInt() const;
+  const uint64_t *constInt() const;
   /*!
    * \brief If this value is a loop invariant, return the SCEV for expansion.
    * O.w. return nullptr.
    */
-  const SCEV *Invariant() const;
+  const SCEV *invariant() const;
   /*!
    * \brief Return the loop level from which, this value is no longer a loop
    * nest invariant.
    */
-  int PartialInvariant() const;
+  int partialInvariant() const;
 };
 
-LinearInfo AnalyzeIndexExpr(ScalarEvolution *SE, const SCEV *Index,
+LinearInfo analyzeIndexExpr(ScalarEvolution *SE, const SCEV *Index,
                             const std::vector<Loop *> &LoopNest);
+
+std::pair<LinearInfo, std::vector<LinearInfo>>
+fuseInnerDimensions(LinearInfo IdxLI, std::vector<LinearInfo> LoopLI,
+                    int DType, int Unroll, int P, IRBuilder<> *IB, ScalarEvolution &SE);
 
 } // namespace analysis
 } // namespace dsa

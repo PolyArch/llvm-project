@@ -114,7 +114,7 @@ public:
   /*!
    * \brief Entrance of the visitor pattern.
    */
-  virtual void Accept(dsa::DFGVisitor *);
+  virtual void accept(dsa::DFGVisitor *);
 
   /// TODO(@were): Decouple and remove all these.
   // {
@@ -204,7 +204,7 @@ public:
   /// Add the given DFG to this file
   void addDFG(DFGBase *DFG);
   /// Erase all the instructions offloaded to CGRA
-  void EraseOffloadedInstructions();
+  void eraseOffloadedInstructions();
   /// Get the current context
   LLVMContext &getCtx();
   /// Allocate addresses on the scratch pad
@@ -247,7 +247,7 @@ public:
   /*!
    * \brief Entrance of the visitor pattern.
    */
-  virtual void Accept(dsa::DFGVisitor *) override;
+  virtual void accept(dsa::DFGVisitor *) override;
 
   static bool classof(const DFGBase *DB) { return DB->getKind() == Temporal; }
 };
@@ -329,7 +329,7 @@ public:
   /*!
    * \brief Entrance of the visitor pattern.
    */
-  virtual void Accept(dsa::DFGVisitor *) override;
+  virtual void accept(dsa::DFGVisitor *) override;
 
   static bool classof(const DFGBase *DB) {
     return DB->getKind() == Dedicated || DB->getKind() == DataMove;

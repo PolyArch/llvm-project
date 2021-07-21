@@ -233,7 +233,7 @@ raw_ostream &operator<<(raw_ostream &OS, DFGEntry &DE) {
   OS << "# [" << KindStr[(int) DE.Kind] << "]: DFG" << DE.Parent->ID << " Entry"
      << DE.ID << "\n";
   int i = 0; // NOLINT
-  auto Insts = DE.UnderlyingInsts();
+  auto Insts = DE.underlyingInsts();
   for (auto *Elem : Insts) {
     OS << "# Inst";
     if (Insts.size() != 1) {

@@ -143,7 +143,7 @@ bool CanBeStretched(int x, const std::vector<Loop*> &LoopNest, // NOLINT
 
 DFGEntry *DFGBase::InThisDFG(Value *Val) {
   for (auto &Elem : Entries) {
-    for (auto &Iter : Elem->UnderlyingValues()) {
+    for (auto &Iter : Elem->underlyingValues()) {
       if (Iter == Val) {
         return Elem;
       }
@@ -159,9 +159,9 @@ Instruction *TemporalDFG::DefaultIP() { return IP; }
 Instruction *DedicatedDFG::DefaultIP() { return &Preheader->back(); }
 
 bool DedicatedDFG::ConsumedByAccumulator(MemPort *MP) {
-  std::set<Value *> Visited{MP->UnderlyingInst()};
+  std::set<Value *> Visited{MP->underlyingInst()};
   std::queue<Value *> Q;
-  Q.push(MP->UnderlyingInst());
+  Q.push(MP->underlyingInst());
   while (!Q.empty()) {
     auto *Cur = Q.front();
     Q.pop();
@@ -350,7 +350,7 @@ void DFGFile::addDFG(DFGBase *DB) {
   DFGs.push_back(DB);
 }
 
-void DFGFile::EraseOffloadedInstructions() {
+void DFGFile::eraseOffloadedInstructions() {
 
   std::set<Instruction *> Unique;
 
@@ -399,8 +399,8 @@ void DFGFile::EraseOffloadedInstructions() {
       if (auto *P = dyn_cast<Predicate>(Entry)) {
         for (auto *Elem : P->Cond)
           F(Elem);
-      } else if (Entry->UnderlyingInst()) {
-        F(Entry->UnderlyingInst());
+      } else if (Entry->underlyingInst()) {
+        F(Entry->underlyingInst());
       }
     }
 
@@ -966,6 +966,6 @@ void DFGFile::InspectSPADs() {
   }
 }
 
-void DFGBase::Accept(dsa::DFGVisitor *Visitor) { Visitor->Visit(this); }
-void DedicatedDFG::Accept(dsa::DFGVisitor *Visitor) { Visitor->Visit(this); }
-void TemporalDFG::Accept(dsa::DFGVisitor *Visitor) { Visitor->Visit(this); }
+void DFGBase::accept(dsa::DFGVisitor *Visitor) { Visitor->Visit(this); }
+void DedicatedDFG::accept(dsa::DFGVisitor *Visitor) { Visitor->Visit(this); }
+void TemporalDFG::accept(dsa::DFGVisitor *Visitor) { Visitor->Visit(this); }

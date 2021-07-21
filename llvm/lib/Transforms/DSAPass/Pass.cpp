@@ -57,17 +57,17 @@ bool StreamSpecialize::runOnModule(Module &M) {
 bool StreamSpecialize::runOnFunction(Function &F) {
 
   if (!dsa::utils::ModuleContext().TEMPORAL) {
-    dsa::xform::EliminateTemporal(F);
+    dsa::xform::eliminateTemporal(F);
   }
 
 
   IRBuilder<> IB(F.getContext());
   IBPtr = &IB;
 
-  auto ScopePairs = dsa::analysis::GatherConfigScope(F);
+  auto ScopePairs = dsa::analysis::gatherConfigScope(F);
   if (!ScopePairs.empty()) {
     if (!dsa::utils::ModuleContext().EXTRACT) {
-      DSARegs = dsa::xform::InjectDSARegisterFile(F);
+      DSARegs = dsa::xform::injectDSARegisterFile(F);
     }
   } else {
     LLVM_DEBUG(DSA_INFO << "No need to transform " << F.getName() << "\n");
@@ -80,18 +80,17 @@ bool StreamSpecialize::runOnFunction(Function &F) {
     auto *Start = ScopePairs[I].first;
     auto *End = ScopePairs[I].second;
     DFGFile DF(Name, Start, End, this);
-    dsa::analysis::ExtractDFGFromScope(DF, Start, End, DT, LI);
-    auto SI = dsa::analysis::ExtractSpadFromScope(Start, End);
-
+    dsa::analysis::extractDFGFromScope(DF, Start, End, DT, LI);
     std::vector<dsa::analysis::DFGLoopInfo> DLIs;
     for (auto *DFG : DF.DFGFilter<DFGBase>()) {
-      DLIs.emplace_back(dsa::analysis::AnalyzeDFGLoops(DFG, *SE));
+      DLIs.emplace_back(dsa::analysis::analyzeDFGLoops(DFG, *SE));
     }
-    auto CMIs = dsa::analysis::GatherMemoryCoalescing(DF, *SE, DLIs);
+    auto SI = dsa::analysis::extractSpadFromScope(DF, Start, End, DLIs, SE);
+    auto CMIs = dsa::analysis::gatherMemoryCoalescing(DF, *SE, DLIs);
     {
       std::error_code EC;
       llvm::raw_fd_ostream RFO(DF.getName(), EC);
-      dsa::xform::EmitDFG(RFO, &DF, CMIs);
+      dsa::xform::emitDFG(RFO, &DF, CMIs, SI);
     }
     // If extraction only, we do not schedule and analyze.
     if (dsa::utils::ModuleContext().EXTRACT) {
@@ -109,13 +108,13 @@ bool StreamSpecialize::runOnFunction(Function &F) {
     //   Ports[i].resize(Graphs[i]->Entries.size(), -1);
     // }
     // DF.InspectSPADs();
-    auto CI = dsa::analysis::ExtractDFGPorts(Name, DF, CMIs);
-    dsa::xform::InjectConfiguration(CGC, CI, Start, End);
+    auto CI = dsa::analysis::extractDFGPorts(Name, DF, CMIs, SI);
+    dsa::xform::injectConfiguration(CGC, CI, Start, End);
     if (dsa::utils::ModuleContext().EXTRACT) {
       continue;
     }
-    dsa::xform::InjectStreamIntrinsics(CGC, DF, CMIs, SI);
-    DF.EraseOffloadedInstructions();
+    dsa::xform::injectStreamIntrinsics(CGC, DF, CMIs, SI);
+    DF.eraseOffloadedInstructions();
   }
   if (!dsa::utils::ModuleContext().EXTRACT) {
     for (auto &Pair : ScopePairs) {
