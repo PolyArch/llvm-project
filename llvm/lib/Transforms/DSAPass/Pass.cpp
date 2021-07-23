@@ -64,7 +64,10 @@ bool StreamSpecialize::runOnFunction(Function &F) {
   IRBuilder<> IB(F.getContext());
   IBPtr = &IB;
 
-  auto ScopePairs = dsa::analysis::gatherConfigScope(F);
+  dsa::analysis::DFGAnalysisResult DAR;
+
+  dsa::analysis::gatherConfigScope(F, DAR);
+  auto &ScopePairs = DAR.Scope;
   if (!ScopePairs.empty()) {
     if (!dsa::utils::ModuleContext().EXTRACT) {
       DSARegs = dsa::xform::injectDSARegisterFile(F);
@@ -74,19 +77,17 @@ bool StreamSpecialize::runOnFunction(Function &F) {
   }
   LLVM_DEBUG(DSA_INFO << "Transforming " << F.getName() << "\n");
   SCEVExpander SEE(*SE, F.getParent()->getDataLayout(), "");
-  dsa::xform::CodeGenContext CGC(&IB, DSARegs, *SE, SEE);
+  dsa::xform::CodeGenContext CGC(&IB, DSARegs, *SE, SEE, DT, LI);
   for (int I = 0, N = ScopePairs.size(); I < N; ++I) {
     std::string Name = F.getName().str() + "_dfg_" + std::to_string(I) + ".dfg";
     auto *Start = ScopePairs[I].first;
     auto *End = ScopePairs[I].second;
     DFGFile DF(Name, Start, End, this);
-    dsa::analysis::extractDFGFromScope(DF, Start, End, DT, LI);
-    std::vector<dsa::analysis::DFGLoopInfo> DLIs;
-    for (auto *DFG : DF.DFGFilter<DFGBase>()) {
-      DLIs.emplace_back(dsa::analysis::analyzeDFGLoops(DFG, *SE));
-    }
-    auto SI = dsa::analysis::extractSpadFromScope(DF, Start, End, DLIs, SE);
+    dsa::analysis::extractDFGFromScope(DF, CGC);
+    dsa::analysis::analyzeDFGLoops(DF, CGC, DAR);
+    std::vector<dsa::analysis::DFGLoopInfo> &DLIs = DAR.DLI;
     auto CMIs = dsa::analysis::gatherMemoryCoalescing(DF, *SE, DLIs);
+    auto SI = dsa::analysis::extractSpadFromScope(DF, Start, End, DLIs, CGC);
     {
       std::error_code EC;
       llvm::raw_fd_ostream RFO(DF.getName(), EC);
@@ -113,7 +114,7 @@ bool StreamSpecialize::runOnFunction(Function &F) {
     if (dsa::utils::ModuleContext().EXTRACT) {
       continue;
     }
-    dsa::xform::injectStreamIntrinsics(CGC, DF, CMIs, SI);
+    dsa::xform::injectStreamIntrinsics(CGC, DF, CMIs, SI, DAR);
     DF.eraseOffloadedInstructions();
   }
   if (!dsa::utils::ModuleContext().EXTRACT) {

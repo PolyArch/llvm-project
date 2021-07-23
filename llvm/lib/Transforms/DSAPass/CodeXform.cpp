@@ -771,12 +771,7 @@ void InjectLinearStreamImpl(CodeGenContext &CGC, const SCEV *Idx, int MaxOffset,
                              const std::vector<analysis::LinearInfo> &Loops,
                              int Port, int Unroll) {
     CHECK(Loops.size() == LI.Coef.size() || LI.Coef.empty());
-    int N = LI.Coef.empty() ? Loops.size() : LI.partialInvariant();
-    // Sanity check on the loop invariants.
-    for (int i = 0; i < N; ++i) { // NOLINT
-      const auto *Coef = LI.Coef[i].constInt();
-      CHECK(Coef && *Coef == 0);
-    }
+    int N = LI.partialInvariant();
     auto CR = InjectComputedRepeat(CGC, Loops, N, Unroll);
     auto *Repeat = CR.first;
     auto *Stretch = CR.second;
@@ -918,9 +913,17 @@ void InjectLinearStreamImpl(CodeGenContext &CGC, const SCEV *Idx, int MaxOffset,
   if (MaxOffset) {
     LoopLI.insert(LoopLI.begin(), analysis::LinearInfo());
     LoopLI.front().Base = CGC.SE.getConstant(CGC.IB->getInt64(MaxOffset / DType));
-    CHECK(!IdxLI.Coef.empty());
     IdxLI.Coef.insert(IdxLI.Coef.begin(), analysis::LinearInfo());
-    IdxLI.Coef.front().Base = CGC.SE.getConstant(CGC.IB->getInt64(DType));
+    IdxLI.Coef[0].Base = CGC.SE.getConstant(CGC.IB->getInt64(DType));
+    // If it used to be a constant, we need to make the higher dimensions to be zero-padded.
+    if (IdxLI.Coef.size() == 1) {
+      auto *SCEVZero = CGC.SE.getConstant(CGC.IB->getInt64(0));
+      analysis::LinearInfo ZeroDim = analysis::LinearInfo::loopInvariant(&CGC.SE, -1, SCEVZero);
+      IdxLI.Coef.reserve(LoopLI.size());
+      while (IdxLI.Coef.size() < LoopLI.size()) {
+        IdxLI.Coef.push_back(ZeroDim);
+      }
+    }
     LOG(SLP) << "Info After SLP: " << IdxLI.toString();
     for (int i = 0; i < (int) LoopLI.size(); ++i) { // NOLINT
       LOG(SLP) << "i" << i << ": " << LoopLI[i].toString();
@@ -939,7 +942,7 @@ void InjectLinearStreamImpl(CodeGenContext &CGC, const SCEV *Idx, int MaxOffset,
 
 void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF,
                             std::vector<analysis::CoalMemoryInfo> &CMIs,
-                            analysis::SpadInfo &SI) {
+                            analysis::SpadInfo &SI, analysis::DFGAnalysisResult &DAR) {
 
   auto DFGs = DF.DFGFilter<DFGBase>();
 
@@ -1428,7 +1431,7 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF,
 
   for (int i = 0; i < (int) DFGs.size(); ++i) { // NOLINT
     auto *DFG = DFGs[i];
-    auto DLI = analysis::analyzeDFGLoops(DFG, CGC.SE);
+    auto &DLI = DAR.DLI[i];
     UpdateStreamInjector USI(CGC, DLI, SI);
     StreamIntrinsicInjector SII(CGC, DLI, CMIs[i], SI);
     CGC.IB->SetInsertPoint(DFG->DefaultIP());

@@ -42,13 +42,21 @@ struct CodeGenContext {
    */
   const RegisterFile &Regs;
   /*!
-   * \brief The injected intrinsics.
+   * \brief Loop scalar analyzer.
    */
   ScalarEvolution &SE;
   /*!
-   * \brief The injected intrinsics.
+   * \brief SCEV expander.
    */
   SCEVExpander &SEE;
+  /*!
+   * \brief Instruction domination.
+   */
+  DominatorTree *DT;
+  /*!
+   * \brief Loop information.
+   */
+  LoopInfo *LI;
   /*!
    * \brief The injected intrinsics.
    */
@@ -77,8 +85,9 @@ struct CodeGenContext {
     }
   };
 
-  CodeGenContext(IRBuilder<> *IB, const RegisterFile &Regs, ScalarEvolution &SE, SCEVExpander &See)
-      : IB(IB), Regs(Regs), SE(SE), SEE(See) {}
+  CodeGenContext(IRBuilder<> *IB, const RegisterFile &Regs, ScalarEvolution &SE, SCEVExpander &SEE,
+                 DominatorTree *DT, LoopInfo *LI) :
+    IB(IB), Regs(Regs), SE(SE), SEE(SEE), DT(DT), LI(LI) {}
 
   /*!
    * \brief Inject load/store instructions so that the compiler can
@@ -148,7 +157,7 @@ void injectConfiguration(CodeGenContext &CGC, analysis::ConfigInfo &CI,
  */
 void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF,
                             std::vector<analysis::CoalMemoryInfo> &CMIs,
-                            analysis::SpadInfo &SI);
+                            analysis::SpadInfo &SI, analysis::DFGAnalysisResult &DAR);
 
 } // namespace xform
 } // namespace dsa

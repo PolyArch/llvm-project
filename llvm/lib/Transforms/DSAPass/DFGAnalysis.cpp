@@ -1,6 +1,9 @@
 #include "dsa/debug.h"
 
+#include "./CodeXform.h"
 #include "./DFGAnalysis.h"
+#include "./StreamAnalysis.h"
+
 #include "llvm/ADT/iterator_range.h"
 
 #define DEBUG_TYPE "dfg-analysis"
@@ -8,9 +11,8 @@
 namespace dsa {
 namespace analysis {
 
-std::vector<std::pair<IntrinsicInst *, IntrinsicInst *>>
-gatherConfigScope(Function &F) {
-  std::vector<std::pair<IntrinsicInst *, IntrinsicInst *>> Res;
+void gatherConfigScope(Function &F, DFGAnalysisResult &DAR) {
+  auto &Res = DAR.Scope;
   for (auto &BB : F) {
     for (auto &I : BB) {
       if (auto *End = dyn_cast<IntrinsicInst>(&I)) {
@@ -22,7 +24,6 @@ gatherConfigScope(Function &F) {
       }
     }
   }
-  return Res;
 }
 
 /*!
@@ -575,7 +576,7 @@ struct DFGEntryAnalyzer : DFGVisitor {
 };
 
 SpadInfo extractSpadFromScope(DFGFile &DF, IntrinsicInst *Start, IntrinsicInst *End,
-                              std::vector<DFGLoopInfo> &DLIs, ScalarEvolution *SE) {
+                              std::vector<DFGLoopInfo> &DLIs, xform::CodeGenContext &CGC) {
   std::map<AllocaInst*, int> Offset;
   int Total = 0;
   for (auto *BB : breadth_first(Start->getParent())) {
@@ -600,18 +601,26 @@ SpadInfo extractSpadFromScope(DFGFile &DF, IntrinsicInst *Start, IntrinsicInst *
       }
     }
   }
+  auto &SE = CGC.SE;
+  auto *IB = CGC.IB;
   std::vector<SpadInfo::BuffetEntry> Buffet;
   auto DFGs = DF.DFGFilter<DFGBase>();
   for (int i = 0; i < (int) DFGs.size(); ++i) { // NOLINT
     auto *DFG = DFGs[i];
     for (auto *MP : DFG->EntryFilter<MemPort>()) {
-      const auto *Idx = SE->getSCEV(MP->Load->getPointerOperand());
-      auto LI = analyzeIndexExpr(SE, Idx, DLIs[i].LoopNest);
+      const auto *Idx = SE.getSCEV(MP->Load->getPointerOperand());
+      auto LI = analyzeIndexExpr(&SE, Idx, DLIs[i].LoopNest);
+      auto TripCnt = DLIs[i].TripCount;
+      int DType = MP->Load->getType()->getScalarSizeInBits() / 8;
+      auto Fused = analysis::fuseInnerDimensions(LI, TripCnt, DType, DFG->getUnroll(),
+                                                 MP->fillMode(), IB, SE);
+      LI = Fused.first;
+      TripCnt = Fused.second;
       int PI = LI.partialInvariant();
       std::vector<const SCEV*> N;
       std::vector<const SCEV*> Stride;
-      for (int j = PI; j < (int) DLIs[i].LoopNest.size(); ++j) { // NOLINT
-        N.push_back(DLIs[i].TripCount[j].Base);
+      for (int j = PI; j < (int) TripCnt.size(); ++j) { // NOLINT
+        N.push_back(TripCnt[j].Base);
         Stride.push_back(LI.Coef[j].Base);
       }
       if (LI.Coef.size() - PI == 3) {
@@ -623,7 +632,8 @@ SpadInfo extractSpadFromScope(DFGFile &DF, IntrinsicInst *Start, IntrinsicInst *
                 int BufferSize = (CIN1D->getAPInt().getSExtValue() + 1) * 2 * DType;
                 LOG(BUFFET)
                   << Buffet.size() << ": " << MP->dump() << ", "
-                  << (CIN1D->getAPInt().getSExtValue() + 1) << " * " << DType << " * 2";
+                  << (CIN1D->getAPInt().getSExtValue() + 1) << " * " << DType << " * 2\n"
+                  << LI.toString();
                 // MP, Total, BufferSize, -1
                 Buffet.emplace_back(MP, Total, BufferSize, -1, -1);
                 Total += BufferSize;
@@ -637,8 +647,11 @@ SpadInfo extractSpadFromScope(DFGFile &DF, IntrinsicInst *Start, IntrinsicInst *
   return SpadInfo(Offset, Buffet, Total);
 }
 
-void extractDFGFromScope(DFGFile &DF, IntrinsicInst *Start, IntrinsicInst *End,
-                         DominatorTree *DT, LoopInfo *LI) {
+void extractDFGFromScope(DFGFile &DF, dsa::xform::CodeGenContext &CGC) {
+  auto *Start = DF.Config;
+  auto *End = DF.Fence;
+  auto *DT = CGC.DT;
+  auto *LI = CGC.LI;
   // Extract the sketch of dedicated and temporal DFGs respectively.
   // The instruction entries in each DFG cannot be instantiated until all the
   // sketches are extracted, because we need this to analyze inter-DFG
@@ -848,7 +861,7 @@ ConfigInfo extractDFGPorts(std::string FName, DFGFile &DF, std::vector<CoalMemor
 }
 
 
-DFGLoopInfo analyzeDFGLoops(DFGBase *DB, ScalarEvolution &SE) {
+void analyzeDFGLoops(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisResult &DAR) {
   struct DFGLoopAnalyzer : DFGVisitor {
     void Visit(DedicatedDFG *DD) override {
       auto &LoopNest = DD->LoopNest;
@@ -865,15 +878,17 @@ DFGLoopInfo analyzeDFGLoops(DFGBase *DB, ScalarEvolution &SE) {
 
     void Visit(TemporalDFG *TD) override {}
 
-    DFGLoopInfo DLI;
     ScalarEvolution &SE;
+    DFGLoopInfo &DLI;
 
-    DFGLoopAnalyzer(ScalarEvolution &SE) : SE(SE) {}
+    DFGLoopAnalyzer(ScalarEvolution &SE, DFGLoopInfo &DLI) : SE(SE), DLI(DLI) {}
   };
 
-  DFGLoopAnalyzer DLA(SE);
-  DB->accept(&DLA);
-  return DLA.DLI;
+  for (auto *DB : DF.DFGFilter<DFGBase>()) {
+    DAR.DLI.emplace_back();
+    DFGLoopAnalyzer DLA(CGC.SE, DAR.DLI.back());
+    DB->accept(&DLA);
+  }
 }
 
 
@@ -888,7 +903,7 @@ int64_t indexPairOffset(const SCEV *SA, const SCEV *SB, ScalarEvolution &SE,
   }
   for (int J = 0; J < (int) A.Coef.size(); ++J) {
     if (A.Coef[J].Base != B.Coef[J].Base) {
-      DSA_INFO << *SE.getEqualPredicate(A.Coef[J].Base, B.Coef[J].Base);
+      LOG(COAL) << *SE.getEqualPredicate(A.Coef[J].Base, B.Coef[J].Base);
       SameDims = false;
     }
   }

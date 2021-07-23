@@ -164,6 +164,7 @@ public:
 /// The class holds the DFG information
 class DFGFile {
 
+public:
   std::string FileName;
   Function &Func;
   Instruction *Config, *Fence;
@@ -174,7 +175,6 @@ class DFGFile {
 
   bool AllInitialized{false};
 
-public:
   friend class DFGBase;
   friend class DedicatedDFG;
   friend class TemporalDFG;

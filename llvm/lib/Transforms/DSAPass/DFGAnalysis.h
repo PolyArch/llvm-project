@@ -5,6 +5,13 @@
 #include "./Transformation.h"
 
 namespace dsa {
+
+namespace xform {
+
+struct CodeGenContext;
+
+} // namespace xform
+
 namespace analysis {
 
 /*!
@@ -16,6 +23,7 @@ struct ConfigInfo {
   int Size;
   ConfigInfo(const std::string &N, const std::string &B, int S)
       : Name(N), Bitstream(B), Size(S) {}
+  ConfigInfo() : Name(""), Bitstream(""), Size(0) {}
 };
 
 /*! \brief The result of coalesced SLP memory operation. */
@@ -29,7 +37,7 @@ struct CoalMemoryInfo {
     /*!
      * \brief The ID of the DFGEntry.
      */
-    int ID;
+    int ID{-1};
     /*!
      * \brief The offset relative to the first element of the cluster.
      */
@@ -59,7 +67,7 @@ struct SpadInfo {
   /*! \brief Buffet The information of buffet double buffering. */
   std::vector<BuffetEntry> Buffet;
   /*! \brief The total bytes occupied on SPAD. */
-  int Total;
+  int Total{0};
 
   /*!
    * \brief If the given pointer is on scratchpad.
@@ -69,6 +77,8 @@ struct SpadInfo {
 
   SpadInfo(std::map<AllocaInst*, int> &O, std::vector<BuffetEntry> &B, int T) :
     Offset(O), Buffet(B), Total(T) {}
+
+  SpadInfo() {}
 };
 
 /*!
@@ -92,24 +102,27 @@ struct DFGLoopInfo {
 
 /*! \brief The result of DFG analysis. */
 struct DFGAnalysisResult {
-  CoalMemoryInfo CMI;
   SpadInfo SI;
-  DFGLoopInfo DLI;
   ConfigInfo CI;
+  std::vector<std::pair<IntrinsicInst *, IntrinsicInst *>> Scope;
+  std::vector<CoalMemoryInfo> CMI;
+  std::vector<DFGLoopInfo> DLI;
 };
 
 /*!
  * \brief Gather all the pairs of dsa.config.start/end
  * \param F The function to be analyzed.
+ * \param DAR The result of scopes should go. Specifically, the `Scope` attr.
  */
-std::vector<std::pair<IntrinsicInst *, IntrinsicInst *>> gatherConfigScope(Function &F);
+void gatherConfigScope(Function &F, DFGAnalysisResult &DAR);
 
 /*!
  * \brief Gather the loop information of the loop nest that wraps the DFG.
- * \param DB The DFG to be analyzed.
- * \param SE The scalar evolution for analysis.
+ * \param DF The scope to be analyzed.
+ * \param CGC The LLVM utilities passed.
+ * \param DAR The result of scopes should go. Specifically, the `DLI` attr.
  */
-DFGLoopInfo analyzeDFGLoops(DFGBase *DB, ScalarEvolution &SE);
+void analyzeDFGLoops(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisResult &DAR);
 
 /*!
  * \brief Gather the the scratchpad local variables.
@@ -117,17 +130,14 @@ DFGLoopInfo analyzeDFGLoops(DFGBase *DB, ScalarEvolution &SE);
  * \param Start The end scope of DFG.
  */
 SpadInfo extractSpadFromScope(DFGFile &DF, IntrinsicInst *Start, IntrinsicInst *End,
-                              std::vector<DFGLoopInfo> &DLIs, ScalarEvolution *SE);
+                              std::vector<DFGLoopInfo> &DLIs, xform::CodeGenContext &CGC);
 
 /*!
  * \brief Extract dataflow graphs from the given scope
- * \param Start The start instrinsic annotates the scope
- * \param End The end intrinsic annotates the scope
- * \param DT The dominator tree information for analysis
- * \param LI The loop information for analysis
+ * \param DF The DFG scope to be analyzed.
+ * \param CGC The LLVM utilities passed.
  */
-void extractDFGFromScope(DFGFile &DF, IntrinsicInst *Start, IntrinsicInst *End,
-                         DominatorTree *DT, LoopInfo *LI);
+void extractDFGFromScope(DFGFile &DF, dsa::xform::CodeGenContext &CGC);
 
 /*!
  * \brief Extract the port number from the generated schedule.
@@ -161,7 +171,6 @@ void gatherMemoryCoalescingImpl(DFGBase *DB, ScalarEvolution &SE, const DFGLoopI
   bool Iterative = true;
   while (Iterative) {
     Iterative = false;
-    auto DLI = dsa::analysis::analyzeDFGLoops(DB, SE);
     for (int i = 0, n = DB->Entries.size(); i < n; ++i) { // NOLINT
       if (auto Node1 = dyn_cast<T>(DB->Entries[i])) {
         for (int j = i + 1; j < n; ++j) { // NOLINT

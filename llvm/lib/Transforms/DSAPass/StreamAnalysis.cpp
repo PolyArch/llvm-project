@@ -31,7 +31,7 @@ const uint64_t *LinearInfo::constInt() const {
 }
 
 const SCEV *LinearInfo::invariant() const {
-  return Coef.empty() ? Base : nullptr;
+  return partialInvariant() == (int) Coef.size() ? Base : nullptr;
 }
 
 std::string LinearInfo::toString(const std::vector<Loop *> &Loops) {
