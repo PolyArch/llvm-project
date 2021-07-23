@@ -46,32 +46,31 @@ bool TVMCleanup::runOnModule(Module &M) {
     }
   }
   for (auto &Elem : ToRemove) {
-    auto F = M.getFunction(Elem);
+    auto *F = M.getFunction(Elem);
     CHECK(F) << Elem << " function not found!";
     F->replaceAllUsesWith(UndefValue::get(F->getType()));
     F->eraseFromParent();
-    auto FC = M.getFunction(Elem + "_compute_");
+    auto *FC = M.getFunction(Elem + "_compute_");
     CHECK(FC) << Elem << "_compute_ function not found!";
     FC->setName(Elem);
     FC->setLinkage(GlobalValue::LinkageTypes::ExternalLinkage);
   }
 
   llvm::PassManagerBuilder PMB;
-  PMB.OptLevel = 3;
+  PMB.OptLevel = 1;
   PMB.Inliner = nullptr;
   PMB.LoopVectorize = false;
   PMB.SLPVectorize = false;
   PMB.DisableUnrollLoops = true;
-  // llvm::legacy::FunctionPassManager fpass(&M);
-  // llvm::legacy::PassManager mpass;
-  // PMB.populateFunctionPassManager(fpass);
-  // PMB.populateModulePassManager(mpass);
-
-  // for (auto &F : M.getFunctionList()) {
-  //   fpass.run(F);
-  // }
-  // fpass.doFinalization();
-  // mpass.run(M);
+  llvm::legacy::FunctionPassManager FPM(&M);
+  llvm::legacy::PassManager PM;
+  PMB.populateFunctionPassManager(FPM);
+  PMB.populateModulePassManager(PM);
+  for (auto &F : M.getFunctionList()) {
+    FPM.run(F);
+  }
+  FPM.doFinalization();
+  PM.run(M);
 
   return false;
 }
