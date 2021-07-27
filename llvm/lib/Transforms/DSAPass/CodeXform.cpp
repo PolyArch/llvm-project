@@ -965,21 +965,25 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF,
         auto *Ptr0 = dyn_cast<Instruction>(MP->Load->getPointerOperand());
         auto *Ptr1 = dyn_cast<Instruction>(PM->Store->getPointerOperand());
         if (Ptr0 == Ptr1) {
+          LOG(CODEGEN) << "Recurrencing: \n" << *MP->Load << "\n" << *PM->Store;
           const auto *SCEV = SE.getSCEV(Ptr0);
           auto Analyzed = dsa::analysis::analyzeIndexExpr(&SE, SE.getSCEV(Ptr0), DLI.LoopNest);
           // No repeat!
           if (Analyzed.partialInvariant() != 0) {
+            LOG(CODEGEN) << "Recurrence should not have inner repeat";
             return;
           }
           // Outer should not be stretched!
           if (!Analyzed.Coef.back().Coef.empty()) {
+            LOG(CODEGEN) << "Recurrence should not be stretched";
             return;
           }
-          if (auto *O = dyn_cast<ConstantInt>(CGC.SEE.expandCodeFor(Analyzed.Coef.back().Base))) {
+          if (auto *O = dyn_cast<ConstantInt>(CGC.SEE.expandCodeFor(Analyzed.Coef[1].Base))) {
             if (O->getSExtValue()) {
               return;
             }
           }
+
           using LinearInfo = dsa::analysis::LinearInfo;
           auto DType = MP->Load->getType()->getScalarSizeInBits() / 8;
           InjectLinearStreamImpl(CGC, SCEV, /*TODO(@were): Support this later*/0,
@@ -993,17 +997,18 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF,
             auto *InnerN = CGC.SEE.expandCodeFor(DLI.TripCount[0].Base);
             auto *OuterN = CGC.SEE.expandCodeFor(DLI.TripCount[1].Base);
             CGC.SS_RECURRENCE(PM->SoftPortNum, MP->SoftPortNum,
-                              IB->CreateMul(IB->CreateAdd(InnerN, IB->getInt64(1)), OuterN),
-                              DType);
+                              IB->CreateMul(IB->CreateAdd(InnerN, IB->getInt64(1)), OuterN), DType);
           } else {
             CHECK(false) << "Not supported yet";
           }
 
-          InjectLinearStreamImpl(CGC, SCEV, /*TODO(@were): Support this later*/0,
-                                 std::vector<Loop*>(DLI.LoopNest.begin(), DLI.LoopNest.end() - 1),
-                                 std::vector<LinearInfo>(DLI.TripCount.begin(), DLI.TripCount.end() - 1),
-                                 PM->SoftPortNum, DFG->getUnroll(),
-                                 DType, DMO_Write, (Padding) 0, SI, -1);
+          InjectLinearStreamImpl(
+            CGC, SCEV, /*TODO(@were): Support this later*/0,
+            std::vector<Loop*>(DLI.LoopNest.begin(), DLI.LoopNest.end() - 1),
+            std::vector<LinearInfo>(DLI.TripCount.begin(), DLI.TripCount.end() - 1),
+            PM->SoftPortNum, DFG->getUnroll(), DType, DMO_Write, (Padding) 0, SI, -1);
+
+          // Performance Model
           int II = 1;
           int Conc = -1;
           if (auto *CI = dyn_cast<ConstantInt>(CGC.SEE.expandCodeFor(DLI.TripCount[0].Base))) {
@@ -1135,10 +1140,10 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF,
       }
       const auto *SCEVIdx = CGC.SE.getSCEV(MP0->Load->getPointerOperand());
       int DType = MP->Load->getType()->getScalarSizeInBits() / 8;
-      auto Cond = [MP] (analysis::SpadInfo::BuffetEntry &BE) { return std::get<0>(BE) == MP; };
+      auto Cond = [MP0] (analysis::SpadInfo::BuffetEntry &BE) { return std::get<0>(BE) == MP0; };
       auto BIter = std::find_if(SI.Buffet.begin(), SI.Buffet.end(), Cond);
       InjectLinearStreamImpl(CGC, SCEVIdx, MaxOffset, DLI.LoopNest, DLI.TripCount, Port,
-                             DFG->getUnroll(), DType, DMO_Read, (Padding) MP->fillMode(), SI,
+                             DFG->getUnroll(), DType, DMO_Read, (Padding) MP0->fillMode(), SI,
                              BIter - SI.Buffet.begin());
 
       for (auto &Elem : CMI.Clusters[Belong]) {

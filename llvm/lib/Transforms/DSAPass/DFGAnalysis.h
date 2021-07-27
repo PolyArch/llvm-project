@@ -129,8 +129,7 @@ void analyzeDFGLoops(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisResult 
  * \param Start The starting scope of DFG.
  * \param Start The end scope of DFG.
  */
-SpadInfo extractSpadFromScope(DFGFile &DF, IntrinsicInst *Start, IntrinsicInst *End,
-                              std::vector<DFGLoopInfo> &DLIs, xform::CodeGenContext &CGC);
+void extractSpadFromScope(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisResult &DAR);
 
 /*!
  * \brief Extract dataflow graphs from the given scope
@@ -201,8 +200,7 @@ void gatherMemoryCoalescingImpl(DFGBase *DB, ScalarEvolution &SE, const DFGLoopI
  * \param SE 
  * \param DLI 
  */
-std::vector<CoalMemoryInfo> gatherMemoryCoalescing(DFGFile &DF, ScalarEvolution &SE,
-                                                   const std::vector<DFGLoopInfo> &DLI);
+void gatherMemoryCoalescing(DFGFile &DF, ScalarEvolution &SE, DFGAnalysisResult &DAR);
 
 } // namespace analysis
 } // namespace dsa

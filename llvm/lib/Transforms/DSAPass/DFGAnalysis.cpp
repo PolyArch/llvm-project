@@ -575,10 +575,11 @@ struct DFGEntryAnalyzer : DFGVisitor {
   DFGEntryAnalyzer(DominatorTree *DT) : DT(DT) {}
 };
 
-SpadInfo extractSpadFromScope(DFGFile &DF, IntrinsicInst *Start, IntrinsicInst *End,
-                              std::vector<DFGLoopInfo> &DLIs, xform::CodeGenContext &CGC) {
-  std::map<AllocaInst*, int> Offset;
-  int Total = 0;
+void extractSpadFromScope(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisResult &DAR) {
+  Instruction *Start = DF.Config;
+  Instruction *End = DF.Fence;
+  auto &Offset = DAR.SI.Offset;
+  auto &Total = DAR.SI.Total;
   for (auto *BB : breadth_first(Start->getParent())) {
     iterator_range<BasicBlock::InstListType::iterator> Range(BB->begin(), BB->end());
     if (BB == Start->getParent()) {
@@ -603,14 +604,19 @@ SpadInfo extractSpadFromScope(DFGFile &DF, IntrinsicInst *Start, IntrinsicInst *
   }
   auto &SE = CGC.SE;
   auto *IB = CGC.IB;
-  std::vector<SpadInfo::BuffetEntry> Buffet;
+  auto &Buffet = DAR.SI.Buffet;
   auto DFGs = DF.DFGFilter<DFGBase>();
   for (int i = 0; i < (int) DFGs.size(); ++i) { // NOLINT
     auto *DFG = DFGs[i];
     for (auto *MP : DFG->EntryFilter<MemPort>()) {
+      // Only the representative of the coalesced memory operations is analyzed.
+      int Belong = DAR.CMI[i].Belong[MP->ID];
+      if (DAR.CMI[i].Clusters[Belong].front().ID != MP->ID) {
+        continue;
+      }
       const auto *Idx = SE.getSCEV(MP->Load->getPointerOperand());
-      auto LI = analyzeIndexExpr(&SE, Idx, DLIs[i].LoopNest);
-      auto TripCnt = DLIs[i].TripCount;
+      auto LI = analyzeIndexExpr(&SE, Idx, DAR.DLI[i].LoopNest);
+      auto TripCnt = DAR.DLI[i].TripCount;
       int DType = MP->Load->getType()->getScalarSizeInBits() / 8;
       auto Fused = analysis::fuseInnerDimensions(LI, TripCnt, DType, DFG->getUnroll(),
                                                  MP->fillMode(), IB, SE);
@@ -629,11 +635,13 @@ SpadInfo extractSpadFromScope(DFGFile &DF, IntrinsicInst *Start, IntrinsicInst *
             if (auto *CIS3D = dyn_cast<SCEVConstant>(Stride[2])) {
               if (CIS2D->getAPInt().getSExtValue() == 0 && CIS3D->getAPInt().getSExtValue() != 0) {
                 int DType = MP->Load->getType()->getScalarSizeInBits() / 8;
-                int BufferSize = (CIN1D->getAPInt().getSExtValue() + 1) * 2 * DType;
+                int SLPMul = DAR.CMI[i].Clusters[Belong].size();
+                int BufferSize = (CIN1D->getAPInt().getSExtValue() + 1) * 2 * DType * SLPMul;
                 LOG(BUFFET)
                   << Buffet.size() << ": " << MP->dump() << ", "
-                  << (CIN1D->getAPInt().getSExtValue() + 1) << " * " << DType << " * 2\n"
-                  << LI.toString();
+                  << (CIN1D->getAPInt().getSExtValue() + 1) << " * " << SLPMul << " * " << DType
+                  << " * 2 = " << BufferSize << "\n" << LI.toString() << "\n"
+                  << DAR.SI.isSpad(MP->Load);
                 // MP, Total, BufferSize, -1
                 Buffet.emplace_back(MP, Total, BufferSize, -1, -1);
                 Total += BufferSize;
@@ -644,7 +652,6 @@ SpadInfo extractSpadFromScope(DFGFile &DF, IntrinsicInst *Start, IntrinsicInst *
       }
     }
   }
-  return SpadInfo(Offset, Buffet, Total);
 }
 
 void extractDFGFromScope(DFGFile &DF, dsa::xform::CodeGenContext &CGC) {
@@ -918,37 +925,36 @@ int64_t indexPairOffset(const SCEV *SA, const SCEV *SB, ScalarEvolution &SE,
 }
 
 
-std::vector<CoalMemoryInfo> gatherMemoryCoalescing(DFGFile &DF, ScalarEvolution &SE,
-                                                   const std::vector<DFGLoopInfo> &DLIs) {
+void gatherMemoryCoalescing(DFGFile &DF, ScalarEvolution &SE, DFGAnalysisResult &DAR) {
   auto DFGs = DF.DFGFilter<DFGBase>();
-  CHECK(DLIs.size() == DFGs.size());
-  std::vector<CoalMemoryInfo> Res;
-  for (int I = 0; I < (int) DFGs.size(); ++I) {
-    auto &Entries = DFGs[I]->Entries;
-    auto &DLI = DLIs[I];
+  CHECK(DAR.DLI.size() == DFGs.size());
+  auto &Res = DAR.CMI;
+  for (int i = 0; i < (int) DFGs.size(); ++i) { // NOLINT
+    auto &Entries = DFGs[i]->Entries;
+    auto &DLI = DAR.DLI[i];
     std::vector<int> DSU(Entries.size());
-    for (int J = 0; J < (int) DSU.size(); ++J) {
-      DSU[J] = J;
+    for (int j = 0; j < (int) DSU.size(); ++j) { // NOLINT
+      DSU[j] = j;
     }
-    gatherMemoryCoalescingImpl<MemPort>(DFGs[I], SE, DLIs[I], DSU);
-    gatherMemoryCoalescingImpl<PortMem>(DFGs[I], SE, DLIs[I], DSU);
+    gatherMemoryCoalescingImpl<MemPort>(DFGs[i], SE, DLI, DSU);
+    gatherMemoryCoalescingImpl<PortMem>(DFGs[i], SE, DLI, DSU);
     Res.emplace_back();
     CoalMemoryInfo &Current = Res.back();
     Current.Belong.resize(Entries.size(), -1);
     std::map<int, int> DSU2Cluster;
-    for (int J = 0; J < (int) DSU.size(); ++J) {
-      int Set = utils::DSUGetSet(DSU[J], DSU);
+    for (int j = 0; j < (int) DSU.size(); ++j) { // NOLINT
+      int Set = utils::DSUGetSet(DSU[j], DSU);
       if (!DSU2Cluster.count(Set)) {
         DSU2Cluster[Set] = DSU2Cluster[Set] = DSU2Cluster.size();
         Current.Clusters.emplace_back();
         CHECK(Current.Clusters.size() == DSU2Cluster.size());
       }
-      Current.Clusters[DSU2Cluster[Set]].emplace_back(J);
+      Current.Clusters[DSU2Cluster[Set]].emplace_back(j);
       Current.ClusterPortNum.push_back(-1);
-      Current.Belong[J] = DSU2Cluster[Set];
+      Current.Belong[j] = DSU2Cluster[Set];
     }
-    for (int J = 0; J < (int) Current.Clusters.size(); ++J) {
-      auto &Cluster = Current.Clusters[J];
+    for (int j = 0; j < (int) Current.Clusters.size(); ++j) { // NOLINT
+      auto &Cluster = Current.Clusters[j];
       Cluster[0].Offset = 0;
       struct PtrExtractor : DFGEntryVisitor {
         void Visit(MemPort *MP) override {
@@ -978,7 +984,6 @@ std::vector<CoalMemoryInfo> gatherMemoryCoalescing(DFGFile &DF, ScalarEvolution 
       NormalizeOffset();
     }
   }
-  return Res;
 }
 
 bool SpadInfo::isSpad(Value *Ptr) {

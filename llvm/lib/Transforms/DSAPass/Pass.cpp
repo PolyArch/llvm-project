@@ -85,13 +85,12 @@ bool StreamSpecialize::runOnFunction(Function &F) {
     DFGFile DF(Name, Start, End, this);
     dsa::analysis::extractDFGFromScope(DF, CGC);
     dsa::analysis::analyzeDFGLoops(DF, CGC, DAR);
-    std::vector<dsa::analysis::DFGLoopInfo> &DLIs = DAR.DLI;
-    auto CMIs = dsa::analysis::gatherMemoryCoalescing(DF, *SE, DLIs);
-    auto SI = dsa::analysis::extractSpadFromScope(DF, Start, End, DLIs, CGC);
+    dsa::analysis::gatherMemoryCoalescing(DF, *SE, DAR);
+    dsa::analysis::extractSpadFromScope(DF, CGC, DAR);
     {
       std::error_code EC;
       llvm::raw_fd_ostream RFO(DF.getName(), EC);
-      dsa::xform::emitDFG(RFO, &DF, CMIs, SI);
+      dsa::xform::emitDFG(RFO, &DF, DAR.CMI, DAR.SI);
     }
     // If extraction only, we do not schedule and analyze.
     if (dsa::utils::ModuleContext().EXTRACT) {
@@ -109,12 +108,12 @@ bool StreamSpecialize::runOnFunction(Function &F) {
     //   Ports[i].resize(Graphs[i]->Entries.size(), -1);
     // }
     // DF.InspectSPADs();
-    auto CI = dsa::analysis::extractDFGPorts(Name, DF, CMIs, SI);
+    auto CI = dsa::analysis::extractDFGPorts(Name, DF, DAR.CMI, DAR.SI);
     dsa::xform::injectConfiguration(CGC, CI, Start, End);
     if (dsa::utils::ModuleContext().EXTRACT) {
       continue;
     }
-    dsa::xform::injectStreamIntrinsics(CGC, DF, CMIs, SI, DAR);
+    dsa::xform::injectStreamIntrinsics(CGC, DF, DAR.CMI, DAR.SI, DAR);
     DF.eraseOffloadedInstructions();
   }
   if (!dsa::utils::ModuleContext().EXTRACT) {
