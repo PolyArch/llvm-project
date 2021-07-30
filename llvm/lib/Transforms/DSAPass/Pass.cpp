@@ -107,7 +107,6 @@ bool StreamSpecialize::runOnFunction(Function &F) {
     // for (int i = 0, n = Graphs.size(); i < n; ++i) {
     //   Ports[i].resize(Graphs[i]->Entries.size(), -1);
     // }
-    // DF.InspectSPADs();
     auto CI = dsa::analysis::extractDFGPorts(Name, DF, DAR.CMI, DAR.SI);
     dsa::xform::injectConfiguration(CGC, CI, Start, End);
     if (dsa::utils::ModuleContext().EXTRACT) {
@@ -115,7 +114,6 @@ bool StreamSpecialize::runOnFunction(Function &F) {
     }
     dsa::xform::injectStreamIntrinsics(CGC, DF, DAR.CMI, DAR.SI, DAR);
     eraseOffloadedInstructions(DF, CGC);
-    // DF.eraseOffloadedInstructions();
   }
   if (!dsa::utils::ModuleContext().EXTRACT) {
     for (auto &Pair : ScopePairs) {
