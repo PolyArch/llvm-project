@@ -1,5 +1,6 @@
 #include "CodeXform.h"
 #include "DFGAnalysis.h"
+#include "StreamAnalysis.h"
 #include "Util.h"
 
 #include "dsa-ext/rf.h"
@@ -964,40 +965,48 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF,
           continue;
         auto *Ptr0 = dyn_cast<Instruction>(MP->Load->getPointerOperand());
         auto *Ptr1 = dyn_cast<Instruction>(PM->Store->getPointerOperand());
+        auto DType = MP->Load->getType()->getScalarSizeInBits() / 8;
         if (Ptr0 == Ptr1) {
           LOG(CODEGEN) << "Recurrencing: \n" << *MP->Load << "\n" << *PM->Store;
           const auto *SCEV = SE.getSCEV(Ptr0);
           auto Analyzed = dsa::analysis::analyzeIndexExpr(&SE, SE.getSCEV(Ptr0), DLI.LoopNest);
+          auto Fused =
+            dsa::analysis::fuseInnerDimensions(Analyzed, DLI.TripCount, DType,
+                                               MP->Parent->getUnroll(), (Padding) MP->fillMode(),
+                                               CGC.IB, CGC.SE);
+          auto &FLI = Fused.first;
+          auto &LoopN = Fused.second;
           // No repeat!
-          if (Analyzed.partialInvariant() != 0) {
+          if (FLI.partialInvariant() != 0) {
             LOG(CODEGEN) << "Recurrence should not have inner repeat";
             return;
           }
           // Outer should not be stretched!
-          if (!Analyzed.Coef.back().Coef.empty()) {
+          if (!FLI.Coef.back().Coef.empty()) {
             LOG(CODEGEN) << "Recurrence should not be stretched";
             return;
           }
-          if (auto *O = dyn_cast<ConstantInt>(CGC.SEE.expandCodeFor(Analyzed.Coef[1].Base))) {
+          if (auto *O = dyn_cast<ConstantInt>(CGC.SEE.expandCodeFor(FLI.Coef[1].Base))) {
             if (O->getSExtValue()) {
               return;
             }
           }
 
           using LinearInfo = dsa::analysis::LinearInfo;
-          auto DType = MP->Load->getType()->getScalarSizeInBits() / 8;
-          InjectLinearStreamImpl(CGC, SCEV, /*TODO(@were): Support this later*/0,
-                                 std::vector<Loop*>(DLI.LoopNest.begin(), DLI.LoopNest.end() - 1),
-                                 std::vector<LinearInfo>(DLI.TripCount.begin(), DLI.TripCount.end() - 1),
-                                 MP->SoftPortNum, DFG->getUnroll(), DType, DMO_Read,
-                                 (Padding) MP->fillMode(), SI, -1);
+          InjectLinearStreamImpl(
+            CGC, SCEV, /*TODO(@were): Support this later*/0,
+            std::vector<Loop*>(DLI.LoopNest.begin(), DLI.LoopNest.end() - 1),
+            std::vector<LinearInfo>(DLI.TripCount.begin(), DLI.TripCount.end() - 1),
+            MP->SoftPortNum, DFG->getUnroll(), DType, DMO_Read,
+            (Padding) MP->fillMode(), SI, -1);
 
-          if (DLI.TripCount.size() == 2) {
+          if (LoopN.size() == 2) {
             // TODO(@were): Support stretch later.
-            auto *InnerN = CGC.SEE.expandCodeFor(DLI.TripCount[0].Base);
-            auto *OuterN = CGC.SEE.expandCodeFor(DLI.TripCount[1].Base);
-            CGC.SS_RECURRENCE(PM->SoftPortNum, MP->SoftPortNum,
-                              IB->CreateMul(IB->CreateAdd(InnerN, IB->getInt64(1)), OuterN), DType);
+            auto *InnerN = CGC.SEE.expandCodeFor(LoopN[0].Base);
+            auto *OuterN = CGC.SEE.expandCodeFor(LoopN[1].Base);
+            CGC.SS_RECURRENCE(
+              PM->SoftPortNum, MP->SoftPortNum,
+              IB->CreateMul(IB->CreateAdd(InnerN, IB->getInt64(1)), OuterN), DType);
           } else {
             CHECK(false) << "Not supported yet";
           }
@@ -1460,6 +1469,107 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF,
     SAR = IB->CreateIntToPtr(SAR, Elem.first->getType());
     Elem.first->replaceAllUsesWith(SAR);
   }
+}
+
+
+void eraseOffloadedInstructions(DFGFile &DF, CodeGenContext &CGC) {
+
+  std::set<Instruction *> Unique;
+
+  for (auto &DFG : DF.DFGs) {
+    for (auto *Entry : DFG->Entries) {
+
+      // Skip instructions cannot be offloaded because of flags
+      if (isa<IndMemPort>(Entry) && !dsa::utils::ModuleContext().IND) {
+        continue;
+      }
+      if (isa<AtomicPortMem>(Entry) && !dsa::utils::ModuleContext().IND) {
+        continue;
+      }
+      if ((isa<CtrlMemPort>(Entry) || isa<Predicate>(Entry)) &&
+          !dsa::utils::ModuleContext().PRED) {
+        continue;
+      }
+
+      auto F = [&Unique](Instruction *Inst) {
+        bool SS = false;
+        LOG(ERASE) << *Inst;
+        for (auto *User : Inst->users()) {
+          LOG(ERASE) << "user: " << *User;
+          if (auto *Call = dyn_cast<CallInst>(User)) {
+            if (auto *IA = dyn_cast<InlineAsm>(Call->getCalledOperand())) {
+              SS |= IA->getAsmString().find("ss_") == 0;
+            }
+          }
+        }
+        for (size_t i = 0; i < Inst->getNumOperands(); ++i) { // NOLINT
+          auto *Use = Inst->getOperand(i);
+          LOG(ERASE) << "use: " << *Use;
+          if (auto *Call = dyn_cast<CallInst>(Use)) {
+            if (auto *IA = dyn_cast<InlineAsm>(Call->getCalledOperand())) {
+              SS |= IA->getAsmString().find("ss_") == 0;
+            }
+          }
+        }
+        if (!SS) {
+          Unique.insert(Inst);
+          LOG(ERASE) << "DELETE: " << *Inst;
+        }
+      };
+
+      if (auto *P = dyn_cast<Predicate>(Entry)) {
+        for (auto *Elem : P->Cond)
+          F(Elem);
+      } else if (Entry->underlyingInst()) {
+        F(Entry->underlyingInst());
+      }
+    }
+
+    if (auto *DD = dyn_cast<DedicatedDFG>(DFG)) {
+      auto *StreamMD = GetUnrollMetadata(DD->LoopNest.back()->getLoopID(),
+                                        "llvm.loop.ss.stream");
+      auto *BarrierMD = dyn_cast<ConstantAsMetadata>(StreamMD->getOperand(1));
+      if (BarrierMD->getValue()->getUniqueInteger().getSExtValue()) {
+        // Find the "break" finger, and inject the wait at the "break" finger
+        // block's end
+        auto *OutBB = FindLoopPrologue(DD->LoopNest.back());
+        Instruction *I = &OutBB->back();
+        for (; !isa<PHINode>(I); I = I->getPrevNode()) {
+          bool Found = false;
+          for (auto *Elem : DD->InjectedCode) {
+            if (I == Elem) {
+              Found = true;
+              break;
+            }
+          }
+          auto *IB = CGC.IB;
+          if (isa<PHINode>(I) || Found) {
+            IB->SetInsertPoint(I->getNextNode());
+            CGC.SS_WAIT_ALL();
+            break;
+          }
+          if (I == &I->getParent()->front()) {
+            IB->SetInsertPoint(I);
+            CGC.SS_WAIT_ALL();
+            break;
+          }
+        }
+
+      } else {
+        LOG(ERASE) << "No barrier required!";
+      }
+    } else if (auto *TD = dyn_cast<TemporalDFG>(DFG)) {
+      TD->End->eraseFromParent();
+      TD->Begin->eraseFromParent();
+    }
+  }
+
+  for (auto *Inst : Unique) {
+    Inst->replaceAllUsesWith(UndefValue::get(Inst->getType()));
+    Inst->eraseFromParent();
+  }
+
+  LOG(ERASE) << "Rip out all original instrucitons";
 }
 
 } // namespace xform

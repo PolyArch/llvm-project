@@ -159,5 +159,12 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF,
                             std::vector<analysis::CoalMemoryInfo> &CMIs,
                             analysis::SpadInfo &SI, analysis::DFGAnalysisResult &DAR);
 
+/*!
+ *  \brief Erase offloaded instructions.
+ *  \param DF
+ *  \param CGC
+ */
+void eraseOffloadedInstructions(DFGFile &DF, CodeGenContext &CGC);
+
 } // namespace xform
 } // namespace dsa

@@ -114,7 +114,8 @@ bool StreamSpecialize::runOnFunction(Function &F) {
       continue;
     }
     dsa::xform::injectStreamIntrinsics(CGC, DF, DAR.CMI, DAR.SI, DAR);
-    DF.eraseOffloadedInstructions();
+    eraseOffloadedInstructions(DF, CGC);
+    // DF.eraseOffloadedInstructions();
   }
   if (!dsa::utils::ModuleContext().EXTRACT) {
     for (auto &Pair : ScopePairs) {
