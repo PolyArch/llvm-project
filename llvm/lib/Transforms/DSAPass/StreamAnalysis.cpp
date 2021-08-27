@@ -2,6 +2,7 @@
 
 #include "llvm/ADT/BreadthFirstIterator.h"
 #include "llvm/IR/ModuleSlotTracker.h"
+#include "llvm/Support/Casting.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Utils/UnrollLoop.h"
 #include <sstream>
@@ -13,78 +14,81 @@
 namespace dsa {
 namespace analysis {
 
-LinearInfo LinearInfo::loopInvariant(ScalarEvolution *SE, int N, const SCEV *Base) {
-  LinearInfo Res;
-  Res.Base = Base;
-  return Res;
+void IAVisitor::visit(IndexAnalysis*) {}
+
+void IAVisitor::visit(LoopInvariantDim* LID) {
+  IAVisitor::visit(static_cast<IndexAnalysis*>(LID));
 }
 
-const uint64_t *LinearInfo::constInt() const {
-  if (!invariant()) {
-    return nullptr;
-  }
-  const auto *SC = dyn_cast<SCEVConstant>(invariant());
-  if (!SC) {
-    return nullptr;
-  }
-  return SC->getAPInt().getRawData();
+void IAVisitor::visit(LinearCombination* LC) {
+  IAVisitor::visit(static_cast<IndexAnalysis*>(LC));
 }
 
-const SCEV *LinearInfo::invariant() const {
-  return partialInvariant() == (int) Coef.size() ? Base : nullptr;
-}
-
-std::string LinearInfo::toString(const std::vector<Loop *> &Loops) {
+  
+std::string LoopInvariantDim::toString(const std::vector<Loop *> &Loops) const {
   std::string S;
   llvm::raw_string_ostream RSO(S);
-  if (Coef.empty()) {
-    RSO << *Base;
-  } else {
-    CHECK(Loops.empty() || Loops.size() == Coef.size())
-        << Loops.size() << " ? " << Coef.size();
-    RSO << "(";
-    for (int i = 0, N = Coef.size(); i < N; ++i) { // NOLINT
-      if (!Loops.empty()) {
-        if (auto *IndVar = Loops[i]->getCanonicalInductionVariable()) {
-          if (IndVar->hasName()) {
-            RSO << IndVar->getName();
-          } else {
-            ModuleSlotTracker MST(
-                IndVar->getParent()->getParent()->getParent());
-            MST.incorporateFunction(*IndVar->getParent()->getParent());
-            RSO << "%" << MST.getLocalSlot(IndVar);
-          }
+  RSO << *Value;
+  return S;
+}
+
+const uint64_t *LoopInvariantDim::constInt() const {
+  if (auto *SC = dyn_cast<SCEVConstant>(Value)) {
+    return SC->getAPInt().getRawData();
+  }
+  return nullptr;
+}
+
+std::string LinearCombination::toString(const std::vector<Loop *> &Loops) const {
+  std::string S;
+  llvm::raw_string_ostream RSO(S);
+  if (!Loops.empty()) {
+    CHECK(Loops.size() == Coef.size()) << Loops.size() << " ? " << Coef.size();
+  }
+  RSO << "(";
+  for (int i = 0, N = Coef.size(); i < N; ++i) { // NOLINT
+    if (!Loops.empty()) {
+      if (auto *IndVar = Loops[i]->getCanonicalInductionVariable()) {
+        if (IndVar->hasName()) {
+          RSO << IndVar->getName();
         } else {
-          RSO << "i" << i;
+          ModuleSlotTracker MST(
+              IndVar->getParent()->getParent()->getParent());
+          MST.incorporateFunction(*IndVar->getParent()->getParent());
+          RSO << "%" << MST.getLocalSlot(IndVar);
         }
       } else {
         RSO << "i" << i;
       }
-      RSO << " * " << Coef[i].toString(Loops) << " + ";
+    } else {
+      RSO << "i" << i;
     }
-    RSO << *Base << ")";
+    RSO << " * " << Coef[i]->toString(Loops) << " + ";
   }
+  RSO << Base->toString() << ")";
   return RSO.str();
 }
 
-int LinearInfo::partialInvariant() const {
+int LinearCombination::partialInvariant() const {
   for (int i = 0, N = Coef.size(); i < N; ++i) { // NOLINT
-    const auto *CI = Coef[i].constInt();
-    if (CI && *CI == 0) {
-      continue;
+    if (const auto *LID = dyn_cast<LoopInvariantDim>(Coef[i])) {
+      if (const auto *CI = LID->constInt()) {
+        if (CI && *CI == 0) {
+          continue;
+        }
+      }
     }
     return i;
   }
   return Coef.size();
 }
 
-LinearInfo analyzeIndexExpr(ScalarEvolution *SE, const SCEV *Raw,
+IndexAnalysis *analyzeIndexExpr(ScalarEvolution *SE, const SCEV *Raw,
                             const std::vector<Loop *> &Loops) {
-  LinearInfo Res;
+  LinearCombination Res;
   int i = 0; // NOLINT
-  auto AppendZero = [SE, &Res, &Loops]() {
-    auto Coef = LinearInfo::loopInvariant(SE, Loops.size(), SE->getConstant(APInt(64, 0)));
-    Res.Coef.push_back(Coef);
+  auto AppendZero = [SE, &Res]() {
+    Res.Coef.push_back(new LoopInvariantDim(SE->getConstant(APInt(64, 0))));
   };
   for (int N = Loops.size(); i < N; ++i) {
     if (!SE->isLoopInvariant(Raw, Loops[i])) {
@@ -94,10 +98,7 @@ LinearInfo analyzeIndexExpr(ScalarEvolution *SE, const SCEV *Raw,
   }
   if (!isa<SCEVAddRecExpr>(Raw) || i == (int)Loops.size()) {
     CHECK(i == (int)Loops.size()) << i << " != " << Loops.size() << ": " << *Raw;
-    Res.Coef.clear();
-    Res.Coef.shrink_to_fit();
-    Res.Base = Raw;
-    return Res;
+    return new LoopInvariantDim(Raw);
   }
   auto *Cur = Raw;
   for (int N = Loops.size(); i < N; ++i) {
@@ -111,49 +112,70 @@ LinearInfo analyzeIndexExpr(ScalarEvolution *SE, const SCEV *Raw,
           << "\n" << *Raw << "\n" << *Cur << "\nNot an invariant in loop " << *Loops[i]
           << "\nCurrent Loop: " << *SARE->getLoop()
           << "\nOuter Most: " << *Loops.back();
-        auto Coef = LinearInfo::loopInvariant(SE, Loops.size(), SE->getConstant(APInt(64, 0)));
-        Res.Coef.push_back(Coef);
+        AppendZero();
         continue;
       }
       Res.Coef.push_back(analyzeIndexExpr(SE, SARE->getStepRecurrence(*SE), Loops));
       Cur = SARE->getStart();
     } else {
-        CHECK(SE->isLoopInvariant(Cur, Loops[i]))
-          << "\n" << *Raw << "\n" << *Cur << "\nNot an invariant in loop " << *Loops[i];
+      CHECK(SE->isLoopInvariant(Cur, Loops[i]))
+        << "\n" << *Raw << "\n" << *Cur << "\nNot an invariant in loop " << *Loops[i];
       AppendZero();
     }
   }
   CHECK(Res.Coef.size() == Loops.size()) << Res.Coef.size() << " != " << Loops.size();
-  Res.Base = Cur;
-  return Res;
+  Res.Base = new LoopInvariantDim(Cur);
+  bool AllZero = true;
+  for (int i = 0; i < (int) Loops.size(); ++i) { // NOLINT
+    if (auto *LID = dyn_cast<LoopInvariantDim>(Res.Coef[i])) {
+      if (!LID->constInt()) {
+        continue;
+      }
+    }
+    AllZero = false;
+    break;
+  }
+  if (AllZero) {
+    return Res.Base;
+  }
+  return new LinearCombination(Res);
 }
 
 
-std::pair<LinearInfo, std::vector<LinearInfo>>
-fuseInnerDimensions(LinearInfo IdxLI, std::vector<LinearInfo> LoopLI,
+std::pair<IndexAnalysis*, std::vector<IndexAnalysis*>>
+fuseInnerDimensions(IndexAnalysis *IdxLI, std::vector<IndexAnalysis*> LoopLI,
                     int DType, int Unroll, int P, IRBuilder<> *IB, ScalarEvolution &SE) {
-  if (IdxLI.Coef.empty()) {
+  if (isa<LoopInvariantDim>(IdxLI)) {
     return {IdxLI, LoopLI};
   }
+  auto ExtractConstInt = [](IndexAnalysis *IA) -> const uint64_t* {
+    if (const auto *LID = dyn_cast<LoopInvariantDim>(IA)) {
+      return LID->constInt();
+    }
+    return nullptr;
+  };
+  auto *LC = dyn_cast<LinearCombination>(IdxLI);
   while (LoopLI.size() > 1) {
-    if (const auto *S1D = IdxLI.Coef.front().constInt()) {
+    if (auto *S1D = ExtractConstInt(LC->Coef.front())) {
       if (((int) *S1D) == DType) {
-        if (const auto *N = LoopLI[0].constInt()) {
+        if (const auto *N = ExtractConstInt(LoopLI[0])) {
           if ((*N + 1) % Unroll) {
             break;
           }
-          if (const auto *S2D = IdxLI.Coef[1].constInt()) {
+          if (const auto *S2D = ExtractConstInt(LC->Coef[1])) {
             // TODO(@were): Relax this condition.
-            if (LoopLI[1].invariant()) {
+            if (auto *N2D = dyn_cast<LoopInvariantDim>(LoopLI[1])) {
               if ((*S1D) * (*N + 1) == *S2D) {
                 LoopLI.erase(LoopLI.begin());
-                IdxLI.Coef.erase(IdxLI.Coef.begin());
-                IdxLI.Coef.front().Base = SE.getConstant(IB->getInt64(DType));
+                LC->Coef.erase(LC->Coef.begin());
+                LC->Coef.front() = new LoopInvariantDim(SE.getConstant(IB->getInt64(DType)));
                 auto *SCEVN = SE.getConstant(IB->getInt64(*N + 1));
                 auto *SCEVNegOne = SE.getConstant(IB->getInt64(-1));
-                LoopLI.front().Base = SE.getMulExpr(LoopLI.front().Base, SCEVN);
-                LoopLI.front().Base = SE.getAddExpr(LoopLI.front().Base, SCEVN);
-                LoopLI.front().Base = SE.getAddExpr(LoopLI.front().Base, SCEVNegOne);
+                auto *NewN2D = N2D->Value;
+                NewN2D = SE.getMulExpr(NewN2D, SCEVN);
+                NewN2D = SE.getAddExpr(NewN2D, SCEVN);
+                NewN2D = SE.getAddExpr(NewN2D, SCEVNegOne);
+                LoopLI[0] = new LoopInvariantDim(NewN2D); // No modification, redefine.
                 continue;
               }
             }
@@ -185,14 +207,14 @@ struct StreamAnalysisPass : public FunctionPass {
         if (auto *Load = dyn_cast<LoadInst>(&I)) {
           auto *Index = Load->getPointerOperand();
           CHECK(SE->isSCEVable(Index->getType()));
-          auto LI = analyzeIndexExpr(SE, SE->getSCEV(Index), Loops);
-          DSA_LOG(LOOP) << LI.toString();
+          const auto *IA = analyzeIndexExpr(SE, SE->getSCEV(Index), Loops);
+          DSA_LOG(LOOP) << IA->toString();
         }
       }
     }
     for (auto *L : Loops) {
-      auto LI = analyzeIndexExpr(SE, SE->getBackedgeTakenCount(L), Loops);
-      DSA_LOG(LOOP) << LI.toString();
+      const auto *IA = analyzeIndexExpr(SE, SE->getBackedgeTakenCount(L), Loops);
+      DSA_LOG(LOOP) << IA->toString();
     }
   }
 

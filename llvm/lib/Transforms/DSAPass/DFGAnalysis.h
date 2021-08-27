@@ -92,11 +92,11 @@ struct DFGLoopInfo {
   /*!
    * \brief The trip count of each loop level, corresponding to the loop nest above.
    */
-  std::vector<analysis::LinearInfo> TripCount;
+  std::vector<analysis::IndexAnalysis*> TripCount;
 
   DFGLoopInfo() {}
 
-  DFGLoopInfo(const std::vector<Loop*> &L, const std::vector<analysis::LinearInfo> &T) :
+  DFGLoopInfo(const std::vector<Loop*> &L, const std::vector<analysis::IndexAnalysis*> &T) :
     LoopNest(L), TripCount(T) {}
 };
 

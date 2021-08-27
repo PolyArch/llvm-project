@@ -5,6 +5,7 @@
 #include <string>
 #include <tuple>
 
+#include "llvm/IR/IRBuilder.h"
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/IR/Constant.h"
 #include "llvm/IR/Instructions.h"

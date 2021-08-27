@@ -615,21 +615,35 @@ void extractSpadFromScope(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisRe
         continue;
       }
       const auto *Idx = SE.getSCEV(MP->Load->getPointerOperand());
-      auto LI = analyzeIndexExpr(&SE, Idx, DAR.DLI[i].LoopNest);
+      auto *LI = analyzeIndexExpr(&SE, Idx, DAR.DLI[i].LoopNest);
       auto TripCnt = DAR.DLI[i].TripCount;
       int DType = MP->Load->getType()->getScalarSizeInBits() / 8;
       auto Fused = analysis::fuseInnerDimensions(LI, TripCnt, DType, DFG->getUnroll(),
                                                  MP->fillMode(), IB, SE);
-      LI = Fused.first;
+      auto *LC = dyn_cast<LinearCombination>(Fused.first);
+      if (!LI) {
+        continue;
+      }
       TripCnt = Fused.second;
-      int PI = LI.partialInvariant();
+      int PI = LC->partialInvariant();
       std::vector<const SCEV*> N;
       std::vector<const SCEV*> Stride;
+      bool Rectangular = true;
       for (int j = PI; j < (int) TripCnt.size(); ++j) { // NOLINT
-        N.push_back(TripCnt[j].Base);
-        Stride.push_back(LI.Coef[j].Base);
+        auto *LID = dyn_cast<LoopInvariantDim>(TripCnt[j]);
+        if (!LID) {
+          Rectangular = false;
+          break;
+        }
+        N.push_back(LID->Value);
+        auto *StrideI = dyn_cast<LoopInvariantDim>(LC->Coef[j]);
+        CHECK(StrideI);
+        Stride.push_back(StrideI->Value);
       }
-      if (LI.Coef.size() - PI == 3) {
+      if (!Rectangular) {
+        continue;
+      }
+      if (LC->Coef.size() - PI == 3) {
         if (auto *CIS2D = dyn_cast<SCEVConstant>(Stride[1])) {
           if (auto *CIN1D = dyn_cast<SCEVConstant>(N[0])) {
             if (auto *CIS3D = dyn_cast<SCEVConstant>(Stride[2])) {
@@ -640,7 +654,7 @@ void extractSpadFromScope(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisRe
                 DSA_LOG(BUFFET)
                   << Buffet.size() << ": " << MP->dump() << ", "
                   << (CIN1D->getAPInt().getSExtValue() + 1) << " * " << SLPMul << " * " << DType
-                  << " * 2 = " << BufferSize << "\n" << LI.toString() << "\n"
+                  << " * 2 = " << BufferSize << "\n" << LC->toString() << "\n"
                   << DAR.SI.isSpad(MP->Load);
                 // MP, Total, BufferSize, -1
                 Buffet.emplace_back(MP, Total, BufferSize, -1, -1);
@@ -875,8 +889,11 @@ void analyzeDFGLoops(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisResult 
       DLI.LoopNest = LoopNest;
       for (int I = 0; I < (int) LoopNest.size(); ++I) {
         auto *NSCEV = SE.getBackedgeTakenCount(LoopNest[I]);
-        CHECK(!isa<SCEVCouldNotCompute>(NSCEV));
-        DLI.TripCount.push_back(analysis::analyzeIndexExpr(&SE, NSCEV, LoopNest));
+        if (!isa<SCEVCouldNotCompute>(NSCEV)) {
+          DLI.TripCount.push_back(nullptr);
+        } else {
+          DLI.TripCount.push_back(analysis::analyzeIndexExpr(&SE, NSCEV, LoopNest));
+        }
       }
     }
 
@@ -898,21 +915,29 @@ void analyzeDFGLoops(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisResult 
 
 int64_t indexPairOffset(const SCEV *SA, const SCEV *SB, ScalarEvolution &SE,
                         const DFGLoopInfo &DLI, bool Signed) {
-  auto A = analyzeIndexExpr(&SE, SA, DLI.LoopNest);
-  auto B = analyzeIndexExpr(&SE, SB, DLI.LoopNest);
+  auto *A = dyn_cast<LinearCombination>(analyzeIndexExpr(&SE, SA, DLI.LoopNest));
+  auto *B = dyn_cast<LinearCombination>(analyzeIndexExpr(&SE, SB, DLI.LoopNest));
   bool SameDims = true;
-  if (A.Coef.size() != B.Coef.size()) {
+  if (!A || !B || A->Coef.size() != B->Coef.size()) {
     CHECK(!Signed);
     return -1;
   }
-  for (int J = 0; J < (int) A.Coef.size(); ++J) {
-    if (A.Coef[J].Base != B.Coef[J].Base) {
-      DSA_LOG(COAL) << *SE.getEqualPredicate(A.Coef[J].Base, B.Coef[J].Base);
+  for (int j = 0; j < (int) A->Coef.size(); ++j) { // NOLINT
+    auto *LIDA = dyn_cast<LoopInvariantDim>(A->Coef[j]);
+    auto *LIDB = dyn_cast<LoopInvariantDim>(B->Coef[j]);
+    // TODO(@were): More strict equal check!
+    if (LIDA->Value != LIDB->Value) {
+      DSA_LOG(COAL) << *SE.getEqualPredicate(LIDA->Value, LIDB->Value);
       SameDims = false;
     }
   }
   if (SameDims) {
-    if (auto *Offset = dyn_cast<SCEVConstant>(SE.getAddExpr(B.Base, SE.getNegativeSCEV(A.Base)))) {
+    auto *ABase = dyn_cast<LoopInvariantDim>(A->Base);
+    CHECK(ABase);
+    auto *BBase = dyn_cast<LoopInvariantDim>(B->Base);
+    CHECK(BBase);
+    auto *NegA = SE.getNegativeSCEV(ABase->Value);
+    if (auto *Offset = dyn_cast<SCEVConstant>(SE.getAddExpr(BBase->Value, NegA))) {
       auto Res = Offset->getAPInt().getSExtValue();
       return Signed ? Res : std::abs(Res);
     }

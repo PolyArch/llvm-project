@@ -4,6 +4,7 @@
 #include "Util.h"
 
 #include "dsa-ext/rf.h"
+#include "llvm/Support/Casting.h"
 
 // raw_ostream &operator<<(raw_ostream &os, DFGEntry &DE) {
 //   os << "# [" << dsa::xform::KindStr[DE.Kind] << "]" << " DFG" <<
@@ -145,6 +146,35 @@ static std::vector<DFGEntry *> ReorderEntries(DFGBase *DB) { // NOLINT
   }
   return Res;
 }
+
+struct InitBaseExtractor : analysis::IAVisitor {
+  void visit(analysis::IndexAnalysis *IA) override {
+    CHECK(false);
+  }
+
+  void visit(analysis::LoopInvariantDim *LID) override {
+    Base = LID->Value;
+  }
+
+  void visit(analysis::LinearCombination *LC) override {
+    if (auto *LID = dyn_cast<analysis::LoopInvariantDim>(LC->Base)) {
+      Base = LID->Value;
+    } else {
+      CHECK(false);
+    }
+  }
+
+  const SCEV *Base{nullptr};
+};
+
+struct ConstExtractor : analysis::IAVisitor {
+
+  void visit(analysis::LoopInvariantDim *LID) override {
+    CI = LID->constInt();
+  }
+
+  const uint64_t *CI{nullptr};
+};
 
 struct DFGPrinter : dsa::DFGVisitor {
 
@@ -714,8 +744,7 @@ void injectConfiguration(CodeGenContext &CGC, analysis::ConfigInfo &CI,
  * \param Unroll The unrolling degree.
  */
 std::pair<Value*, Value*>
-InjectComputedRepeat(CodeGenContext &CGC, // NOLINT
-                     std::vector<dsa::analysis::LinearInfo> Loops, int N,
+injectComputedRepeat(CodeGenContext &CGC, std::vector<dsa::analysis::IndexAnalysis*> Loops, int N,
                      int Unroll) {
   auto *IB = CGC.IB;
   auto &SEE = CGC.SEE;
@@ -724,24 +753,39 @@ InjectComputedRepeat(CodeGenContext &CGC, // NOLINT
 
   switch (N) {
   case 1: {
-    if (!Loops[0].Coef.empty()) {
-      Stretch = SEE.expandCodeFor(Loops[0].Coef[1].Base);
+    if (auto *LC = dyn_cast<analysis::LinearCombination>(Loops[0])) {
+      auto *LID = dyn_cast<analysis::LoopInvariantDim>(LC->Coef[1]);
+      CHECK(LID) << "Stretch should be a loop invariant.";
+      Stretch = SEE.expandCodeFor(LID->Value);
       Stretch = IB->CreateMul(Stretch, IB->getInt64(1 << DSA_REPEAT_DIGITAL_POINT));
       Stretch = IB->CreateSDiv(Stretch, IB->getInt64(Unroll));
+      auto *Init = dyn_cast<analysis::LoopInvariantDim>(LC->Base);
+      Repeat = IB->CreateAdd(SEE.expandCodeFor(Init->Value), IB->getInt64(1));
+    } else {
+      auto *LID = dyn_cast<analysis::LoopInvariantDim>(Loops[0]);
+      Repeat = IB->CreateAdd(SEE.expandCodeFor(LID->Value), IB->getInt64(1));
     }
-    auto *Dim0 = IB->CreateAdd(SEE.expandCodeFor(Loops[0].Base), IB->getInt64(1));
-    Repeat = CeilDiv(Dim0, IB->getInt64(Unroll), IB);
+    Repeat = CeilDiv(Repeat, IB->getInt64(Unroll), IB);
     DSA_LOG(CODEGEN) << *Repeat;
     break;
   }
   case 2: {
-    auto *Dim0 = IB->CreateAdd(SEE.expandCodeFor(Loops[0].Base), IB->getInt64(1));
-    auto *Dim1 = IB->CreateAdd(SEE.expandCodeFor(Loops[1].Base), IB->getInt64(1));
-    CHECK(Loops[1].Coef.empty());
-    if (!Loops[0].Coef.empty()) {
+    auto *LID1 = dyn_cast<analysis::LoopInvariantDim>(Loops[1]);
+    CHECK(LID1);
+    auto *Dim1 = IB->CreateAdd(SEE.expandCodeFor(LID1->Value), IB->getInt64(1));
+    if (auto *LID0 = dyn_cast<analysis::LoopInvariantDim>(Loops[0])) {
+      auto *Dim0 = IB->CreateAdd(SEE.expandCodeFor(LID0->Value), IB->getInt64(1));
+      Repeat = IB->CreateMul(CeilDiv(Dim0, IB->getInt64(Unroll), IB), Dim1);
+      DSA_LOG(CODEGEN) << *Repeat;
+    } else if (auto *LC = dyn_cast<analysis::LinearCombination>(Loops[0])) {
       if (Unroll == 1) {
         // (Dim0 + Dim0 + (Dim1 - 1) * Stretch) * Dim1 / 2
-        Stretch = SEE.expandCodeFor(Loops[0].Coef[1].Base);
+        auto *StretchLID = dyn_cast<analysis::LoopInvariantDim>(LC->Coef[1]);
+        CHECK(StretchLID);
+        auto *InitLID = dyn_cast<analysis::LoopInvariantDim>(LC->Base);
+        CHECK(InitLID);
+        auto *Dim0 = IB->CreateAdd(SEE.expandCodeFor(InitLID->Value), IB->getInt64(1));
+        Stretch = SEE.expandCodeFor(StretchLID->Value);
         auto *Dim0x2 = IB->CreateAdd(Dim0, Dim0);
         auto *Delta = IB->CreateMul(Stretch, IB->CreateSub(Dim1, IB->getInt64(1)));
         auto *Last = IB->CreateAdd(Dim0x2, Delta);
@@ -752,8 +796,7 @@ InjectComputedRepeat(CodeGenContext &CGC, // NOLINT
         CHECK(false) << "Support this later...";
       }
     } else {
-      Repeat = IB->CreateMul(CeilDiv(Dim0, IB->getInt64(Unroll), IB), Dim1);
-      DSA_LOG(CODEGEN) << *Repeat;
+      CHECK(false) << Loops[0]->toString();
     }
     break;
   }
@@ -766,16 +809,16 @@ InjectComputedRepeat(CodeGenContext &CGC, // NOLINT
 
 void InjectLinearStreamImpl(CodeGenContext &CGC, const SCEV *Idx, int MaxOffset, // NOLINT
                             std::vector<Loop*> LoopNest,
-                            std::vector<dsa::analysis::LinearInfo> LoopLI,
+                            std::vector<dsa::analysis::IndexAnalysis*> LoopLI,
                             int Port, int Unroll, int DType, MemoryOperation MO,
                             Padding P, analysis::SpadInfo &SI, int BuffetIdx) {
 
-  auto InjectRepeat = [&CGC](analysis::LinearInfo LI,
-                             const std::vector<analysis::LinearInfo> &Loops,
+  auto InjectRepeat = [&CGC](analysis::IndexAnalysis *IA,
+                             const std::vector<analysis::IndexAnalysis*> &Loops,
                              int Port, int Unroll) {
-    CHECK(Loops.size() == LI.Coef.size() || LI.Coef.empty());
-    int N = LI.Coef.empty() ? Loops.size() : LI.partialInvariant();
-    auto CR = InjectComputedRepeat(CGC, Loops, N, Unroll);
+    auto *LC = dyn_cast<analysis::LinearCombination>(IA);
+    int N = !LC ? Loops.size() : LC->partialInvariant();
+    auto CR = injectComputedRepeat(CGC, Loops, N, Unroll);
     auto *Repeat = CR.first;
     auto *Stretch = CR.second;
     if (auto *CI = dyn_cast<ConstantInt>(Repeat)) {
@@ -790,34 +833,41 @@ void InjectLinearStreamImpl(CodeGenContext &CGC, const SCEV *Idx, int MaxOffset,
     }
   };
 
-  auto LinearInstantiation = [&CGC](analysis::LinearInfo LI,
-                                    const std::vector<analysis::LinearInfo> &Loops, int Port,
+  auto LinearInstantiation = [&CGC](analysis::IndexAnalysis *IA,
+                                    const std::vector<analysis::IndexAnalysis*> &Loops, int Port,
                                     MemoryOperation MO, Padding P, analysis::SpadInfo &SI,
                                     int BuffetIdx, int DType) {
-    auto *IB = CGC.IB;
     auto &SEE = CGC.SEE;
-    auto *Start = SEE.expandCodeFor(LI.Base);
+    auto *IB = CGC.IB;
+    Value *Start;
+    if (auto *LID = dyn_cast<analysis::LoopInvariantDim>(IA)) {
+      Start = SEE.expandCodeFor(LID->Value);
+      CGC.INSTANTIATE_1D_STREAM(Start, IB->getInt64(0), IB->getInt64(1), Port, P, DSA_Access, MO,
+                                SI.isSpad(Start) ? DMT_SPAD : DMT_DMA, DType, 0);
+      return;
+    }
+    auto *LC = dyn_cast<analysis::LinearCombination>(IA);
+    auto *StartLID = dyn_cast<analysis::LoopInvariantDim>(LC->Base);
+    CHECK(StartLID);
+    Start = SEE.expandCodeFor(StartLID->Value);
     auto MT = SI.isSpad(Start) ? DMT_SPAD : DMT_DMA;
-    if (LI.Coef.empty()) {
-      CGC.INSTANTIATE_1D_STREAM(SEE.expandCodeFor(LI.Base), IB->getInt64(0),
-                                IB->getInt64(1), Port, P, DSA_Access, MO, MT,
-                                DType, 0);
-      return;
-    }
-    int Dim = Loops.size() - LI.partialInvariant();
+    int Dim = Loops.size() - LC->partialInvariant();
     CHECK(0 <= Dim && Dim <= 3) << Dim;
-    if (const auto *LII = LI.invariant()) {
-      CGC.INSTANTIATE_1D_STREAM(SEE.expandCodeFor(LII), IB->getInt64(0),
-                                IB->getInt64(1), Port, P, DSA_Access, MO, MT,
-                                DType, 0);
-      return;
-    }
-    int i = LI.partialInvariant(); // NOLINT
+    int i = LC->partialInvariant(); // NOLINT
     std::vector<Value*> N;
     std::vector<Value*> Stride;
     for (int j = i; j < (int) Loops.size(); ++j) { // NOLINT
-      N.push_back(IB->CreateAdd(SEE.expandCodeFor(Loops[j].Base), IB->getInt64(1)));
-      Stride.push_back(SEE.expandCodeFor(LI.Coef[j].Base));
+      {
+        InitBaseExtractor IBE;
+        Loops[j]->accept(&IBE);
+        CHECK(IBE.Base);
+        N.push_back(IB->CreateAdd(SEE.expandCodeFor(IBE.Base), IB->getInt64(1)));
+      }
+      {
+        InitBaseExtractor IBE;
+        LC->Coef[j]->accept(&IBE);
+        Stride.push_back(SEE.expandCodeFor(IBE.Base));
+      }
     }
     switch (Dim) {
     case 0: {
@@ -840,8 +890,10 @@ void InjectLinearStreamImpl(CodeGenContext &CGC, const SCEV *Idx, int MaxOffset,
       auto *Stride1D = IB->CreateSDiv(Stride[0], IB->getInt64(DType));
       // TODO(@were): Make assumption check!
       Value *Stretch = IB->getInt64(0);
-      if (!Loops[i].Coef.empty()) {
-        Stretch = SEE.expandCodeFor(Loops[i].Coef[i + 1].Base);
+      if (auto *TripCntLC = dyn_cast<analysis::LinearCombination>(Loops[i])) {
+        auto *LID = dyn_cast<analysis::LoopInvariantDim>(TripCntLC->Coef[i + 1]);
+        CHECK(LID);
+        Stretch = SEE.expandCodeFor(LID->Value);
       }
       auto *N2D = N[1];
       auto *Stride2D = IB->CreateSDiv(Stride[1], IB->getInt64(DType));
@@ -907,42 +959,55 @@ void InjectLinearStreamImpl(CodeGenContext &CGC, const SCEV *Idx, int MaxOffset,
     }
   };
 
-  auto IdxLI = dsa::analysis::analyzeIndexExpr(&CGC.SE, Idx, LoopNest);
+  auto *IdxLI = dsa::analysis::analyzeIndexExpr(&CGC.SE, Idx, LoopNest);
   if (MO == MemoryOperation::DMO_Read) {
     InjectRepeat(IdxLI, LoopLI, Port, Unroll);
   }
-  int PI = IdxLI.partialInvariant();
-  IdxLI.Coef.erase(IdxLI.Coef.begin(), IdxLI.Coef.begin() + PI);
-  if (IdxLI.Coef.empty()) {
-    LoopLI.clear();
-  } else {
-    LoopLI.erase(LoopLI.begin(), LoopLI.begin() + PI);
-  }
-  if (MaxOffset) {
-    LoopLI.insert(LoopLI.begin(), analysis::LinearInfo());
-    LoopLI.front().Base = CGC.SE.getConstant(CGC.IB->getInt64(MaxOffset / DType));
-    IdxLI.Coef.insert(IdxLI.Coef.begin(), analysis::LinearInfo());
-    IdxLI.Coef[0].Base = CGC.SE.getConstant(CGC.IB->getInt64(DType));
-    // If it used to be a constant, we need to make the higher dimensions to be zero-padded.
-    if (IdxLI.Coef.size() == 1) {
-      auto *SCEVZero = CGC.SE.getConstant(CGC.IB->getInt64(0));
-      analysis::LinearInfo ZeroDim = analysis::LinearInfo::loopInvariant(&CGC.SE, -1, SCEVZero);
-      IdxLI.Coef.reserve(LoopLI.size());
-      while (IdxLI.Coef.size() < LoopLI.size()) {
-        IdxLI.Coef.push_back(ZeroDim);
+
+  struct PreprocessBeforeEmission : analysis::IAVisitor {
+    void visit(analysis::LinearCombination *LC) {
+      int PI = LC->partialInvariant();
+      LC->Coef.erase(LC->Coef.begin(), LC->Coef.begin() + PI);
+      LoopLI.erase(LoopLI.begin(), LoopLI.begin() + PI);
+      if (MaxOffset) {
+        auto *TripCnt = SE.getConstant(IB->getInt64(MaxOffset / DType));
+        LoopLI.insert(LoopLI.begin(), new analysis::LoopInvariantDim(TripCnt));
+        auto *Stride1D = SE.getConstant(IB->getInt64(DType));
+        LC->Coef.insert(LC->Coef.begin(), new analysis::LoopInvariantDim(Stride1D));
+        // If it used to be a constant, we need to make the higher dimensions to be zero-padded.
+        if (LC->Coef.size() == 1) {
+          auto *SCEVZero = SE.getConstant(IB->getInt64(0));
+          auto *ZeroDim = new analysis::LoopInvariantDim(SCEVZero);
+          LC->Coef.reserve(LoopLI.size());
+          while (LC->Coef.size() < LoopLI.size()) {
+            LC->Coef.push_back(ZeroDim);
+          }
+        }
+        DSA_LOG(SLP) << "Info After SLP: " << LC->toString();
+        for (int i = 0; i < (int) LoopLI.size(); ++i) { // NOLINT
+          DSA_LOG(SLP) << "i" << i << ": " << LoopLI[i]->toString();
+        }
       }
     }
-    DSA_LOG(SLP) << "Info After SLP: " << IdxLI.toString();
-    for (int i = 0; i < (int) LoopLI.size(); ++i) { // NOLINT
-      DSA_LOG(SLP) << "i" << i << ": " << LoopLI[i].toString();
-    }
-  }
+
+    PreprocessBeforeEmission(int D, int M, std::vector<dsa::analysis::IndexAnalysis*> &LoopLI,
+                             ScalarEvolution &SE, IRBuilder<> *IB) :
+      DType(D), MaxOffset(M), LoopLI(LoopLI), SE(SE), IB(IB) {}
+
+    int DType;
+    int MaxOffset;
+    std::vector<dsa::analysis::IndexAnalysis*> &LoopLI;
+    ScalarEvolution &SE;
+    IRBuilder<> *IB;
+  };
+  PreprocessBeforeEmission PBE(DType, MaxOffset, LoopLI, CGC.SE, CGC.IB);
+  IdxLI->accept(&PBE);
   auto Fused =  analysis::fuseInnerDimensions(IdxLI, LoopLI, DType, Unroll, 0, CGC.IB, CGC.SE);
   IdxLI = Fused.first;
   LoopLI = Fused.second;
-  DSA_LOG(SLP) << "Info After Dim Coal: " << IdxLI.toString();
+  DSA_LOG(SLP) << "Info After Dim Coal: " << IdxLI->toString();
   for (int i = 0; i < (int) LoopLI.size(); ++i) { // NOLINT
-    DSA_LOG(SLP) << "i" << i << ": " << LoopLI[i].toString();
+    DSA_LOG(SLP) << "i" << i << ": " << LoopLI[i]->toString();
   }
   LinearInstantiation(IdxLI, LoopLI, Port, MO, P, SI, BuffetIdx, DType);
 }
@@ -976,46 +1041,59 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF,
         if (Ptr0 == Ptr1) {
           DSA_LOG(CODEGEN) << "Recurrencing: \n" << *MP->Load << "\n" << *PM->Store;
           const auto *SCEV = SE.getSCEV(Ptr0);
-          auto Analyzed = dsa::analysis::analyzeIndexExpr(&SE, SE.getSCEV(Ptr0), DLI.LoopNest);
+          auto *Analyzed = dsa::analysis::analyzeIndexExpr(&SE, SE.getSCEV(Ptr0), DLI.LoopNest);
           auto Fused =
             dsa::analysis::fuseInnerDimensions(Analyzed, DLI.TripCount, DType,
                                                MP->Parent->getUnroll(), (Padding) MP->fillMode(),
                                                CGC.IB, CGC.SE);
-          auto &FLI = Fused.first;
-          auto &LoopN = Fused.second;
+          auto *FLI = dyn_cast<analysis::LinearCombination>(Fused.first);
+          if (!FLI) {
+            return;
+          }
+          auto LoopN = Fused.second;
           // No repeat!
-          if (FLI.partialInvariant() != 0) {
+          if (FLI->partialInvariant() != 0) {
             DSA_LOG(CODEGEN) << "Recurrence should not have inner repeat";
             return;
           }
-          if (FLI.Coef.size() != 2) {
+          if (FLI->Coef.size() != 2) {
             DSA_LOG(CODEGEN) << "Not a two dimension update and reduce";
             return;
           }
           // Outer should not be stretched!
-          if (!FLI.Coef.back().Coef.empty()) {
+          if (!isa<analysis::LoopInvariantDim>(FLI->Coef.back())) {
             DSA_LOG(CODEGEN) << "Recurrence should not be stretched";
             return;
           }
-          if (auto *O = dyn_cast<ConstantInt>(CGC.SEE.expandCodeFor(FLI.Coef[1].Base))) {
-            if (O->getSExtValue()) {
+          {
+            ConstExtractor CE;
+            FLI->Coef[1]->accept(&CE);
+            if (CE.CI && *CE.CI) {
               DSA_LOG(CODEGEN) << "Not a repeated update!";
               return;
             }
           }
 
-          using LinearInfo = dsa::analysis::LinearInfo;
           InjectLinearStreamImpl(
             CGC, SCEV, /*TODO(@were): Support this later*/0,
             std::vector<Loop*>(DLI.LoopNest.begin(), DLI.LoopNest.end() - 1),
-            std::vector<LinearInfo>(DLI.TripCount.begin(), DLI.TripCount.end() - 1),
+            std::vector<analysis::IndexAnalysis*>(DLI.TripCount.begin(), DLI.TripCount.end() - 1),
             MP->SoftPortNum, DFG->getUnroll(), DType, DMO_Read,
             (Padding) MP->fillMode(), SI, -1);
 
           if (LoopN.size() == 2) {
             // TODO(@were): Support stretch later.
-            auto *InnerN = CGC.SEE.expandCodeFor(LoopN[0].Base);
-            auto *OuterN = CGC.SEE.expandCodeFor(LoopN[1].Base);
+            Value *InnerN = nullptr, *OuterN = nullptr;
+            {
+              InitBaseExtractor IBE;
+              LoopN[0]->accept(&IBE);
+              InnerN = CGC.SEE.expandCodeFor(IBE.Base);
+            }
+            {
+              InitBaseExtractor IBE;
+              LoopN[1]->accept(&IBE);
+              OuterN = CGC.SEE.expandCodeFor(IBE.Base);
+            }
             CGC.SS_RECURRENCE(
               PM->SoftPortNum, MP->SoftPortNum,
               IB->CreateMul(IB->CreateAdd(InnerN, IB->getInt64(1)), OuterN), DType);
@@ -1026,14 +1104,16 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF,
           InjectLinearStreamImpl(
             CGC, SCEV, /*TODO(@were): Support this later*/0,
             std::vector<Loop*>(DLI.LoopNest.begin(), DLI.LoopNest.end() - 1),
-            std::vector<LinearInfo>(DLI.TripCount.begin(), DLI.TripCount.end() - 1),
+            std::vector<analysis::IndexAnalysis*>(DLI.TripCount.begin(), DLI.TripCount.end() - 1),
             PM->SoftPortNum, DFG->getUnroll(), DType, DMO_Write, (Padding) 0, SI, -1);
 
           // Performance Model
           int II = 1;
           int Conc = -1;
-          if (auto *CI = dyn_cast<ConstantInt>(CGC.SEE.expandCodeFor(DLI.TripCount[0].Base))) {
-            auto CII = CI->getZExtValue();
+          ConstExtractor CE;
+          DLI.TripCount[0]->accept(&CE);
+          if (CE.CI) {
+            auto CII = *CE.CI;
             int CanHide = CII * DType;
             if (PM->Latency - CanHide > 0) {
               II = PM->Latency - CanHide;
@@ -1206,7 +1286,7 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF,
           << *IC->Val << " is not a loop invariant under " << *LoopNest[i];
       }
       auto CR =
-        InjectComputedRepeat(CGC, DLI.TripCount, DLI.TripCount.size(), IC->Parent->getUnroll());
+        injectComputedRepeat(CGC, DLI.TripCount, DLI.TripCount.size(), IC->Parent->getUnroll());
       CHECK(!CR.second) << "Should not be stretched!";
       CGC.SS_CONST(IC->SoftPortNum, IC->Val, CR.first,
                    IC->Val->getType()->getScalarSizeInBits() / 8);
@@ -1236,7 +1316,9 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF,
 
       auto &SEE = CGC.SEE;
       auto *IB = CGC.IB;
-      auto *Rep = IB->CreateAdd(SEE.expandCodeFor(DLI.TripCount[0].Base), IB->getInt64(1));
+      auto *N0 = dyn_cast<analysis::LoopInvariantDim>(DLI.TripCount[0]);
+      CHECK(N0);
+      auto *Rep = IB->CreateAdd(SEE.expandCodeFor(N0->Value), IB->getInt64(1));
       Rep = CeilDiv(Rep, IB->getInt64(CS->Parent->getUnroll()), IB);
       OutputPort *OP = nullptr;
       for (auto *Entry : CS->Parent->EntryFilter<OutputPort>()) {
@@ -1254,7 +1336,9 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF,
       bool UseLevel = false;
       for (int i = 1; i < (int) DLI.TripCount.size(); ++i) { // NOLINT
         DSA_LOG(CTRL_SIGNAL) << "Loop: " << *DLI.LoopNest[i];
-        auto *TripCnt = IB->CreateAdd(SEE.expandCodeFor(DLI.TripCount[i].Base), IB->getInt64(1));
+        auto *DimI = dyn_cast<analysis::LoopInvariantDim>(DLI.TripCount[i]);
+        CHECK(DimI);
+        auto *TripCnt = IB->CreateAdd(SEE.expandCodeFor(DimI->Value), IB->getInt64(1));
         UseLevel = DLI.LoopNest[i]->contains(OP->underlyingInst());
         if (UseLevel) {
           DSA_LOG(CTRL_SIGNAL) << "Outer!";
@@ -1356,14 +1440,16 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF,
             break;
           }
         }
-        auto Repeat = InjectComputedRepeat(CGC, DLI.TripCount, i, DD->getUnroll());
+        auto Repeat = injectComputedRepeat(CGC, DLI.TripCount, i, DD->getUnroll());
         CGC.SS_REPEAT_PORT(SIP->SoftPortNum, Repeat.first);
         if (Repeat.second) {
           CGC.SS_CONFIG_PORT(SIP->SoftPortNum, DPF_PortRepeatStretch, Repeat.second);
         }
         Value *N = IB->getInt64(1);
         for (; i < (int) DLI.LoopNest.size(); ++i) {
-          N = IB->CreateMul(N, IB->CreateAdd(SEE.expandCodeFor(DLI.TripCount[i].Base), IB->getInt64(1)));
+          auto *DimI = dyn_cast<analysis::LoopInvariantDim>(DLI.TripCount[i]);
+          CHECK(DimI);
+          N = IB->CreateMul(N, IB->CreateAdd(SEE.expandCodeFor(DimI->Value), IB->getInt64(1)));
         }
         CGC.SS_RECURRENCE(SOP->SoftPortNum, SIP->SoftPortNum, N, Bytes);
       } else if (isa<TemporalDFG>(SIP->Parent)) {
