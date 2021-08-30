@@ -32,6 +32,9 @@ std::string LoopInvariantDim::toString(const std::vector<Loop *> &Loops) const {
   return S;
 }
 
+ExprComputable::ExprComputable(const SCEV *R) :
+  IndexAnalysis(IAKind::kExprComputable), Root(R) {}
+
 const uint64_t *LoopInvariantDim::constInt() const {
   if (auto *SC = dyn_cast<SCEVConstant>(Value)) {
     return SC->getAPInt().getRawData();
@@ -96,9 +99,12 @@ IndexAnalysis *analyzeIndexExpr(ScalarEvolution *SE, const SCEV *Raw,
     }
     AppendZero();
   }
-  if (!isa<SCEVAddRecExpr>(Raw) || i == (int)Loops.size()) {
-    CHECK(i == (int)Loops.size()) << i << " != " << Loops.size() << ": " << *Raw;
-    return new LoopInvariantDim(Raw);
+  if (!isa<SCEVAddRecExpr>(Raw)) {
+    if (i == (int)Loops.size()) {
+      return new LoopInvariantDim(Raw);
+    }
+    CHECK(false) << "Not supported yet! " << *Raw << " "
+      << *SE->getAddExpr(Raw, SE->getOne(Raw->getType()));
   }
   auto *Cur = Raw;
   for (int N = Loops.size(); i < N; ++i) {
@@ -127,15 +133,18 @@ IndexAnalysis *analyzeIndexExpr(ScalarEvolution *SE, const SCEV *Raw,
   Res.Base = new LoopInvariantDim(Cur);
   bool AllZero = true;
   for (int i = 0; i < (int) Loops.size(); ++i) { // NOLINT
+    DSA_LOG(STREAM) << i << ": " << Res.Coef[i]->toString();
     if (auto *LID = dyn_cast<LoopInvariantDim>(Res.Coef[i])) {
-      if (!LID->constInt()) {
+      if (*LID->constInt() == 0) {
         continue;
       }
     }
     AllZero = false;
+    DSA_LOG(STREAM) << i << ": Non-zero!";
     break;
   }
   if (AllZero) {
+    DSA_LOG(STREAM) << "All zero! loop invariant";
     return Res.Base;
   }
   return new LinearCombination(Res);
@@ -159,23 +168,19 @@ fuseInnerDimensions(IndexAnalysis *IdxLI, std::vector<IndexAnalysis*> LoopLI,
     if (auto *S1D = ExtractConstInt(LC->Coef.front())) {
       if (((int) *S1D) == DType) {
         if (const auto *N = ExtractConstInt(LoopLI[0])) {
-          if ((*N + 1) % Unroll) {
+          if (*N % Unroll) {
             break;
           }
           if (const auto *S2D = ExtractConstInt(LC->Coef[1])) {
             // TODO(@were): Relax this condition.
             if (auto *N2D = dyn_cast<LoopInvariantDim>(LoopLI[1])) {
-              if ((*S1D) * (*N + 1) == *S2D) {
+              if ((*S1D) * (*N) == *S2D) {
                 LoopLI.erase(LoopLI.begin());
                 LC->Coef.erase(LC->Coef.begin());
                 LC->Coef.front() = new LoopInvariantDim(SE.getConstant(IB->getInt64(DType)));
-                auto *SCEVN = SE.getConstant(IB->getInt64(*N + 1));
-                auto *SCEVNegOne = SE.getConstant(IB->getInt64(-1));
-                auto *NewN2D = N2D->Value;
-                NewN2D = SE.getMulExpr(NewN2D, SCEVN);
-                NewN2D = SE.getAddExpr(NewN2D, SCEVN);
-                NewN2D = SE.getAddExpr(NewN2D, SCEVNegOne);
-                LoopLI[0] = new LoopInvariantDim(NewN2D); // No modification, redefine.
+                auto *SCEVN = SE.getConstant(IB->getInt64(*N));
+                LoopLI[0] = new LoopInvariantDim(SE.getMulExpr(SCEVN, N2D->Value));
+                // No modification, redefine.
                 continue;
               }
             }

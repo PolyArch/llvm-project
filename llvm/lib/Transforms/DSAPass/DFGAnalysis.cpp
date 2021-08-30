@@ -890,9 +890,10 @@ void analyzeDFGLoops(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisResult 
       for (int I = 0; I < (int) LoopNest.size(); ++I) {
         auto *NSCEV = SE.getBackedgeTakenCount(LoopNest[I]);
         if (!isa<SCEVCouldNotCompute>(NSCEV)) {
-          DLI.TripCount.push_back(nullptr);
-        } else {
+          NSCEV = SE.getAddExpr(NSCEV, SE.getOne(NSCEV->getType()));
           DLI.TripCount.push_back(analysis::analyzeIndexExpr(&SE, NSCEV, LoopNest));
+        } else {
+          DLI.TripCount.push_back(nullptr);
         }
       }
     }

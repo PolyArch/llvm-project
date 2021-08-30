@@ -23,6 +23,7 @@ namespace analysis {
 enum class IAKind {
   kLoopInvariant,
   kLinearCombine,
+  kExprComputable,
   kUnknown
 };
 
@@ -133,6 +134,20 @@ struct LinearCombination : IndexAnalysis {
   void accept(IAVisitor *IAV) override { IAV->visit(this); }
 
   static bool classof(const IndexAnalysis *IA) { return IA->Kind == IAKind::kLinearCombine; }
+};
+
+/*!
+ * \brief The index is computable by a dataflow graph expression.
+ */
+struct ExprComputable : IndexAnalysis {
+  /*! \brief The raw root of the value to be analyzed. */
+  const SCEV *Root;
+  /*! \brief The instructions to construct a DFG. */
+  std::vector<Instruction*> Insts;
+
+  ExprComputable(const SCEV *Root);
+
+  void accept(IAVisitor *IAV) override { IAV->visit(this); }
 };
 
 IndexAnalysis *analyzeIndexExpr(ScalarEvolution *SE, const SCEV *Index,
