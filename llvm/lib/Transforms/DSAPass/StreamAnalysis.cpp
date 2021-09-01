@@ -179,7 +179,9 @@ fuseInnerDimensions(IndexAnalysis *IdxLI, std::vector<IndexAnalysis*> LoopLI,
                 LC->Coef.erase(LC->Coef.begin());
                 LC->Coef.front() = new LoopInvariantDim(SE.getConstant(IB->getInt64(DType)));
                 auto *SCEVN = SE.getConstant(IB->getInt64(*N));
-                LoopLI[0] = new LoopInvariantDim(SE.getMulExpr(SCEVN, N2D->Value));
+                auto *NewSCEV = new LoopInvariantDim(SE.getMulExpr(SCEVN, N2D->Value));
+                LoopLI[0] = NewSCEV;
+                DSA_INFO << *N << " " << *N2D->Value << " = " << *NewSCEV->Value;
                 // No modification, redefine.
                 continue;
               }

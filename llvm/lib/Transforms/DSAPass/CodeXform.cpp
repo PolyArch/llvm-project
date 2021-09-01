@@ -922,8 +922,13 @@ void InjectLinearStreamImpl(CodeGenContext &CGC, const SCEV *Idx, int MaxOffset,
         // Skip the middle dimension.
         CGC.INSTANTIATE_2D_STREAM(Start, Stride1D, N[0], Stride3D, Zero, N[2],
                                   LoadPort, P, DSA_Access, MO, MT, DType, 0);
+        DSA_LOG(CODEGEN)
+          << "[2-d Linear] Start: " << *Start << ", S1D: " << *Stride1D << ", N1D: " << *N[0]
+          << ", N2D: " << *N[2] << ", Stride2D: " << *Stride3D
+          << ", DType: " << DType << ", Port: " << Port << " -> Read from memory";
         CGC.SS_BUFFET_ALLOC(StartSpad, StartSpad + BufferSize);
-        DSA_LOG(CODEGEN) << "Allocate Buffet: [" << StartSpad << ", " << StartSpad + BufferSize << ")";
+        DSA_LOG(CODEGEN)
+          << "Allocate Buffet: [" << StartSpad << ", " << StartSpad + BufferSize << ")";
         CGC.INSTANTIATE_2D_STREAM(StartSpad, Stride1D, N[0], Stride3D, Zero, N[2],
                                   StorePort, P, DSA_Access, DMO_Write, DMT_SPAD, DType, 0);
         DSA_LOG(CODEGEN)

@@ -650,7 +650,7 @@ void extractSpadFromScope(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisRe
               if (CIS2D->getAPInt().getSExtValue() == 0 && CIS3D->getAPInt().getSExtValue() != 0) {
                 int DType = MP->Load->getType()->getScalarSizeInBits() / 8;
                 int SLPMul = DAR.CMI[i].Clusters[Belong].size();
-                int BufferSize = (CIN1D->getAPInt().getSExtValue() + 1) * 2 * DType * SLPMul;
+                int BufferSize = CIN1D->getAPInt().getSExtValue() * 2 * DType * SLPMul;
                 DSA_LOG(BUFFET)
                   << Buffet.size() << ": " << MP->dump() << ", "
                   << (CIN1D->getAPInt().getSExtValue() + 1) << " * " << SLPMul << " * " << DType
