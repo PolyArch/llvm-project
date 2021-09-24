@@ -131,7 +131,8 @@ LinearInfo analyzeIndexExpr(ScalarEvolution *SE, const SCEV *Raw,
 
 std::pair<LinearInfo, std::vector<LinearInfo>>
 fuseInnerDimensions(LinearInfo IdxLI, std::vector<LinearInfo> LoopLI,
-                    int DType, int Unroll, int P, IRBuilder<> *IB, ScalarEvolution &SE) {
+                    int DType, int Unroll, int P, IRBuilder<> *IB, ScalarEvolution &SE,
+                    int CutOff) {
   if (IdxLI.Coef.empty()) {
     return {IdxLI, LoopLI};
   }

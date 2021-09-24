@@ -616,7 +616,7 @@ void extractSpadFromScope(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisRe
       auto TripCnt = DAR.DLI[i].TripCount;
       int DType = MP->Load->getType()->getScalarSizeInBits() / 8;
       auto Fused = analysis::fuseInnerDimensions(LI, TripCnt, DType, DFG->getUnroll(),
-                                                 MP->fillMode(), IB, SE);
+                                                 MP->fillMode(), IB, SE, 1);
       LI = Fused.first;
       TripCnt = Fused.second;
       int PI = LI.partialInvariant();
@@ -864,6 +864,8 @@ ConfigInfo extractDFGPorts(std::string FName, DFGFile &DF, std::vector<CoalMemor
   return ConfigInfo(Stripped, ConfigString, ConfigSize);
 }
 
+void analyzeDFGMemoryAccess(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisResult &DAR) {
+}
 
 void analyzeDFGLoops(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisResult &DAR) {
   struct DFGLoopAnalyzer : DFGVisitor {
@@ -1061,13 +1063,13 @@ void analyzeAccumulatorTags(DFGFile &DF, xform::CodeGenContext &CGC,
   }
 }
 
-bool AccumulatorInfo::isTagged(int ID) {
+AccumulatorInfo::Entry *AccumulatorInfo::findReset(int ID) {
   for (auto &Elem : Entries) {
     if (Elem.TagIdx == ID) {
-      return true;
+      return &Elem;
     }
   }
-  return false;
+  return nullptr;
 }
 
 

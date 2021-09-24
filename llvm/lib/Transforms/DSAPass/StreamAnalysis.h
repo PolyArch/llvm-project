@@ -61,9 +61,21 @@ struct LinearInfo {
 LinearInfo analyzeIndexExpr(ScalarEvolution *SE, const SCEV *Index,
                             const std::vector<Loop *> &LoopNest);
 
+/*!
+ * \brief Fuse continous inner-most memory access dimensions.
+ * \param IdxLI The memory access pattern to be fused.
+ * \param LoopLI The loop access information for the analysis.
+ * \param DType The data type of memory access.
+ * \param Unroll The unrolling degree of this access.
+ * \param P The padding strategy of the access.
+ * \param IB The IR builder for LLVM data structure building. All constants.
+ * \param SE The SCEV analysis.
+ * \param CutOff The dimension to stop fusing. Sometimes we do not want every dimension to be fused.
+ */
 std::pair<LinearInfo, std::vector<LinearInfo>>
 fuseInnerDimensions(LinearInfo IdxLI, std::vector<LinearInfo> LoopLI,
-                    int DType, int Unroll, int P, IRBuilder<> *IB, ScalarEvolution &SE);
+                    int DType, int Unroll, int P, IRBuilder<> *IB,
+                    ScalarEvolution &SE, int CutOff);
 
 } // namespace analysis
 } // namespace dsa

@@ -136,16 +136,41 @@ struct AccumulatorInfo {
    * \brief Check if the given ID should be tagged.
    * \param ID The given ID.
    */
-  bool isTagged(int ID);
+  Entry *findReset(int ID);
 };
 
 /*! \brief The result of DFG analysis. */
 struct DFGAnalysisResult {
-  SpadInfo SI;
-  ConfigInfo CI;
+  /*!
+   * \brief The scope of config start/end. Filled by `gatherConfigScope`.
+   */
   std::vector<std::pair<IntrinsicInst *, IntrinsicInst *>> Scope;
+  /*!
+   * \brief The information of DFG configuration. Filled by `extractDFGPorts`.
+   */
+  ConfigInfo CI;
+  /*!
+   * \brief Scratchpad infomation is global in a configuration-wise.
+   *        Filled by `extractSpadFromScope`.
+   */
+  SpadInfo SI;
+  /*!
+   * \brief The information of SLP memory coalescing in each DFG.
+   *        Filled by `gatherMemoryCoalescing`.
+   */
   std::vector<CoalMemoryInfo> CMI;
+  /*!
+   * \brief The loop information of each DFG. Filled by `analyzeDFGLoops`.
+   */
   std::vector<DFGLoopInfo> DLI;
+  /*!
+   * \brief The linear memory access information of each affine stream.
+   *        Filled by `analyzeDFGMemoryAccess`.
+   */
+  std::vector<std::vector<LinearInfo>> LI;
+  /*!
+   * \brief The analysis result for accumulation. Filled by `analyzeAccumulatorTags`.
+   */
   std::vector<AccumulatorInfo> ACCI;
 };
 
@@ -165,9 +190,16 @@ void gatherConfigScope(Function &F, DFGAnalysisResult &DAR);
 void analyzeDFGLoops(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisResult &DAR);
 
 /*!
+ * \brief Analyze the DFG memory.
+ * \param CGC The LLVM utilities passed.
+ * \param DAR The result of scopes should go.
+ */
+void analyzeDFGMemoryAccess(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisResult &DAR);
+
+/*!
  * \brief Gather the the scratchpad local variables.
  * \param Start The starting scope of DFG.
- * \param Start The end scope of DFG.
+ * \param Start The end scope of DFG. Specifically, the `SI` attr.
  */
 void extractSpadFromScope(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisResult &DAR);
 

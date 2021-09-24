@@ -281,23 +281,28 @@ struct DFGPrinter : dsa::DFGVisitor {
           // L1D Start    2
           // Stream End   1
           // Stream Start 0
+          int X = -1;
           switch (Entry.ResetLevel) {
-          case 0: {
-            for (int i = 0; i < (1 << 6); ++i) { // NOLINT
-              if (i) {
-                OS << ",";
-              }
-              OS << i << ((i >> 3 & 1) ? ":r" : ":d");
-            }
+          case 0:
+            X = 3;
             break;
-          }
           case 1:
+            X = 5;
+            break;
           case 2:
-            CHECK(false) << "Accumulation not implemented yet!";
+            X = 1;
+            break;
+          default:
+            CHECK(false) << "Not supported level: " << Entry.ResetLevel;
+          }
+          for (int i = 0; i < (1 << 6); ++i) { // NOLINT
+            if (i) {
+              OS << ",";
+            }
+            OS << i << ((i >> X & 1) ? ":r" : ":d");
           }
           OS << "}";
         }
-      } else {
       }
 
       OS << ")\n";
@@ -356,7 +361,7 @@ struct DFGPrinter : dsa::DFGVisitor {
       if (IP->shouldUnroll()) {
         OS << "[" << IP->Parent->getUnroll() << "]";
       }
-      if (Parent->ACCI.isTagged(IP->ID)) {
+      if (Parent->ACCI.findReset(IP->ID)) {
         OS << " Tagged";
       }
       OS << "\n";
@@ -807,7 +812,8 @@ void InjectLinearStreamImpl(CodeGenContext &CGC, const SCEV *Idx, int MaxOffset,
                             std::vector<Loop*> LoopNest,
                             std::vector<dsa::analysis::LinearInfo> LoopLI,
                             int Port, int Unroll, int DType, MemoryOperation MO,
-                            Padding P, analysis::SpadInfo &SI, int BuffetIdx, bool Tagged) {
+                            Padding P, analysis::SpadInfo &SI, int BuffetIdx,
+                            analysis::AccumulatorInfo::Entry *ACIE) {
 
   auto InjectRepeat = [&CGC](analysis::LinearInfo LI,
                              const std::vector<analysis::LinearInfo> &Loops,
@@ -976,11 +982,17 @@ void InjectLinearStreamImpl(CodeGenContext &CGC, const SCEV *Idx, int MaxOffset,
       DSA_LOG(SLP) << "i" << i << ": " << LoopLI[i].toString();
     }
   }
-  if (!Tagged) {
-    auto Fused =  analysis::fuseInnerDimensions(IdxLI, LoopLI, DType, Unroll, 0, CGC.IB, CGC.SE);
-    IdxLI = Fused.first;
-    LoopLI = Fused.second;
+
+  int CutOff = 1;
+  if (ACIE) {
+    CutOff = LoopLI.size() - (ACIE->ResetLevel + (MaxOffset != 0));
+    CHECK(CutOff >= 1);
   }
+  auto Fused =
+    analysis::fuseInnerDimensions(IdxLI, LoopLI, DType, Unroll, 0, CGC.IB, CGC.SE, CutOff);
+  IdxLI = Fused.first;
+  LoopLI = Fused.second;
+
   DSA_LOG(SLP) << "Info After Dim Coal: " << IdxLI.toString();
   for (int i = 0; i < (int) LoopLI.size(); ++i) { // NOLINT
     DSA_LOG(SLP) << "i" << i << ": " << LoopLI[i].toString();
@@ -1021,7 +1033,7 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF,
           auto Fused =
             dsa::analysis::fuseInnerDimensions(Analyzed, DLI.TripCount, DType,
                                                MP->Parent->getUnroll(), (Padding) MP->fillMode(),
-                                               CGC.IB, CGC.SE);
+                                               CGC.IB, CGC.SE, 1);
           auto &FLI = Fused.first;
           auto &LoopN = Fused.second;
           // No repeat!
@@ -1051,7 +1063,7 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF,
             std::vector<Loop*>(DLI.LoopNest.begin(), DLI.LoopNest.end() - 1),
             std::vector<LinearInfo>(DLI.TripCount.begin(), DLI.TripCount.end() - 1),
             MP->SoftPortNum, DFG->getUnroll(), DType, DMO_Read,
-            (Padding) MP->fillMode(), SI, -1, false);
+            (Padding) MP->fillMode(), SI, -1, nullptr);
 
           if (LoopN.size() == 2) {
             // TODO(@were): Support stretch later.
@@ -1068,7 +1080,7 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF,
             CGC, SCEV, /*TODO(@were): Support this later*/0,
             std::vector<Loop*>(DLI.LoopNest.begin(), DLI.LoopNest.end() - 1),
             std::vector<LinearInfo>(DLI.TripCount.begin(), DLI.TripCount.end() - 1),
-            PM->SoftPortNum, DFG->getUnroll(), DType, DMO_Write, (Padding) 0, SI, -1, false);
+            PM->SoftPortNum, DFG->getUnroll(), DType, DMO_Write, (Padding) 0, SI, -1, nullptr);
 
           // Performance Model
           int II = 1;
@@ -1159,7 +1171,7 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF,
                              DLI.LoopNest, DLI.TripCount, IMP->Index->SoftPortNum,
                              IMP->Parent->getUnroll(),
                              IMP->Index->Load->getType()->getScalarSizeInBits() / 8,
-                             DMO_Read, DP_NoPadding, SI, -1, false);
+                             DMO_Read, DP_NoPadding, SI, -1, nullptr);
 
       for (size_t i = 0; i < Together.size(); ++i) { // NOLINT
         auto *Cur = Together[i];
@@ -1207,7 +1219,7 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF,
       auto BIter = std::find_if(SI.Buffet.begin(), SI.Buffet.end(), Cond);
       InjectLinearStreamImpl(CGC, SCEVIdx, MaxOffset, DLI.LoopNest, DLI.TripCount, Port,
                              DFG->getUnroll(), DType, DMO_Read, (Padding) MP0->fillMode(), SI,
-                             BIter - SI.Buffet.begin(), ACCI.isTagged(MP->ID));
+                             BIter - SI.Buffet.begin(), ACCI.findReset(MP->ID));
 
       for (auto &Elem : CMI.Clusters[Belong]) {
         auto *PB = dyn_cast<PortBase>(DFG->Entries[Elem.ID]);
@@ -1231,7 +1243,7 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF,
       const auto *SCEVIdx = CGC.SE.getSCEV(PM->Store->getPointerOperand());
       int DType = PM->Store->getValueOperand()->getType()->getScalarSizeInBits() / 8;
       InjectLinearStreamImpl(CGC, SCEVIdx, MaxOffset, DLI.LoopNest, DLI.TripCount, Port,
-                             DFG->getUnroll(), DType, DMO_Write, DP_NoPadding, SI, -1, false);
+                             DFG->getUnroll(), DType, DMO_Write, DP_NoPadding, SI, -1, nullptr);
 
       for (auto &Elem : CMI.Clusters[Belong]) {
         auto *PB = dyn_cast<PortBase>(DFG->Entries[Elem.ID]);
@@ -1395,7 +1407,7 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF,
             int DType = MP->Load->getType()->getScalarSizeInBits() / 8;
             InjectLinearStreamImpl(CGC, SCEVIdx, 0, DLI.LoopNest, DLI.TripCount, MP->SoftPortNum,
                                    DFG->getUnroll(), DType, DMO_Read, (Padding) MP->fillMode(), SI,
-                                   -1, false);
+                                   -1, nullptr);
             IdxPort = IMP->IndexOutPort;
           }
         }
