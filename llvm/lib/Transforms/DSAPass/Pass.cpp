@@ -87,10 +87,11 @@ bool StreamSpecialize::runOnFunction(Function &F) {
     dsa::analysis::analyzeDFGLoops(DF, CGC, DAR);
     dsa::analysis::gatherMemoryCoalescing(DF, *SE, DAR);
     dsa::analysis::extractSpadFromScope(DF, CGC, DAR);
+    dsa::analysis::analyzeAccumulatorTags(DF, CGC, DAR);
     {
       std::error_code EC;
       llvm::raw_fd_ostream RFO(DF.getName(), EC);
-      dsa::xform::emitDFG(RFO, &DF, DAR.CMI, DAR.SI);
+      dsa::xform::emitDFG(RFO, &DF, DAR, CGC);
     }
     // If extraction only, we do not schedule and analyze.
     if (dsa::utils::ModuleContext().EXTRACT) {

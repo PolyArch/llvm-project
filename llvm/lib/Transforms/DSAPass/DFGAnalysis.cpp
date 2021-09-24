@@ -26,6 +26,34 @@ void gatherConfigScope(Function &F, DFGAnalysisResult &DAR) {
   }
 }
 
+std::pair<std::set<Instruction *>, std::set<Instruction *>>
+bfsOperands(DFGBase *DB, Instruction *From, DominatorTree *DT) {
+  std::set<Instruction *> Visited, OutBound;
+  std::queue<Instruction *> Q;
+  Visited.insert(From);
+  Q.push(From);
+  while (!Q.empty()) {
+    auto *Cur = Q.front();
+    Q.pop();
+    for (size_t I = 0; I < Cur->getNumOperands(); ++I) {
+      if (auto *Inst = dyn_cast<Instruction>(Cur->getOperand(I))) {
+        if (DT && !DT->dominates(Inst, From)) {
+          continue;
+        }
+        if (!Visited.count(Inst)) {
+          if (DB->InThisScope(Inst)) {
+            Visited.insert(Inst);
+            Q.push(Inst);
+          } else {
+            OutBound.insert(Inst);
+          }
+        }
+      }
+    }
+  }
+  return {Visited, OutBound};
+}
+
 /*!
  * \brief How DFG Entries are analyzed and extracted.
  */
@@ -93,7 +121,7 @@ struct DFGEntryAnalyzer : DFGVisitor {
     auto &DB = *DBPtr;
     if (auto *GEP = dyn_cast<GetElementPtrInst>(Load->getPointerOperand())) {
 
-      auto BFSBack = bfsOperands(GEP);
+      auto BFSBack = bfsOperands(DBPtr, GEP, DT);
 
       auto FLoad = [Load, BFSBack, &DB](Value *Val) -> DFGEntry * {
         LoadInst *IdxLoad = nullptr;
@@ -388,11 +416,8 @@ struct DFGEntryAnalyzer : DFGVisitor {
     } else {
       assert(Inst->getOpcode() == BinaryOperator::Add ||
              Inst->getOpcode() == BinaryOperator::FAdd);
-      auto *CS = new CtrlSignal(&DB);
-      DB.Entries.push_back(CS);
-      auto *Acc = new Accumulator(&DB, Inst, CS);
+      auto *Acc = new Accumulator(&DB, Inst);
       DB.Entries.push_back(Acc);
-      CS->Controlled = Acc;
       Entry = Acc;
       LLVM_DEBUG(DSA_INFO << "Accumulator: "; Inst->dump());
     }
@@ -472,34 +497,6 @@ struct DFGEntryAnalyzer : DFGVisitor {
         }
       }
     }
-  }
-
-  std::pair<std::set<Instruction *>, std::set<Instruction *>> bfsOperands(Instruction *From) {
-    auto &DB = *DBPtr;
-    std::set<Instruction *> Visited, OutBound;
-    std::queue<Instruction *> Q;
-    Visited.insert(From);
-    Q.push(From);
-    while (!Q.empty()) {
-      auto *Cur = Q.front();
-      Q.pop();
-      for (size_t I = 0; I < Cur->getNumOperands(); ++I) {
-        if (auto *Inst = dyn_cast<Instruction>(Cur->getOperand(I))) {
-          if (!DT->dominates(Inst, From)) {
-            continue;
-          }
-          if (!Visited.count(Inst)) {
-            if (DB.InThisScope(Inst)) {
-              Visited.insert(Inst);
-              Q.push(Inst);
-            } else {
-              OutBound.insert(Inst);
-            }
-          }
-        }
-      }
-    }
-    return {Visited, OutBound};
   }
 
   void Visit(DedicatedDFG *DDPtr) override {
@@ -1015,6 +1012,59 @@ bool SpadInfo::isSpad(Value *Ptr) {
           }
         }
       }
+    }
+  }
+  return false;
+}
+
+void analyzeAccumulatorTags(DFGFile &DF, xform::CodeGenContext &CGC,
+                            DFGAnalysisResult &DAR) {
+  auto &SE = CGC.SE;
+  auto Graphs = DF.DFGFilter<DFGBase>();
+  auto &VACCI = DAR.ACCI;
+  for (int i = 0; i < (int) Graphs.size(); ++i) { // NOLINT
+    VACCI.emplace_back();
+    auto &ACCI = VACCI.back();
+    auto &Loops = DAR.DLI[i].LoopNest;
+    if (auto *DD = dyn_cast<DedicatedDFG>(Graphs[i])) {
+      for (auto *Acc : DD->EntryFilter<Accumulator>()) {
+        ACCI.Entries.emplace_back();
+        auto &Entry = ACCI.Entries.back();
+        Entry.AccIdx = Acc->ID;
+        auto V = analysis::bfsOperands(DD, Acc->Operation, nullptr).first;
+        for (auto &Elem : V) {
+          auto *DE = Acc->Parent->InThisDFG(Elem);
+          if (!DE) {
+            continue;
+          }
+          if (auto *MP = dyn_cast<MemPort>(DE)) {
+            auto LI =
+              analyzeIndexExpr(&SE, SE.getSCEV(MP->Load->getPointerOperand()), Loops);
+            if (LI.partialInvariant() == 0 && Entry.TagIdx == -1) {
+              Entry.TagIdx = MP->ID;
+            }
+            ACCI.ZeroPadding.push_back(MP->ID);
+          }
+        }
+        for (auto *User : Acc->Operation->users()) {
+          if (auto *Inst = dyn_cast<Instruction>(User)) {
+            for (int j = (int) Loops.size() - 1; j >= 0; --j) { // NOLINT
+              if (Loops[j]->contains(Acc->Operation) && !Loops[j]->contains(Inst)) {
+                Entry.ResetLevel = j;
+                break;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+bool AccumulatorInfo::isTagged(int ID) {
+  for (auto &Elem : Entries) {
+    if (Elem.TagIdx == ID) {
+      return true;
     }
   }
   return false;

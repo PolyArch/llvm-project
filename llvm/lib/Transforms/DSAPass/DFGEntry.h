@@ -108,7 +108,6 @@ struct DFGEntry {
   static bool classof(const DFGEntry *DE) { return true; }
 };
 
-struct CtrlSignal;
 struct OutputPort;
 struct InputPort;
 struct AtomicPortMem;
@@ -163,8 +162,8 @@ struct Predicate : DFGEntry {
 
 // A accumulator Instruction
 struct Accumulator : ComputeBody {
-  CtrlSignal *Ctrl;
-  Accumulator(DFGBase *Parent, Instruction *Operation, CtrlSignal *Ctrl);
+
+  Accumulator(DFGBase *Parent, Instruction *Operation);
   bool shouldUnroll() override;
   Value *numValuesProduced();
   /*!
@@ -229,7 +228,11 @@ struct CtrlMemPort : InputPort {
 
 // Memory port can be either a spad or a DMA
 struct MemPort : InputPort {
+  /*!
+   * \brief The memory load under affined loops to be re-written.
+   */
   LoadInst *Load;
+
   MemPort(DFGBase *Parent, LoadInst *Load);
 
   static const int PtrOperandIdx;
@@ -257,23 +260,6 @@ struct StreamInPort : InputPort {
   virtual void accept(dsa::DFGEntryVisitor *) override;
 
   static bool classof(const DFGEntry *DE) { return DE->Kind == kStreamInPort; }
-};
-
-// For control signal, the data consume rate matters
-// The control signal should match its consume rate
-struct CtrlSignal : InputPort {
-  Accumulator *Controlled;
-  CtrlSignal(DFGBase *Parent);
-
-  Value *findConsumeRate();
-
-  bool shouldUnroll() override;
-  /*!
-   * \brief The entrance of the visitor pattern.
-   */
-  virtual void accept(dsa::DFGEntryVisitor *) override;
-
-  static bool classof(const DFGEntry *DE) { return DE->Kind == kCtrlSignal; }
 };
 
 // A loop invariant through all the loop levels,
@@ -433,7 +419,6 @@ struct DFGEntryVisitor {
   virtual void Visit(MemPort *);          // NOLINT
   virtual void Visit(CoalescedMemPort *); // NOLINT
   virtual void Visit(StreamInPort *);     // NOLINT
-  virtual void Visit(CtrlSignal *);       // NOLINT
   virtual void Visit(InputConst *);       // NOLINT
   virtual void Visit(OutputPort *);       // NOLINT
   virtual void Visit(PortMem *);          // NOLINT

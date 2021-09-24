@@ -158,7 +158,7 @@ Instruction *TemporalDFG::DefaultIP() { return IP; }
 
 Instruction *DedicatedDFG::DefaultIP() { return &Preheader->back(); }
 
-bool DedicatedDFG::ConsumedByAccumulator(MemPort *MP) {
+Accumulator *DedicatedDFG::ConsumedByAccumulator(MemPort *MP) {
   std::set<Value *> Visited{MP->underlyingInst()};
   std::queue<Value *> Q;
   Q.push(MP->underlyingInst());
@@ -168,7 +168,7 @@ bool DedicatedDFG::ConsumedByAccumulator(MemPort *MP) {
     for (auto *User : Cur->users()) {
       if (auto *DE = InThisDFG(User)) {
         if (isa<Accumulator>(DE)) {
-          return true;
+          return dyn_cast<Accumulator>(DE);
         }
       }
       if (Visited.find(User) == Visited.end()) {
@@ -177,7 +177,7 @@ bool DedicatedDFG::ConsumedByAccumulator(MemPort *MP) {
       }
     }
   }
-  return false;
+  return nullptr;
 }
 
 int ScalarBits2T(int Bits) { // NOLINT

@@ -157,8 +157,8 @@ PortMem::PortMem(DFGBase *Parent_, StoreInst *Store_) // NOLINT
   Kind = kPortMem;
 }
 
-Accumulator::Accumulator(DFGBase *Parent_, Instruction *Operation_, // NOLINT
-                         CtrlSignal *Ctrl_) : ComputeBody(Parent_, Operation_), Ctrl(Ctrl_) { // NOLINT
+Accumulator::Accumulator(DFGBase *Parent_, Instruction *Operation_) // NOLINT
+  : ComputeBody(Parent_, Operation_) { // NOLINT
   Kind = kAccumulator;
 }
 
@@ -175,10 +175,6 @@ ComputeBody::ComputeBody(DFGBase *Parent_, Instruction *Operation_) // NOLINT
     : DFGEntry(Parent_), Operation(Operation_) {
   assert(CanBeAEntry(Operation_));
   Kind = kComputeBody;
-}
-
-CtrlSignal::CtrlSignal(DFGBase *Parent_) : InputPort(Parent_) { // NOLINT
-  Kind = kCtrlSignal;
 }
 
 CtrlMemPort::CtrlMemPort(DFGBase *Parent_, LoadInst *Load_, Value *Start_, // NOLINT
@@ -312,8 +308,6 @@ bool ComputeBody::shouldUnroll() {
 }
 
 bool Accumulator::shouldUnroll() { return false; }
-
-bool CtrlSignal::shouldUnroll() { return false; }
 
 bool OutputPort::shouldUnroll() {
   if (!DFGEntry::shouldUnroll())
@@ -724,7 +718,6 @@ VISIT_IMPL(CtrlMemPort)
 VISIT_IMPL(MemPort)
 VISIT_IMPL(CoalescedMemPort)
 VISIT_IMPL(StreamInPort)
-VISIT_IMPL(CtrlSignal)
 VISIT_IMPL(InputConst)
 VISIT_IMPL(OutputPort)
 VISIT_IMPL(PortMem)
@@ -751,7 +744,6 @@ VISIT_IMPL(CtrlMemPort, InputPort)
 VISIT_IMPL(MemPort, InputPort)
 VISIT_IMPL(CoalescedMemPort, InputPort)
 VISIT_IMPL(StreamInPort, InputPort)
-VISIT_IMPL(CtrlSignal, InputPort)
 VISIT_IMPL(InputConst, InputPort)
 VISIT_IMPL(IndMemPort, InputPort)
 VISIT_IMPL(OutputPort, PortBase)

@@ -262,7 +262,7 @@ class DedicatedDFG : public DFGBase {
   };
   FillMode CurrentFill{NoFill};
 
-  bool ConsumedByAccumulator(MemPort *MP);
+  Accumulator *ConsumedByAccumulator(MemPort *MP);
 
 public:
   /// The loop levels from dfg to stream pragma
