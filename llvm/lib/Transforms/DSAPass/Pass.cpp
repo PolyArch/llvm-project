@@ -11,7 +11,7 @@
 #include "DFGAnalysis.h"
 #include "DFGEntry.h"
 #include "Pass.h"
-#include "Transformation.h"
+#include "DFGIR.h"
 #include "Util.h"
 #include "dsa-ext/rf.h"
 

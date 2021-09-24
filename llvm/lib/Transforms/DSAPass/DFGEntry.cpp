@@ -5,7 +5,7 @@
 
 #include "DFGEntry.h"
 #include "StreamAnalysis.h"
-#include "Transformation.h"
+#include "DFGIR.h"
 #include "Util.h"
 
 #define DEBUG_TYPE "stream-specialize"

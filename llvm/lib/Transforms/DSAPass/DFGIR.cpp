@@ -25,7 +25,7 @@
 
 #include "CodeXform.h"
 #include "StreamAnalysis.h"
-#include "Transformation.h"
+#include "DFGIR.h"
 #include "Util.h"
 
 #include "dsa-ext/rf.h"

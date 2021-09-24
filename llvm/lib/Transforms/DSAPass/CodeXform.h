@@ -5,7 +5,7 @@
 #include "./llvm_common.h"
 
 #include "DFGAnalysis.h"
-#include "Transformation.h"
+#include "DFGIR.h"
 #include "Util.h"
 
 namespace dsa {
