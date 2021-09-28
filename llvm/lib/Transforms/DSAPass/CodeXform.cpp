@@ -4,6 +4,7 @@
 #include "Util.h"
 
 #include "dsa-ext/rf.h"
+#include "llvm/Support/ScopedPrinter.h"
 
 // raw_ostream &operator<<(raw_ostream &os, DFGEntry &DE) {
 //   os << "# [" << dsa::xform::KindStr[DE.Kind] << "]" << " DFG" <<
@@ -126,7 +127,8 @@ std::string getOperationStr(Instruction *Inst, bool Acc, bool Predicated) {
 
 /*!
  * \brief I anyways need the DFG entries to be reordered in which the order the
- * are emitted. \param DB The DFG to reorder the entries.
+ *        are emitted.
+ * \param DB The DFG to reorder the entries.
  */
 static std::vector<DFGEntry *> ReorderEntries(DFGBase *DB) { // NOLINT
   std::vector<DFGEntry *> Res;
@@ -381,13 +383,13 @@ struct DFGPrinter : dsa::DFGVisitor {
            << getOperationStr(CB->Operation, false, false) << "(";
         ControlBit CtrlBit;
 
-        bool isCall = isa<CallInst>(CB->Operation); // NOLINT
-        for (int i = 0; i < (int)(CB->Operation->getNumOperands() - isCall); ++i) { // NOLINT
+        bool FuncCall = isa<CallInst>(CB->Operation); // NOLINT
+        for (int i = 0; i < (int)(CB->Operation->getNumOperands() - FuncCall); ++i) { // NOLINT
           auto *Val = CB->Operation->getOperand(i);
           if (i)
             OS << ", ";
           if (auto *EntryOp = CB->Parent->InThisDFG(Val)) {
-            OS << EntryOp->name(vec);
+            OS << CB->Parent->nameOf(Val, i);
             CtrlBit.addControlledMemoryStream(i, EntryOp);
           } else {
             OS << ValueToOperandText(Val);
@@ -412,72 +414,45 @@ struct DFGPrinter : dsa::DFGVisitor {
     }
 
     // TODO(@were): Support unroll
-    void Visit(MemPort *MP) override {
-      auto &CMI = Parent->CMI;
-      auto Belong = CMI.Belong[MP->ID];
-      if (Parent->CMI.Clusters[Belong].size() == 1) {
-        Visit(static_cast<InputPort*>(MP));
-      } else {
-        int Degree = (MP->shouldUnroll() ? MP->Parent->getUnroll() : 1);
-        OS << "# Cluster " << Belong << "\n";
-        Visit(static_cast<DFGEntry*>(MP));
-        auto &Cluster = CMI.Clusters[Belong];
-        int Bits = MP->underlyingInst()->getType()->getScalarSizeInBits();
-        int Bytes = Bits / 8;
-        int MaxOffset = Cluster.back().Offset;
-        OS << "# Vector Port Width: " << (MaxOffset / Bytes + 1) << " * " << Degree << "\n";
-        if (!Parent->Emitted[Belong]) {
-          OS << "Input" << Bits << ": ICluster_" << MP->Parent->ID << "_"
-             << Belong << "_[" << (MaxOffset / Bytes + 1) * Degree << "]" << "\n";
-          Parent->Emitted[Belong] = true;
-        }
-        auto FCond = [MP](analysis::CoalMemoryInfo::CoalescedEntry &CE) {
-          return CE.ID == MP->ID;
-        };
-        auto Entry = std::find_if(Cluster.begin(), Cluster.end(), FCond);
-        CHECK(Entry != Cluster.end());
-        for (int i = 0; i < Degree; ++i) { // NOLINT
-          OS << MP->name(i) << " = " << "ICluster_" << MP->Parent->ID << "_"
-             << Belong << "_" << (Entry->Offset / Bytes) + i * (MaxOffset / Bytes + 1)
-             << "\n";
+    void Visit(SLPMemPort *SMP) override {
+      int Degree = (SMP->shouldUnroll() ? SMP->Parent->getUnroll() : 1);
+      OS << "# Cluster " << SMP->ID << "\n";
+      for (int i = 0; i < (int) SMP->Coal.size(); ++i) { // NOLINT
+        Visit(static_cast<DFGEntry*>(SMP->Coal[i]));
+      }
+      int Bits = SMP->Coal[0]->underlyingInst()->getType()->getScalarSizeInBits();
+      int Lanes = SMP->Coal.size();
+      std::string Name = formatv("ICluster_{0}_{1}_", SMP->Parent->ID, SMP->ID);
+      OS << "# Vector Port Width: " << Lanes << " * " << Degree << "\n";
+      OS << "Input" << Bits << ": " << Name << "[" << Lanes * Degree << "]" << "\n";
+      int Idx = 0;
+      for (int i = 0; i < Degree; ++i) { // NOLINT
+        for (int j = 0; j < (int) SMP->Coal.size(); ++j) { // NOLINT
+          OS << SMP->Coal[j]->name(j) << " = " << Name << Idx << "\n";
+          ++Idx;
         }
       }
     }
 
-    void Visit(PortMem *PM) override {
-      auto &CMI = Parent->CMI;
-      auto Belong = CMI.Belong[PM->ID];
-      if (Parent->CMI.Clusters[Belong].size() == 1) {
-        Visit(static_cast<OutputPort*>(PM));
-      } else {
-        int Degree = (PM->shouldUnroll() ? PM->Parent->getUnroll() : 1);
-        int Bits = PM->Store->getValueOperand()->getType()->getScalarSizeInBits();
-        int Bytes = Bits / 8;
-        auto &Cluster = CMI.Clusters[Belong];
-        int MaxOffset = Cluster.back().Offset;
-        OS << "# Cluster " << Belong << "\n";
-        Visit(static_cast<DFGEntry*>(PM));
-        OS << "# Vector Port Width: " << (MaxOffset / Bytes + 1) << " * " << Degree << "\n";
-        auto FCond = [PM](analysis::CoalMemoryInfo::CoalescedEntry &CE) {
-          return CE.ID == PM->ID;
-        };
-        auto *OV = PM->Parent->InThisDFG(PM->Output);
-        CHECK(OV);
-        auto Entry = std::find_if(Cluster.begin(), Cluster.end(), FCond);
-        CHECK(Entry != Cluster.end());
-        for (int i = 0; i < Degree; ++i) { // NOLINT
-          OS << "OCluster_" << PM->Parent->ID << "_"
-             << Belong << "_" << (Entry->Offset / Bytes) + i * (MaxOffset / Bytes + 1)
-             << " = " << OV->name(i) << "\n";
-        }
-        if (!Parent->Emitted[Belong]) {
-          std::ostringstream OSS;
-          OSS << "Output" << Bits << ": OCluster_" << PM->Parent->ID << "_"
-              << Belong << "_[" << (MaxOffset / Bytes + 1) * Degree << "]";
-          Parent->DelayEmission.push_back(OSS.str());
-          Parent->Emitted[Belong] = true;
+    void Visit(SLPPortMem *SPM) override {
+      int Degree = (SPM->shouldUnroll() ? SPM->Parent->getUnroll() : 1);
+      int Lanes = SPM->Coal.size();
+      int Bits = SPM->Coal[0]->Store->getValueOperand()->getType()->getScalarSizeInBits();
+      OS << "# Cluster " << SPM->ID << "\n";
+      std::string Name = formatv("OCluster_{0}_{1}_", SPM->Parent->ID, SPM->ID);
+      for (int i = 0; i < (int) SPM->Coal.size(); ++i) { // NOLINT
+        Visit(static_cast<DFGEntry*>(SPM->Coal[i]));
+      }
+      int Idx = 0;
+      for (int i = 0; i < Degree; ++i) { // NOLINT
+        for (int j = 0; j < (int) SPM->Coal.size(); ++j) { // NOLINT
+          auto *Val = SPM->Coal[j]->Store->getValueOperand();
+          OS << Name << Idx << " = " << SPM->Parent->nameOf(Val, i) << "\n";
+          ++Idx;
         }
       }
+      OS << "# Vector Port Width: " << Lanes << " * " << Degree << "\n";
+      OS << "Output" << Bits << ":" << Name << "[" << Lanes * Degree << "]" << "\n";
     }
 
     void Visit(AtomicPortMem *APM) override {
@@ -613,17 +588,9 @@ struct DFGPrinter : dsa::DFGVisitor {
   int TmpCnt{0};
 
   /*!
-   * \brief The information of memory coalescing.
-   */
-  analysis::CoalMemoryInfo CMI;
-  /*!
    * \brief The information of accumulation.
    */
   analysis::AccumulatorInfo &ACCI;
-  /*!
-   * \brief If this CMI cluster is emitted.
-   */
-  std::vector<bool> Emitted;
   /*!
    * \brief Clustered output should be delayed.
    */
@@ -633,20 +600,17 @@ struct DFGPrinter : dsa::DFGVisitor {
    */
   ScalarEvolution &SE;
 
-  DFGPrinter(raw_ostream &OS, analysis::CoalMemoryInfo &CMI,
-             analysis::AccumulatorInfo &ACCI_, ScalarEvolution &SE_) : // NOLINT
-    OS(OS), CMI(CMI), ACCI(ACCI_), Emitted(CMI.Clusters.size(), false), SE(SE_) {}
+  DFGPrinter(raw_ostream &OS, analysis::AccumulatorInfo &ACCI_, ScalarEvolution &SE_) : // NOLINT
+    OS(OS), ACCI(ACCI_), SE(SE_) {}
 };
 
 void emitDFG(raw_ostream &OS, DFGFile *DFG, analysis::DFGAnalysisResult &DAR,
              CodeGenContext &CGC) {
   auto Graphs = DFG->DFGFilter<DFGBase>();
-  auto &CMIs = DAR.CMI;
   auto &SI = DAR.SI;
-  CHECK(CMIs.size() == Graphs.size()) << CMIs.size() << " == " << Graphs.size();
   for (int i = 0; i < (int)Graphs.size(); ++i) { // NOLINT
     CHECK(i < (int) DAR.ACCI.size());
-    DFGPrinter DP(OS, CMIs[i], DAR.ACCI[i], CGC.SE);
+    DFGPrinter DP(OS, DAR.ACCI[i], CGC.SE);
     auto *Elem = Graphs[i];
     if (i) {
       OS << "----\n";
@@ -1204,52 +1168,35 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF,
 
       // Wrappers
       auto *DFG = MP->Parent;
-      int Belong = CMI.Belong[MP->ID];
-      int MaxOffset = CMI.Clusters[Belong].back().Offset;
-      int ID = CMI.Clusters[Belong].front().ID;
-      auto *MP0 = dyn_cast<MemPort>(DFG->Entries[ID]);
-      int Port = CMI.Clusters[Belong].size() == 1 ? MP->SoftPortNum : CMI.ClusterPortNum[Belong];
+      int Port = MP->SoftPortNum;
       // Handle data stream with predicate
       if (MP->getPredicate()) {
         CHECK(false) << "Predicated stream should be handled in CtrlMemPort.";
       }
-      const auto *SCEVIdx = CGC.SE.getSCEV(MP0->Load->getPointerOperand());
+      const auto *SCEVIdx = CGC.SE.getSCEV(MP->Load->getPointerOperand());
       int DType = MP->Load->getType()->getScalarSizeInBits() / 8;
-      auto Cond = [MP0] (analysis::SpadInfo::BuffetEntry &BE) { return std::get<0>(BE) == MP0; };
+      auto Cond = [MP] (analysis::SpadInfo::BuffetEntry &BE) { return std::get<0>(BE) == MP; };
       auto BIter = std::find_if(SI.Buffet.begin(), SI.Buffet.end(), Cond);
-      InjectLinearStreamImpl(CGC, SCEVIdx, MaxOffset, DLI.LoopNest, DLI.TripCount, Port,
-                             DFG->getUnroll(), DType, DMO_Read, (Padding) MP0->fillMode(), SI,
+      InjectLinearStreamImpl(CGC, SCEVIdx, 0, DLI.LoopNest, DLI.TripCount, Port,
+                             DFG->getUnroll(), DType, DMO_Read, (Padding) MP->fillMode(), SI,
                              BIter - SI.Buffet.begin(), ACCI.findReset(MP->ID));
 
-      for (auto &Elem : CMI.Clusters[Belong]) {
-        auto *PB = dyn_cast<PortBase>(DFG->Entries[Elem.ID]);
-        CHECK(PB);
-        PB->IntrinInjected = true;
-      }
+      MP->IntrinInjected = true;
     }
 
     void Visit(PortMem *PM) override {
       auto *DFG = PM->Parent;
       if (PM->IntrinInjected)
         return;
-      int Belong = CMI.Belong[PM->ID];
-      int MaxOffset = CMI.Clusters[Belong].back().Offset;
-      int ID = CMI.Clusters[Belong].front().ID;
-      auto *PM0 = dyn_cast<PortMem>(DFG->Entries[ID]);
-      int Port = CMI.Clusters[Belong].size() == 1 ? PM0->SoftPortNum : CMI.ClusterPortNum[Belong];
 
       CGC.IB->SetInsertPoint(DFG->DefaultIP());
       CGC.SEE.setInsertPoint(DFG->DefaultIP());
       const auto *SCEVIdx = CGC.SE.getSCEV(PM->Store->getPointerOperand());
       int DType = PM->Store->getValueOperand()->getType()->getScalarSizeInBits() / 8;
-      InjectLinearStreamImpl(CGC, SCEVIdx, MaxOffset, DLI.LoopNest, DLI.TripCount, Port,
+      InjectLinearStreamImpl(CGC, SCEVIdx, 0, DLI.LoopNest, DLI.TripCount, PM->SoftPortNum,
                              DFG->getUnroll(), DType, DMO_Write, DP_NoPadding, SI, -1, nullptr);
 
-      for (auto &Elem : CMI.Clusters[Belong]) {
-        auto *PB = dyn_cast<PortBase>(DFG->Entries[Elem.ID]);
-        CHECK(PB);
-        PB->IntrinInjected = true;
-      }
+      PM->IntrinInjected = true;
     }
 
     void Visit(InputConst *IC) override {
@@ -1444,20 +1391,18 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF,
 
     CodeGenContext &CGC;
     analysis::DFGLoopInfo &DLI;
-    analysis::CoalMemoryInfo &CMI;
     analysis::SpadInfo &SI;
     analysis::AccumulatorInfo &ACCI;
     StreamIntrinsicInjector(CodeGenContext &CGC, analysis::DFGLoopInfo &DLI,
-                            analysis::CoalMemoryInfo &CMI, analysis::SpadInfo &SI,
-                            analysis::AccumulatorInfo &ACCI) :
-      CGC(CGC), DLI(DLI), CMI(CMI), SI(SI), ACCI(ACCI) {}
+                            analysis::SpadInfo &SI, analysis::AccumulatorInfo &ACCI) :
+      CGC(CGC), DLI(DLI), SI(SI), ACCI(ACCI) {}
   };
 
   for (int i = 0; i < (int) DFGs.size(); ++i) { // NOLINT
     auto *DFG = DFGs[i];
     auto &DLI = DAR.DLI[i];
     UpdateStreamInjector USI(CGC, DLI, SI);
-    StreamIntrinsicInjector SII(CGC, DLI, CMIs[i], SI, DAR.ACCI[i]);
+    StreamIntrinsicInjector SII(CGC, DLI, SI, DAR.ACCI[i]);
     CGC.IB->SetInsertPoint(DFG->DefaultIP());
     CGC.SEE.setInsertPoint(DFG->DefaultIP());
     for (auto *Elem : ReorderEntries(DFG)) {

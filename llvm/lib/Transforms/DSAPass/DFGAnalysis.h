@@ -1,5 +1,8 @@
 #pragma once
 
+#include <map>
+#include <unordered_map>
+
 #include "./llvm_common.h"
 
 #include "./DFGIR.h"
@@ -167,7 +170,7 @@ struct DFGAnalysisResult {
    * \brief The linear memory access information of each affine stream.
    *        Filled by `analyzeDFGMemoryAccess`.
    */
-  std::vector<std::vector<LinearInfo>> LI;
+  std::vector<std::unordered_map<DFGEntry*, LinearInfo>> LI;
   /*!
    * \brief The analysis result for accumulation. Filled by `analyzeAccumulatorTags`.
    */
@@ -190,16 +193,9 @@ void gatherConfigScope(Function &F, DFGAnalysisResult &DAR);
 void analyzeDFGLoops(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisResult &DAR);
 
 /*!
- * \brief Analyze the DFG memory.
- * \param CGC The LLVM utilities passed.
- * \param DAR The result of scopes should go.
- */
-void analyzeDFGMemoryAccess(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisResult &DAR);
-
-/*!
  * \brief Gather the the scratchpad local variables.
  * \param Start The starting scope of DFG.
- * \param Start The end scope of DFG. Specifically, the `SI` attr.
+ * \param End The end scope of DFG. Specifically, the `SI` attr.
  */
 void extractSpadFromScope(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisResult &DAR);
 
@@ -211,6 +207,15 @@ void extractSpadFromScope(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisRe
 void extractDFGFromScope(DFGFile &DF, dsa::xform::CodeGenContext &CGC);
 
 /*!
+ * \brief Analyze the linear combination of affined memory access.
+ * \param DF The DFG scope to be analyzed.
+ * \param CGC The LLVM utilities passed.
+ * \param DAR The result of DFG analysis from previous pass.
+ */
+void analyzeAffineMemoryAccess(DFGFile &DF, dsa::xform::CodeGenContext &CGC,
+                               DFGAnalysisResult &DAR);
+
+/*!
  * \brief Extract the port number from the generated schedule.
  * \param FName The emitted file to be analyzed.
  * \param Ports Write the result in the allocated vector buffer.
@@ -218,17 +223,6 @@ void extractDFGFromScope(DFGFile &DF, dsa::xform::CodeGenContext &CGC);
  */
 ConfigInfo extractDFGPorts(std::string FName, DFGFile &DF, std::vector<CoalMemoryInfo> &CMIs,
                            SpadInfo &SI);
-
-/*!
- * \brief Analyze the offset between two memory operation indices.
- * \param SA The first index.
- * \param SB The second index.
- * \param SE Scalar evolution for memory stream analysis.
- * \param DLI The loop information associated to the DFG.
- * \param Signed If result of analysis is signed.
- */
-int64_t indexPairOffset(const SCEV *SA, const SCEV *SB, ScalarEvolution &SE,
-                        const DFGLoopInfo &DLI, bool Signed);
 
 /*!
  * \brief Analyze the information of accumulator.
@@ -247,28 +241,25 @@ void analyzeAccumulatorTags(DFGFile &DF, xform::CodeGenContext &CGC,
  * \param DLI The loop information associated to the DFG.
  * \param DSU The disjoint union to be updated by coalescing.
  */
-template<typename T>
-void gatherMemoryCoalescingImpl(DFGBase *DB, ScalarEvolution &SE, const DFGLoopInfo& DLI,
-                                std::vector<int> &DSU) {
+template<typename EntryT, typename CoalEntryT>
+void coalesceAffineMemoryEntries(DFGBase *DB, ScalarEvolution &SE, const DFGLoopInfo& DLI,
+                                 std::vector<int> &DSU) {
   bool Iterative = true;
   while (Iterative) {
     Iterative = false;
     for (int i = 0, n = DB->Entries.size(); i < n; ++i) { // NOLINT
-      if (auto Node1 = dyn_cast<T>(DB->Entries[i])) {
+      if (auto Node1 = dyn_cast<EntryT>(DB->Entries[i])) {
         for (int j = i + 1; j < n; ++j) { // NOLINT
-          if (auto Node2 = dyn_cast<T>(DB->Entries[j])) {
-            auto PtrA = Node1->underlyingInst()->getOperand(T::PtrOperandIdx);
-            auto PtrB = Node2->underlyingInst()->getOperand(T::PtrOperandIdx);
+          if (auto Node2 = dyn_cast<EntryT>(DB->Entries[j])) {
+            auto PtrA = Node1->underlyingInst()->getOperand(EntryT::PtrOperandIdx);
+            auto PtrB = Node2->underlyingInst()->getOperand(EntryT::PtrOperandIdx);
             if (PtrA->getType() != PtrB->getType()) {
               continue;
             }
             auto Offset = indexPairOffset(SE.getSCEV(PtrA), SE.getSCEV(PtrB), SE, DLI, false);
-            if (Offset != -1 && Offset <= 64) {
-              if (utils::DSUGetSet(i, DSU) != utils::DSUGetSet(j, DSU)) {
-                DSU[utils::DSUGetSet(i, DSU)] = utils::DSUGetSet(j, DSU);
-                Iterative = true;
-                break;
-              }
+            if (abs(Offset) == Node1->getType()->getScalarSizeInBits()) {
+              auto *NewEntry = new CoalEntryT();
+              NewEntry->Coal.push_back(DB->Entries[i], DB->Entries[j]);
             }
           }
         }

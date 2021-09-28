@@ -112,6 +112,13 @@ public:
   virtual Value *UnrollConstant();
 
   /*!
+   * \brief Return the name of the given instruction in the DFG.
+   * \param Val The value to find the name.
+   * \param VecIdx The corresponding vector lane to name.
+   */
+  std::string nameOf(Value *Val, int VecIdx);
+
+  /*!
    * \brief Entrance of the visitor pattern.
    */
   virtual void accept(dsa::DFGVisitor *);

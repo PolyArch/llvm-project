@@ -10,8 +10,8 @@
 #include "CodeXform.h"
 #include "DFGAnalysis.h"
 #include "DFGEntry.h"
-#include "Pass.h"
 #include "DFGIR.h"
+#include "Pass.h"
 #include "Util.h"
 #include "dsa-ext/rf.h"
 
@@ -85,6 +85,7 @@ bool StreamSpecialize::runOnFunction(Function &F) {
     DFGFile DF(Name, Start, End, this);
     dsa::analysis::extractDFGFromScope(DF, CGC);
     dsa::analysis::analyzeDFGLoops(DF, CGC, DAR);
+    dsa::analysis::analyzeAffineMemoryAccess(DF, CGC, DAR);
     dsa::analysis::gatherMemoryCoalescing(DF, *SE, DAR);
     dsa::analysis::extractSpadFromScope(DF, CGC, DAR);
     dsa::analysis::analyzeAccumulatorTags(DF, CGC, DAR);

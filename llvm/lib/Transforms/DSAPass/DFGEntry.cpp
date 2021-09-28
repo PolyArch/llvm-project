@@ -4,8 +4,8 @@
 #include <sstream>
 
 #include "DFGEntry.h"
-#include "StreamAnalysis.h"
 #include "DFGIR.h"
+#include "StreamAnalysis.h"
 #include "Util.h"
 
 #define DEBUG_TYPE "stream-specialize"
@@ -39,7 +39,7 @@ Predicate *DFGEntry::getPredicate(int *X) {
           Res = Entry->getPredicate();
         } else {
           if (Entry->getPredicate()) {
-            assert(Res == Entry->getPredicate());
+            CHECK(Res == Entry->getPredicate());
           }
         }
       }
@@ -110,10 +110,7 @@ int DFGEntry::getAbstainBit() {
 }
 
 std::string DFGEntry::name(int Idx) {
-  if (Idx != -1 && shouldUnroll()) {
-    return formatv("sub{0}_v{1}_{2}", Parent->ID, ID, Idx);
-  }
-  return formatv("sub{0}_v{1}_", Parent->ID, ID);
+  return Parent->nameOf(underlyingInst(), Idx);
 }
 
 PortBase::PortBase(DFGBase *Parent_) // NOLINT
@@ -123,7 +120,7 @@ PortBase::PortBase(DFGBase *Parent_) // NOLINT
 
 OutputPort::OutputPort(DFGBase *Parent_, Value *Value_) : PortBase(Parent_) { // NOLINT
   auto *Inst = dyn_cast<Instruction>(Value_);
-  assert(Inst);
+  CHECK(Inst);
 
   LLVM_DEBUG(Inst->dump());
 
@@ -396,7 +393,7 @@ Value *Accumulator::numValuesProduced() {
       }
     }
   }
-  assert(false);
+  CHECK(false);
   return nullptr;
 }
 
@@ -707,25 +704,6 @@ int PortBase::vectorizeFactor() {
   return shouldUnroll() ? Parent->getUnroll() : 1;
 }
 
-#define VISIT_IMPL(TYPE) void TYPE::accept(dsa::DFGEntryVisitor *V) { V->Visit(this); }
-VISIT_IMPL(DFGEntry)
-VISIT_IMPL(ComputeBody)
-VISIT_IMPL(Predicate)
-VISIT_IMPL(Accumulator)
-VISIT_IMPL(PortBase)
-VISIT_IMPL(InputPort)
-VISIT_IMPL(CtrlMemPort)
-VISIT_IMPL(MemPort)
-VISIT_IMPL(CoalescedMemPort)
-VISIT_IMPL(StreamInPort)
-VISIT_IMPL(InputConst)
-VISIT_IMPL(OutputPort)
-VISIT_IMPL(PortMem)
-VISIT_IMPL(StreamOutPort)
-VISIT_IMPL(IndMemPort)
-VISIT_IMPL(AtomicPortMem)
-#undef VISIT_IMPL
-
 namespace dsa {
 
 void DFGEntryVisitor::Visit(DFGEntry *Node) {}
@@ -742,7 +720,6 @@ VISIT_IMPL(PortBase, DFGEntry)
 VISIT_IMPL(InputPort, PortBase)
 VISIT_IMPL(CtrlMemPort, InputPort)
 VISIT_IMPL(MemPort, InputPort)
-VISIT_IMPL(CoalescedMemPort, InputPort)
 VISIT_IMPL(StreamInPort, InputPort)
 VISIT_IMPL(InputConst, InputPort)
 VISIT_IMPL(IndMemPort, InputPort)
@@ -751,6 +728,21 @@ VISIT_IMPL(PortMem, OutputPort)
 VISIT_IMPL(StreamOutPort, OutputPort)
 VISIT_IMPL(AtomicPortMem, OutputPort)
 
+
 #undef VISIT_IMPL
+
+#define COAL_VISIT_IMPL(Ext, Super)       \
+  void DFGEntryVisitor::Visit(Ext *SMP) { \
+    for (auto *Elem : SMP->Coal) {        \
+      Elem->accept(this);                 \
+    }                                     \
+    Visit(static_cast<Super*>(SMP));      \
+  }
+
+COAL_VISIT_IMPL(SLPMemPort, InputPort)
+COAL_VISIT_IMPL(SLPPortMem, OutputPort)
+
+#undef COAL_VISIT_IMPL
+
 
 } // namespace dsa

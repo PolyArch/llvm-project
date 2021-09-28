@@ -24,8 +24,8 @@
 #include "llvm/Transforms/Utils/UnrollLoop.h"
 
 #include "CodeXform.h"
-#include "StreamAnalysis.h"
 #include "DFGIR.h"
+#include "StreamAnalysis.h"
 #include "Util.h"
 
 #include "dsa-ext/rf.h"
@@ -754,3 +754,18 @@ bool TemporalDFG::InThisScope(Instruction *Inst) {
 void DFGBase::accept(dsa::DFGVisitor *Visitor) { Visitor->Visit(this); }
 void DedicatedDFG::accept(dsa::DFGVisitor *Visitor) { Visitor->Visit(this); }
 void TemporalDFG::accept(dsa::DFGVisitor *Visitor) { Visitor->Visit(this); }
+
+std::string DFGBase::nameOf(Value *Val, int VecIdx) {
+  auto *Entry = InThisDFG(Val);
+  CHECK(Entry);
+  auto Vs = Entry->underlyingValues();
+  auto Iter = std::find(Vs.begin(), Vs.end(), Val);
+  CHECK(Iter != Vs.end());
+  int ValueIdx = Iter - Vs.begin();
+  std::ostringstream OSS;
+  OSS << "sub" << ID << "_v" << Entry->ID << "_" << ValueIdx << "_";
+  if (VecIdx != -1 && Entry->shouldUnroll()) {
+    OSS << VecIdx;
+  }
+  return OSS.str();
+}
