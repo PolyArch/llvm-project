@@ -29,35 +29,6 @@ struct ConfigInfo {
   ConfigInfo() : Name(""), Bitstream(""), Size(0) {}
 };
 
-/*! \brief The result of coalesced SLP memory operation. */
-struct CoalMemoryInfo {
-  /*!
-   * \brief Which set of memory coalescing this memory operation belongs to.
-   */
-  std::vector<int> Belong;
-
-  struct CoalescedEntry {
-    /*!
-     * \brief The ID of the DFGEntry.
-     */
-    int ID{-1};
-    /*!
-     * \brief The offset relative to the first element of the cluster.
-     */
-    int Offset{INT_MIN};
-
-    CoalescedEntry(int ID) : ID(ID) {}
-  };
-  /*!
-   * \brief Each vector is a cluster of coalesced memory.
-   */
-  std::vector<std::vector<CoalescedEntry>> Clusters;
-  /*!
-   * \brief The port number of each coalesced port.
-   */
-  std::vector<int> ClusterPortNum;
-};
-
 /*!
  * \brief The information of the scratchpads.
  */
@@ -158,11 +129,6 @@ struct DFGAnalysisResult {
    */
   SpadInfo SI;
   /*!
-   * \brief The information of SLP memory coalescing in each DFG.
-   *        Filled by `gatherMemoryCoalescing`.
-   */
-  std::vector<CoalMemoryInfo> CMI;
-  /*!
    * \brief The loop information of each DFG. Filled by `analyzeDFGLoops`.
    */
   std::vector<DFGLoopInfo> DLI;
@@ -221,8 +187,7 @@ void analyzeAffineMemoryAccess(DFGFile &DF, dsa::xform::CodeGenContext &CGC,
  * \param Ports Write the result in the allocated vector buffer.
  * \param CMIs The coalesced memory.
  */
-ConfigInfo extractDFGPorts(std::string FName, DFGFile &DF, std::vector<CoalMemoryInfo> &CMIs,
-                           SpadInfo &SI);
+ConfigInfo extractDFGPorts(std::string FName, DFGFile &DF, SpadInfo &SI);
 
 /*!
  * \brief Analyze the information of accumulator.

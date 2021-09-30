@@ -100,21 +100,15 @@ bool StreamSpecialize::runOnFunction(Function &F) {
     }
     auto *SBCONFIG = getenv("SBCONFIG");
     CHECK(SBCONFIG);
-    auto Cmd = formatv("ss_sched --dummy {0} {1} {2} -e 0 > /dev/null", "-v", SBCONFIG, Name).str();
+    auto Cmd = formatv("ss_sched {0} {1} {2} -e 0 > /dev/null", "-v", SBCONFIG, Name).str();
     LLVM_DEBUG(DSA_INFO << Cmd);
     CHECK(system(Cmd.c_str()) == 0) << "Not successfully scheduled! Try another DFG!";
-    // TODO(@were): When making the DFG's of index expression is done, uncomment
-    // these. auto Graphs = DFG.DFGFilter<DFGBase>();
-    // std::vector<std::vector<int>> Ports(Graphs.size());
-    // for (int i = 0, n = Graphs.size(); i < n; ++i) {
-    //   Ports[i].resize(Graphs[i]->Entries.size(), -1);
-    // }
-    auto CI = dsa::analysis::extractDFGPorts(Name, DF, DAR.CMI, DAR.SI);
+    auto CI = dsa::analysis::extractDFGPorts(Name, DF, DAR.SI);
     dsa::xform::injectConfiguration(CGC, CI, Start, End);
     if (dsa::utils::ModuleContext().EXTRACT) {
       continue;
     }
-    dsa::xform::injectStreamIntrinsics(CGC, DF, DAR.CMI, DAR.SI, DAR);
+    dsa::xform::injectStreamIntrinsics(CGC, DF, DAR);
     eraseOffloadedInstructions(DF, CGC);
   }
   if (!dsa::utils::ModuleContext().EXTRACT) {

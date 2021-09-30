@@ -154,9 +154,7 @@ void injectConfiguration(CodeGenContext &CGC, analysis::ConfigInfo &CI,
  * \brief Inject stream intrinsics.
  * \param CGC The context of code injection.
  */
-void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF,
-                            std::vector<analysis::CoalMemoryInfo> &CMIs,
-                            analysis::SpadInfo &SI, analysis::DFGAnalysisResult &DAR);
+void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnalysisResult &DAR);
 
 /*!
  *  \brief Erase offloaded instructions.

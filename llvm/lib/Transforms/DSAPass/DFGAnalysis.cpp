@@ -741,8 +741,7 @@ void extractDFGFromScope(DFGFile &DF, dsa::xform::CodeGenContext &CGC) {
   }
 }
 
-ConfigInfo extractDFGPorts(std::string FName, DFGFile &DF, std::vector<CoalMemoryInfo> &CMIs,
-                           SpadInfo &SI) {
+ConfigInfo extractDFGPorts(std::string FName, DFGFile &DF, SpadInfo &SI) {
   std::ifstream Ifs(FName + ".h");
   auto DFGs = DF.DFGFilter<DFGBase>();
 

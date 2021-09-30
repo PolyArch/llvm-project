@@ -968,9 +968,7 @@ void InjectLinearStreamImpl(CodeGenContext &CGC, const SCEV *Idx, int MaxOffset,
 }
 
 
-void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF,
-                            std::vector<analysis::CoalMemoryInfo> &CMIs,
-                            analysis::SpadInfo &SI, analysis::DFGAnalysisResult &DAR) {
+void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnalysisResult &DAR) {
 
   auto DFGs = DF.DFGFilter<DFGBase>();
 
@@ -1446,8 +1444,8 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF,
   for (int i = 0; i < (int) DFGs.size(); ++i) { // NOLINT
     auto *DFG = DFGs[i];
     auto &DLI = DAR.DLI[i];
-    UpdateStreamInjector USI(CGC, DLI, SI);
-    StreamIntrinsicInjector SII(CGC, DLI, SI, DAR.ACCI[i]);
+    UpdateStreamInjector USI(CGC, DLI, DAR.SI);
+    StreamIntrinsicInjector SII(CGC, DLI, DAR.SI, DAR.ACCI[i]);
     CGC.IB->SetInsertPoint(DFG->DefaultIP());
     CGC.SEE.setInsertPoint(DFG->DefaultIP());
     for (auto *Elem : ReorderEntries(DFG)) {
@@ -1464,7 +1462,7 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF,
 
   // Replace all the local memory variables by addresses on spads.
   auto *IB = CGC.IB;
-  for (auto &Elem : SI.Offset) {
+  for (auto &Elem : DAR.SI.Offset) {
     Value *SAR = IB->getInt64(Elem.second);
     SAR = IB->CreateIntToPtr(SAR, Elem.first->getType());
     Elem.first->replaceAllUsesWith(SAR);
