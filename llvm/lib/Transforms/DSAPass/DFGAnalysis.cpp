@@ -772,11 +772,13 @@ ConfigInfo extractDFGPorts(std::string FName, DFGFile &DF, std::vector<CoalMemor
       // #define P_dfgX_subY_vZ
       if (Token.find(IOPortPrefix) == 0) {
         int X, Y;
-        Token = Token.substr(IOPortPrefix.size());
-        CHECK(sscanf(Token.c_str(), "%d_v%d", &X, &Y) == 2);
+        auto Stripped = Token.substr(IOPortPrefix.size());
+        CHECK(sscanf(Stripped.c_str(), "%d_v%d", &X, &Y) == 2);
         int Port;
         Iss >> Port;
         LLVM_DEBUG(DSA_INFO << "sub" << X << "v" << Y << " -> " << Port << "\n");
+        CHECK(X >= 0 && X < (int) DFGs.size()) << Token << ": " << X << ", " << DFGs.size();
+        CHECK(Y >= 0 && Y < (int) DFGs[X]->Entries.size());
         auto *Entry = DFGs[X]->Entries[Y];
         if (auto *PB = dyn_cast<PortBase>(Entry)) {
           PB->SoftPortNum = Port;
@@ -1031,7 +1033,6 @@ void constructCoalescedMemory(DFGBase *DB, std::vector<DFGEntry*> &Entries,
         return KeyA < KeyB;
       };
       std::sort(V.begin(), V.end(), FCmp);
-      std::reverse(V.begin(), V.end());
       for (int j = 0; j < (int) V.size(); ++j) { // NOLINT
         V[j]->ID = j;
       }

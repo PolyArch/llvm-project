@@ -100,7 +100,7 @@ public:
   /// Get the current context
   virtual LLVMContext &getCtx();
   /// The blocks to be offloaded to the dataflow
-  virtual SmallVector<BasicBlock *, 0> getBlocks() = 0;
+  virtual std::vector<BasicBlock*> getBlocks() = 0;
   /// Dump the dfg to an I/O stream
   virtual void dump(std::ostringstream &os);
   /// Check if this given instruction/Block is in the DFG
@@ -233,7 +233,7 @@ public:
   TemporalDFG(DFGFile *Parent, IntrinsicInst *Begin, IntrinsicInst *End);
 
   /// Return the blocks of the DFG
-  SmallVector<BasicBlock *, 0> getBlocks() override;
+  std::vector<BasicBlock*> getBlocks() override;
   /// Dump the DFG to text format
   void dump(std::ostringstream &OS) override;
   /// Check if this given instruction is in the DFG
@@ -315,7 +315,7 @@ public:
   /// Inputs of this DFG
   virtual void dump(std::ostringstream &os) override;
   /// Return the blocks of the DFG
-  SmallVector<BasicBlock *, 0> getBlocks() override;
+  std::vector<BasicBlock*> getBlocks() override;
   /// Inner/outer-most loop level
   Loop *OuterMost();
   Loop *InnerMost();

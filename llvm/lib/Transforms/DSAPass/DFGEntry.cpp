@@ -113,6 +113,19 @@ std::string DFGEntry::name(int Idx) {
   return Parent->nameOf(underlyingInst(), Idx);
 }
 
+std::string OutputPort::name(int VecIdx) {
+  auto *Entry = this;
+  CHECK(Entry);
+  auto Vs = Entry->underlyingValues();
+  CHECK(Vs.size() == 1);
+  std::ostringstream OSS;
+  OSS << "sub" << Parent->ID << "_v" << Entry->ID << "_";
+  if (VecIdx != -1 && Entry->shouldUnroll()) {
+    OSS << VecIdx;
+  }
+  return OSS.str();
+}
+
 PortBase::PortBase(DFGBase *Parent_) // NOLINT
     : DFGEntry(Parent_), SoftPortNum(-1), IntrinInjected(false) {
   Kind = kPortBase;
@@ -194,12 +207,18 @@ Instruction *DFGEntry::underlyingInst() { return nullptr; }
 Value *DFGEntry::underlyingValue() { return underlyingInst(); }
 
 bool DFGEntry::isInMajor() {
-  if (!underlyingInst()) {
+  auto Insts = underlyingInsts();
+  if (Insts.empty()) {
     return false;
   }
-  for (auto *BB : Parent->getBlocks())
-    if (underlyingInst()->getParent() == BB)
+  auto Blocks = Parent->getBlocks();
+  for (auto *Elem : Insts) {
+    Elem->getParent();
+    auto Iter = std::find(Blocks.begin(), Blocks.end(), Elem->getParent());
+    if (Iter != Blocks.end()) {
       return true;
+    }
+  }
   return false;
 }
 

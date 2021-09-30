@@ -389,7 +389,7 @@ struct DFGPrinter : dsa::DFGVisitor {
           if (i)
             OS << ", ";
           if (auto *EntryOp = CB->Parent->InThisDFG(Val)) {
-            OS << CB->Parent->nameOf(Val, i);
+            OS << CB->Parent->nameOf(Val, vec);
             CtrlBit.addControlledMemoryStream(i, EntryOp);
           } else {
             OS << ValueToOperandText(Val);
@@ -428,7 +428,8 @@ struct DFGPrinter : dsa::DFGVisitor {
       int Idx = 0;
       for (int i = 0; i < Degree; ++i) { // NOLINT
         for (int j = 0; j < (int) SMP->Coal.size(); ++j) { // NOLINT
-          OS << SMP->Coal[j]->name(j) << " = " << Name << Idx << "\n";
+          auto *Val = SMP->Coal[j]->underlyingInst();
+          OS << SMP->Parent->nameOf(Val, i) << " = " << Name << Idx << "\n";
           ++Idx;
         }
       }
@@ -518,7 +519,9 @@ struct DFGPrinter : dsa::DFGVisitor {
       CHECK(Entry);
       int N = (Entry->shouldUnroll() ? OP->Parent->getUnroll() : 1);
       for (int i = 0; i < N; ++i) { // NOLINT
-        OS << OP->name(i) << " = " << Entry->name(i) << "\n";
+        auto LHS = OP->name(i);
+        auto RHS = Entry->name(i);
+        OS << LHS << " = " << RHS << "\n";
       }
       OS << "Output" << OP->Output->getType()->getScalarSizeInBits() << ": "
          << OP->name();
@@ -1184,6 +1187,31 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF,
       MP->IntrinInjected = true;
     }
 
+    void Visit(SLPMemPort *SMP) override {
+      auto *IB = CGC.IB;
+      IB->SetInsertPoint(SMP->Parent->DefaultIP());
+
+      // Wrappers
+      auto *DFG = SMP->Parent;
+      int Port = SMP->SoftPortNum;
+      auto *MP = SMP->Coal[0];
+      // Handle data stream with predicate
+      if (MP->getPredicate()) {
+        CHECK(false) << "Predicated stream should be handled in CtrlMemPort.";
+      }
+      const auto *SCEVIdx = CGC.SE.getSCEV(MP->Load->getPointerOperand());
+      int DType = MP->Load->getType()->getScalarSizeInBits() / 8;
+      auto Cond = [MP] (analysis::SpadInfo::BuffetEntry &BE) { return std::get<0>(BE) == MP; };
+      auto BIter = std::find_if(SI.Buffet.begin(), SI.Buffet.end(), Cond);
+      CHECK(SMP->Coal.size() >= 2);
+      int MaxOffset = (SMP->Coal.size() - 1) * DType;
+      InjectLinearStreamImpl(CGC, SCEVIdx, MaxOffset, DLI.LoopNest, DLI.TripCount,
+                             Port, DFG->getUnroll(), DType, DMO_Read, (Padding) MP->fillMode(), SI,
+                             BIter - SI.Buffet.begin(), ACCI.findReset(MP->ID));
+
+      SMP->IntrinInjected = true;
+    }
+
     void Visit(PortMem *PM) override {
       auto *DFG = PM->Parent;
       if (PM->IntrinInjected)
@@ -1197,6 +1225,23 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF,
                              DFG->getUnroll(), DType, DMO_Write, DP_NoPadding, SI, -1, nullptr);
 
       PM->IntrinInjected = true;
+    }
+
+    void Visit(SLPPortMem *SPM) override {
+      auto *DFG = SPM->Parent;
+      auto *PM = SPM->Coal[0];
+
+      CGC.IB->SetInsertPoint(DFG->DefaultIP());
+      CGC.SEE.setInsertPoint(DFG->DefaultIP());
+      const auto *SCEVIdx = CGC.SE.getSCEV(PM->Store->getPointerOperand());
+      int DType = PM->Store->getValueOperand()->getType()->getScalarSizeInBits() / 8;
+      CHECK(SPM->Coal.size() >= 2);
+      int MaxOffset = (SPM->Coal.size() - 1) * DType;
+      InjectLinearStreamImpl(CGC, SCEVIdx, MaxOffset, DLI.LoopNest, DLI.TripCount,
+                             SPM->SoftPortNum, DFG->getUnroll(), DType, DMO_Write, DP_NoPadding,
+                             SI, -1, nullptr);
+
+      SPM->IntrinInjected = true;
     }
 
     void Visit(InputConst *IC) override {
@@ -1413,7 +1458,7 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF,
 
   for (auto &DD : DFGs) {
     for (auto &PB : DD->EntryFilter<PortBase>()) {
-      CHECK(PB->IntrinInjected);
+      CHECK(PB->IntrinInjected) << PB->dump();
     }
   }
 
@@ -1475,8 +1520,11 @@ void eraseOffloadedInstructions(DFGFile &DF, CodeGenContext &CGC) {
       if (auto *P = dyn_cast<Predicate>(Entry)) {
         for (auto *Elem : P->Cond)
           F(Elem);
-      } else if (Entry->underlyingInst()) {
-        F(Entry->underlyingInst());
+      } else {
+        auto Insts = Entry->underlyingInsts();
+        for (auto *Inst : Insts) {
+          F(Inst);
+        }
       }
     }
 

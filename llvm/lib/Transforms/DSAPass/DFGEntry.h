@@ -92,7 +92,7 @@ struct DFGEntry {
   virtual int getAbstainBit();
 
   /// Get the name of the entry to be dumped in the DFG textformat
-  std::string name(int Idx = -1);
+  virtual std::string name(int Idx = -1);
 
   /// Get the predicate of the entry if exists. O.w. return nullptr.
   virtual Predicate *getPredicate(int *MaskPtr = nullptr);
@@ -295,6 +295,10 @@ struct SLPIO : TBase {
     TBase::Kind = K;
   }
 
+  bool shouldUnroll() override {
+    return TBase::shouldUnroll();
+  }
+
   static bool classof(const DFGEntry *DE) { return DE->Kind == K; }
 };
 
@@ -353,6 +357,11 @@ struct OutputPort : PortBase {
    */
   bool shouldUnroll() override;
 
+  /*!
+   * \brief The name of this output port in DFG.
+   */
+  std::string name(int Idx = -1) override;
+
   static bool classof(const DFGEntry *DE) {
     return DE->Kind > kOutPortStarts && DE->Kind < kOutPortEnds;
   }
@@ -375,6 +384,15 @@ struct PortMem : OutputPort {
 };
 
 using SLPPortMem = SLPIO<PortMem, OutputPort, kSLPPortMem>;
+
+template<>
+inline bool SLPPortMem::shouldUnroll() {
+  bool Res = Coal[0]->shouldUnroll();
+  for (int i = 1; i < (int) Coal.size(); ++i) { // NOLINT
+    CHECK(Coal[i]->shouldUnroll() == Res);
+  }
+  return Res;
+}
 
 // Value will be consumed by another dfg
 struct StreamOutPort : OutputPort {

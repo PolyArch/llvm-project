@@ -719,14 +719,14 @@ int DFGBase::getNextReserved() {
   // return Res;
 }
 
-SmallVector<BasicBlock *, 0> DedicatedDFG::getBlocks() {
-  SmallVector<BasicBlock *, 0> Res(InnerMost()->getBlocks().begin(),
-                                   InnerMost()->getBlocks().end());
+std::vector<BasicBlock *> DedicatedDFG::getBlocks() {
+  std::vector<BasicBlock *> Res(InnerMost()->getBlocks().begin(),
+                                InnerMost()->getBlocks().end());
   return Res;
 }
 
-SmallVector<BasicBlock *, 0> TemporalDFG::getBlocks() {
-  SmallVector<BasicBlock *, 0> Res{Begin->getParent()};
+std::vector<BasicBlock *> TemporalDFG::getBlocks() {
+  std::vector<BasicBlock *> Res{Begin->getParent()};
   return Res;
 }
 
