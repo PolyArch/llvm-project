@@ -757,7 +757,7 @@ void TemporalDFG::accept(dsa::DFGVisitor *Visitor) { Visitor->Visit(this); }
 
 std::string DFGBase::nameOf(Value *Val, int VecIdx) {
   auto *Entry = InThisDFG(Val);
-  CHECK(Entry);
+  CHECK(Entry) << "CANNOT find entry for " << Val << ": " << *Val;
   auto Vs = Entry->underlyingValues();
   auto Iter = std::find(Vs.begin(), Vs.end(), Val);
   CHECK(Iter != Vs.end());

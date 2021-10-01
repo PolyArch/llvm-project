@@ -12,6 +12,7 @@
 #include "DFGEntry.h"
 #include "DFGIR.h"
 #include "Pass.h"
+#include "StreamAnalysis.h"
 #include "Util.h"
 #include "dsa-ext/rf.h"
 
@@ -87,6 +88,7 @@ bool StreamSpecialize::runOnFunction(Function &F) {
     dsa::analysis::analyzeDFGLoops(DF, CGC, DAR);
     dsa::analysis::analyzeAffineMemoryAccess(DF, CGC, DAR);
     dsa::analysis::gatherMemoryCoalescing(DF, *SE, DAR);
+    dsa::analysis::fuseAffineDimensions(DF, CGC, DAR);
     dsa::analysis::extractSpadFromScope(DF, CGC, DAR);
     dsa::analysis::analyzeAccumulatorTags(DF, CGC, DAR);
     {
@@ -98,16 +100,11 @@ bool StreamSpecialize::runOnFunction(Function &F) {
     if (dsa::utils::ModuleContext().EXTRACT) {
       continue;
     }
-    auto *SBCONFIG = getenv("SBCONFIG");
-    CHECK(SBCONFIG);
-    auto Cmd = formatv("ss_sched {0} {1} {2} -e 0 > /dev/null", "-v", SBCONFIG, Name).str();
-    LLVM_DEBUG(DSA_INFO << Cmd);
-    CHECK(system(Cmd.c_str()) == 0) << "Not successfully scheduled! Try another DFG!";
     auto CI = dsa::analysis::extractDFGPorts(Name, DF, DAR.SI);
-    dsa::xform::injectConfiguration(CGC, CI, Start, End);
     if (dsa::utils::ModuleContext().EXTRACT) {
       continue;
     }
+    dsa::xform::injectConfiguration(CGC, CI, Start, End);
     dsa::xform::injectStreamIntrinsics(CGC, DF, DAR);
     eraseOffloadedInstructions(DF, CGC);
   }

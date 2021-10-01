@@ -163,8 +163,18 @@ struct Predicate : DFGEntry {
 // A accumulator Instruction
 struct Accumulator : ComputeBody {
 
+  /*!
+   * \brief The loop level this accumulator should be reset.
+   */
+  int ResetLevel{-1};
+
   Accumulator(DFGBase *Parent, Instruction *Operation);
+  /*!
+   * \brief If this value should be unrolled in DFG.
+   */
   bool shouldUnroll() override;
+
+  // TODO(@were): Deprecate this!
   Value *numValuesProduced();
   /*!
    * \brief The entrance of the visitor pattern.
@@ -201,6 +211,10 @@ struct InputPort : PortBase {
    * \brief The entrance of the visitor pattern.
    */
   inline virtual void accept(dsa::DFGEntryVisitor *) override;
+  /*!
+   * \brief If this memory stream should be tagged.
+   */
+  Accumulator *Tagged{nullptr};
 
   static bool classof(const DFGEntry *DE) {
     return DE->Kind > kInPortStarts && DE->Kind < kInPortEnds;
@@ -226,6 +240,7 @@ struct CtrlMemPort : InputPort {
   static bool classof(const DFGEntry *DE) { return DE->Kind == kCtrlMemPort; }
 };
 
+
 // Memory port can be either a spad or a DMA
 struct MemPort : InputPort {
   /*!
@@ -235,10 +250,24 @@ struct MemPort : InputPort {
 
   MemPort(DFGBase *Parent, LoadInst *Load);
 
-  static const int PtrOperandIdx;
+  /*!
+   * \brief The operand idx of pointer in the underlying instruction.
+   *        Both Load and Store require a uniform interface to extract the pointers
+   *        for the functions analyze the pointers.
+   */
+  static constexpr int PtrOperandIdx = 0;
 
+  /*!
+   * \brief If this entry should be unrolled.
+   */
   bool shouldUnroll() override;
+  /*!
+   * \brief The corresponding instruction in LLVM.
+   */
   Instruction *underlyingInst() override;
+  /*!
+   * \brief The policy of data padding.
+   */
   int fillMode();
   /*!
    * \brief The entrance of the visitor pattern.
@@ -372,7 +401,7 @@ struct PortMem : OutputPort {
   StoreInst *Store;
   PortMem(DFGBase *Parent, StoreInst *Store);
 
-  static const int PtrOperandIdx;
+  static constexpr int PtrOperandIdx = 1;
 
   Instruction *underlyingInst() override;
   /*!

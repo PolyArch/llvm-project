@@ -74,44 +74,6 @@ struct DFGLoopInfo {
     LoopNest(L), TripCount(T) {}
 };
 
-/*!
- * \brief The information of accumulator.
- */
-struct AccumulatorInfo {
-  struct Entry {
-    /*!
-     * \brief The index of the accumulator.
-     */
-    int AccIdx{-1};
-    /*!
-     * \brief The index of the input tag.
-     */
-    int TagIdx{-1};
-    /*!
-     * \brief The loop level of value reset and produce.
-     */
-    int ResetLevel{-1};
-  };
-  /*!
-   * \brief The DFG this information belongs to.
-   */
-  DedicatedDFG *DD{nullptr};
-  /*!
-   * \brief The information accumulators.
-   */
-  std::vector<Entry> Entries;
-  /*!
-   * \brief The ID's of memory port to be zero padding.
-   */
-  // TODO(@were): Deprecate the consumed by acc in Transformation.cpp; Use this!
-  std::vector<int> ZeroPadding;
-
-  /*!
-   * \brief Check if the given ID should be tagged.
-   * \param ID The given ID.
-   */
-  Entry *findReset(int ID);
-};
 
 /*! \brief The result of DFG analysis. */
 struct DFGAnalysisResult {
@@ -137,10 +99,6 @@ struct DFGAnalysisResult {
    *        Filled by `analyzeDFGMemoryAccess`.
    */
   std::vector<std::unordered_map<DFGEntry*, LinearInfo>> LI;
-  /*!
-   * \brief The analysis result for accumulation. Filled by `analyzeAccumulatorTags`.
-   */
-  std::vector<AccumulatorInfo> ACCI;
 };
 
 /*!
@@ -193,45 +151,10 @@ ConfigInfo extractDFGPorts(std::string FName, DFGFile &DF, SpadInfo &SI);
  * \brief Analyze the information of accumulator.
  * \param DF The DFG file to be analyzed.
  * \param CGC The context required for the analysis.
- * \param VACCI The result to be written to.
+ * \param DAR The result to be written to.
  */
 void analyzeAccumulatorTags(DFGFile &DF, xform::CodeGenContext &CGC,
                             DFGAnalysisResult &DAR);
-
-/*!
- * \brief The implementation of coalescing memory operations.
- * @tparam T The DFGEntry type to be gathered, either MemPort or PortMem.
- * \param DB The DFG to be analyzed.
- * \param SE Scalar evolution for memory stream analysis.
- * \param DLI The loop information associated to the DFG.
- * \param DSU The disjoint union to be updated by coalescing.
- */
-template<typename EntryT, typename CoalEntryT>
-void coalesceAffineMemoryEntries(DFGBase *DB, ScalarEvolution &SE, const DFGLoopInfo& DLI,
-                                 std::vector<int> &DSU) {
-  bool Iterative = true;
-  while (Iterative) {
-    Iterative = false;
-    for (int i = 0, n = DB->Entries.size(); i < n; ++i) { // NOLINT
-      if (auto Node1 = dyn_cast<EntryT>(DB->Entries[i])) {
-        for (int j = i + 1; j < n; ++j) { // NOLINT
-          if (auto Node2 = dyn_cast<EntryT>(DB->Entries[j])) {
-            auto PtrA = Node1->underlyingInst()->getOperand(EntryT::PtrOperandIdx);
-            auto PtrB = Node2->underlyingInst()->getOperand(EntryT::PtrOperandIdx);
-            if (PtrA->getType() != PtrB->getType()) {
-              continue;
-            }
-            auto Offset = indexPairOffset(SE.getSCEV(PtrA), SE.getSCEV(PtrB), SE, DLI, false);
-            if (abs(Offset) == Node1->getType()->getScalarSizeInBits()) {
-              auto *NewEntry = new CoalEntryT();
-              NewEntry->Coal.push_back(DB->Entries[i], DB->Entries[j]);
-            }
-          }
-        }
-      }
-    }
-  }
-}
 
 /*!
  * \brief Gather all the memory that can be SLP-coalesced in the given DFG file.
@@ -253,6 +176,14 @@ void gatherMemoryCoalescing(DFGFile &DF, ScalarEvolution &SE, DFGAnalysisResult 
  */
 std::pair<std::set<Instruction *>, std::set<Instruction *>>
 bfsOperands(DFGBase *DB, Instruction *From, DominatorTree *DT);
+
+/*!
+ * \brief Fuse the inner dimensions of the given analyzed stream access pattern.
+ * \param DF The DFG file to be analyzed.
+ * \param CGC The context required for the analysis.
+ * \param DAR The result to be written to.
+ */
+void fuseAffineDimensions(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisResult &DAR);
 
 } // namespace analysis
 } // namespace dsa

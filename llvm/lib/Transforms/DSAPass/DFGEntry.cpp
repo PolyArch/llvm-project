@@ -18,9 +18,6 @@ const char *KindStr[]= {
 #undef MACRO
 };
 
-const int MemPort::PtrOperandIdx = 0;
-const int PortMem::PtrOperandIdx = 1;
-
 DFGEntry::DFGEntry(DFGBase *Parent_) : Parent(Parent_) { // NOLINT
   ID = Parent_->Entries.size();
 }
@@ -110,7 +107,7 @@ int DFGEntry::getAbstainBit() {
 }
 
 std::string DFGEntry::name(int Idx) {
-  return Parent->nameOf(underlyingInst(), Idx);
+  return Parent->nameOf(underlyingValue(), Idx);
 }
 
 std::string OutputPort::name(int VecIdx) {
@@ -420,8 +417,7 @@ int MemPort::fillMode() {
   if (auto *DD = dyn_cast<DedicatedDFG>(Parent)) {
     if (Parent->getUnroll() <= 1)
       return DP_NoPadding;
-    return DD->ConsumedByAccumulator(this) ? DP_PostStrideZero
-                                           : DP_PostStridePredOff;
+    return DD->ConsumedByAccumulator(this) ? DP_PostStrideZero : DP_PostStridePredOff;
   }
   return DP_NoPadding;
 }
@@ -741,12 +737,19 @@ VISIT_IMPL(CtrlMemPort, InputPort)
 VISIT_IMPL(MemPort, InputPort)
 VISIT_IMPL(StreamInPort, InputPort)
 VISIT_IMPL(InputConst, InputPort)
-VISIT_IMPL(IndMemPort, InputPort)
 VISIT_IMPL(OutputPort, PortBase)
 VISIT_IMPL(PortMem, OutputPort)
 VISIT_IMPL(StreamOutPort, OutputPort)
-VISIT_IMPL(AtomicPortMem, OutputPort)
 
+void DFGEntryVisitor::Visit(IndMemPort *IMP) {
+  DFGEntryVisitor::Visit(IMP->Index);
+  DFGEntryVisitor::Visit(static_cast<InputPort*>(IMP));
+}
+
+void DFGEntryVisitor::Visit(AtomicPortMem *APM) {
+  DFGEntryVisitor::Visit(APM->Index);
+  DFGEntryVisitor::Visit(static_cast<OutputPort*>(APM));
+}
 
 #undef VISIT_IMPL
 
