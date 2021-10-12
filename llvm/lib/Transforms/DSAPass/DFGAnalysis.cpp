@@ -1181,8 +1181,13 @@ void analyzeAccumulatorTags(DFGFile &DF, xform::CodeGenContext &CGC,
         if (Tag) {
           for (auto *User : Acc->Operation->users()) {
             if (auto *Inst = dyn_cast<Instruction>(User)) {
+              if (!Graphs[i]->InThisDFG(Inst)) {
+                continue;
+              }
               for (int j = (int) Loops.size() - 1; j >= 0; --j) { // NOLINT
                 if (Loops[j]->contains(Acc->Operation) && !Loops[j]->contains(Inst)) {
+                  DSA_LOG(ACC) << "User: " << *Inst;
+                  DSA_LOG(ACC) << Acc->dump() << " Reset@" << j;
                   Acc->ResetLevel = j;
                   break;
                 }
@@ -1195,6 +1200,7 @@ void analyzeAccumulatorTags(DFGFile &DF, xform::CodeGenContext &CGC,
     for (auto *SMP : Graphs[i]->EntryFilter<SLPMemPort>()) {
       for (auto *Acc : SMP->Tagged) {
         ++Acc->ResetLevel;
+        DSA_LOG(ACC) << Acc->dump() << " +Reset@" << Acc->ResetLevel;
       }
     }
   }

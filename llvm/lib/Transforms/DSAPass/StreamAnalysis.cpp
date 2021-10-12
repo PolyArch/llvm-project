@@ -145,12 +145,15 @@ void fuseInnerDimensions(LinearInfo &LI, int DType, int Unroll, ScalarEvolution 
   while ((int) Coef.size() > CutOff) {
     if (const auto *S1D = Coef.front().constInt()) {
       if (((int) *S1D) == DType) {
+        DSA_LOG(FUSE) << "S1D: " << *S1D << " , DType" << DType;
         if (const auto *N = Loop[0].constInt()) {
           // Fuse it only when it is divisible.
+          DSA_LOG(FUSE) << "InnerN: " << *N;
           if ((*N + 1) % Unroll) {
             break;
           }
           if (const auto *S2D = Coef[1].constInt()) {
+            DSA_LOG(FUSE) << "Stride2D: " << *S2D;
             // TODO(@were): Relax this condition.
             if (Loop[1].invariant()) {
               if ((*S1D) * (*N + 1) == *S2D) {
