@@ -1182,7 +1182,9 @@ void analyzeAccumulatorTags(DFGFile &DF, xform::CodeGenContext &CGC,
           for (auto *User : Acc->Operation->users()) {
             if (auto *Inst = dyn_cast<Instruction>(User)) {
               if (!Graphs[i]->InThisDFG(Inst)) {
-                continue;
+                if (!Graphs[i]->BelongOtherDFG(Inst)) {
+                  continue;
+                }
               }
               for (int j = (int) Loops.size() - 1; j >= 0; --j) { // NOLINT
                 if (Loops[j]->contains(Acc->Operation) && !Loops[j]->contains(Inst)) {
