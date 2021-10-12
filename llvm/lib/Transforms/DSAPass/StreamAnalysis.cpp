@@ -129,12 +129,8 @@ LinearInfo analyzeIndexExpr(ScalarEvolution *SE, const SCEV *Raw,
   return Res;
 }
 
-void fuseInnerDimensions(LinearInfo &LI, int DType, int Unroll, int P,
-                         ScalarEvolution &SE, int CutOff) {
+void fuseInnerDimensions(LinearInfo &LI, int DType, int Unroll, ScalarEvolution &SE, int CutOff) {
   if (LI.Coef.empty()) {
-    return;
-  }
-  if (P != 0) {
     return;
   }
   int PI = LI.partialInvariant();
@@ -143,12 +139,14 @@ void fuseInnerDimensions(LinearInfo &LI, int DType, int Unroll, int P,
 
   LI.Coef.erase(LI.Coef.begin(), LI.Coef.begin() + PI);
   LI.TripCount.erase(LI.TripCount.begin(), LI.TripCount.begin() + PI);
-  while ((int) LI.Coef.size() > CutOff) {
-    auto &Coef = LI.Coef;
-    auto &Loop = LI.TripCount;
-    if (const auto *S1D = LI.Coef.front().constInt()) {
+
+  auto &Coef = LI.Coef;
+  auto &Loop = LI.TripCount;
+  while ((int) Coef.size() > CutOff) {
+    if (const auto *S1D = Coef.front().constInt()) {
       if (((int) *S1D) == DType) {
         if (const auto *N = Loop[0].constInt()) {
+          // Fuse it only when it is divisible.
           if ((*N + 1) % Unroll) {
             break;
           }

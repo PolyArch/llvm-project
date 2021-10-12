@@ -214,7 +214,7 @@ struct InputPort : PortBase {
   /*!
    * \brief If this memory stream should be tagged.
    */
-  Accumulator *Tagged{nullptr};
+  std::vector<Accumulator *> Tagged;
 
   static bool classof(const DFGEntry *DE) {
     return DE->Kind > kInPortStarts && DE->Kind < kInPortEnds;

@@ -25,8 +25,7 @@ struct ModuleFlags {
   int64_t x{default_};                                                         \
   void getFlag##x() {                                                          \
     char *env = getenv(#x);                                                    \
-    if (env)                                                                   \
-      x = std::stol(env);                                                      \
+    if (env) x = std::stol(env);                                               \
   }
   /*!
    * \brief Indirect memory access like a[b[i]].

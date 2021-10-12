@@ -185,5 +185,13 @@ bfsOperands(DFGBase *DB, Instruction *From, DominatorTree *DT);
  */
 void fuseAffineDimensions(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisResult &DAR);
 
+/*!
+ * \brief A wrapper helper function.
+ *        If an input port is used as a tag of accumulator, return the
+ *        affine loop level of resetting the register.
+ * \param IP The input port to inspect.
+ */
+int resetLevel(InputPort *IP);
+
 } // namespace analysis
 } // namespace dsa

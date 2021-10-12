@@ -742,13 +742,13 @@ VISIT_IMPL(PortMem, OutputPort)
 VISIT_IMPL(StreamOutPort, OutputPort)
 
 void DFGEntryVisitor::Visit(IndMemPort *IMP) {
-  DFGEntryVisitor::Visit(IMP->Index);
-  DFGEntryVisitor::Visit(static_cast<InputPort*>(IMP));
+  Visit(IMP->Index);
+  Visit(static_cast<InputPort*>(IMP));
 }
 
 void DFGEntryVisitor::Visit(AtomicPortMem *APM) {
-  DFGEntryVisitor::Visit(APM->Index);
-  DFGEntryVisitor::Visit(static_cast<OutputPort*>(APM));
+  Visit(APM->Index);
+  Visit(static_cast<OutputPort*>(APM));
 }
 
 #undef VISIT_IMPL

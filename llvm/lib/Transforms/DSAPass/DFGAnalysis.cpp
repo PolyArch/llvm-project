@@ -101,8 +101,8 @@ struct DFGEntryAnalyzer : DFGVisitor {
       Q.pop();
     }
 
-    LLVM_DEBUG(DSA_INFO << "equiv of " << *Inst; for (auto I
-                                                  : Equiv) { DSA_INFO << *I; });
+    LLVM_DEBUG(DSA_INFO << "equiv of " << *Inst;
+               for (auto I : Equiv) { DSA_INFO << *I; });
   }
 
   Predicate *findEquivPredicate(Value *LHS, Value *RHS) {
@@ -959,8 +959,14 @@ void analyzeAffineMemoryAccess(DFGFile &DF, dsa::xform::CodeGenContext &CGC,
     void Visit(PortMem *PM) override {
       auto &LI = DAR.LI[PM->Parent->ID];
       auto &DLI = DAR.DLI[PM->Parent->ID];
-      LI[PM] = analyzeIndexExpr(&SE, SE.getSCEV(PM->Store->getPointerOperand()), DLI.LoopNest);
-      LI[PM].TripCount = DLI.TripCount;
+      auto Res = analyzeIndexExpr(&SE, SE.getSCEV(PM->Store->getPointerOperand()), DLI.LoopNest);
+      Res.TripCount = DLI.TripCount;
+      auto PI = Res.partialInvariant();
+      if (!Res.Coef.empty()) {
+        Res.Coef.erase(Res.Coef.begin(), Res.Coef.begin() + PI);
+        Res.TripCount.erase(Res.TripCount.begin(), Res.TripCount.begin() + PI);
+      }
+      LI[PM] = Res;
     }
     DFGAnalysisResult &DAR;
     ScalarEvolution &SE;
@@ -998,7 +1004,10 @@ void gatherMemoryCoalescingImpl(std::vector<DFGEntry*> &Entries, ScalarEvolution
               continue;
             }
             int DBits = PtrA->getType()->getPointerElementType()->getScalarSizeInBits();
+            DSA_LOG(SLP) << i << " " << j << ": " << Offset;
             if (Offset == DBits / 8) {
+              DSA_LOG(SLP) << *PtrA;
+              DSA_LOG(SLP) << *PtrB;
               if (utils::DSUGetSet(i, DSU) != utils::DSUGetSet(j, DSU)) {
                 DSU[utils::DSUGetSet(i, DSU)] = DSU[utils::DSUGetSet(j, DSU)];
                 Iterative = true;
@@ -1014,7 +1023,8 @@ void gatherMemoryCoalescingImpl(std::vector<DFGEntry*> &Entries, ScalarEvolution
 template<typename TSLP, typename TEntry>
 void constructCoalescedMemory(DFGBase *DB, std::vector<DFGEntry*> &Entries,
                               std::vector<int> &DSU, std::vector<int> &DSize,
-                              ScalarEvolution &SE, std::unordered_map<DFGEntry*, LinearInfo> &LI) {
+                              ScalarEvolution &SE, std::unordered_map<DFGEntry*,
+                              LinearInfo> &LI, std::vector<int> &Remove) {
   for (int j = 0; j < (int) Entries.size(); ++j) { // NOLINT
     if (auto *Entry = dyn_cast<TEntry>(Entries[j])) {
       int DSet = utils::DSUGetSet(j, DSU);
@@ -1025,13 +1035,13 @@ void constructCoalescedMemory(DFGBase *DB, std::vector<DFGEntry*> &Entries,
       }
     }
   }
-  std::vector<int> Remove;
   for (int j = 0; j < (int) Entries.size(); ++j) { // NOLINT
     if (auto *Entry = dyn_cast<TEntry>(Entries[j])) {
       int DSet = utils::DSUGetSet(j, DSU);
       if (DSet != j && DSize[DSet] != 1) {
         auto *SLP = dyn_cast<TSLP>(Entries[DSet]);
         CHECK(SLP);
+        DSA_LOG(SLP) << DSet << "(" << DSize[DSet] << "): " << Entry->dump();
         SLP->Coal.push_back(Entry);
         Remove.push_back(j);
       }
@@ -1070,9 +1080,6 @@ void constructCoalescedMemory(DFGBase *DB, std::vector<DFGEntry*> &Entries,
       LI[Entry] = L;
     }
   }
-  for (int j = 0; j < (int) Remove.size(); ++j) { // NOLINT
-    Entries.erase(Entries.begin() + Remove[j] - j);
-  }
 }
 
 void gatherMemoryCoalescing(DFGFile &DF, ScalarEvolution &SE, DFGAnalysisResult &DAR) {
@@ -1092,8 +1099,13 @@ void gatherMemoryCoalescing(DFGFile &DF, ScalarEvolution &SE, DFGAnalysisResult 
     for (int j = 0; j < (int) Entries.size(); ++j) { // NOLINT
       ++DSize[utils::DSUGetSet(j, DSU)];
     }
-    constructCoalescedMemory<SLPMemPort, MemPort>(DFGs[i], Entries, DSU, DSize, SE, DAR.LI[i]);
-    constructCoalescedMemory<SLPPortMem, PortMem>(DFGs[i], Entries, DSU, DSize, SE, DAR.LI[i]);
+    std::vector<int> Remove;
+    constructCoalescedMemory<SLPMemPort, MemPort>(DFGs[i], Entries, DSU, DSize, SE, DAR.LI[i], Remove);
+    constructCoalescedMemory<SLPPortMem, PortMem>(DFGs[i], Entries, DSU, DSize, SE, DAR.LI[i], Remove);
+    std::sort(Remove.begin(), Remove.end());
+    for (int j = 0; j < (int) Remove.size(); ++j) { // NOLINT
+      Entries.erase(Entries.begin() + Remove[j] - j);
+    }
     for (int j = 0; j < (int) Entries.size(); ++j) { // NOLINT
       Entries[j]->ID = j;
     }
@@ -1140,10 +1152,11 @@ void analyzeAccumulatorTags(DFGFile &DF, xform::CodeGenContext &CGC,
   for (int i = 0; i < (int) Graphs.size(); ++i) { // NOLINT
     auto &LI = DAR.LI[i];
     auto &Loops = DAR.DLI[i].LoopNest;
+    std::unordered_map<DFGEntry*, int> Cnt;
     if (auto *DD = dyn_cast<DedicatedDFG>(Graphs[i])) {
       for (auto *Acc : DD->EntryFilter<Accumulator>()) {
         auto V = analysis::bfsOperands(DD, Acc->Operation, nullptr).first;
-        bool Tagged = false;
+        InputPort *Tag = nullptr;
         for (auto &Elem : V) {
           auto *DE = Acc->Parent->InThisDFG(Elem);
           if (!DE) {
@@ -1152,27 +1165,36 @@ void analyzeAccumulatorTags(DFGFile &DF, xform::CodeGenContext &CGC,
           if (auto *IP = dyn_cast<InputPort>(DE)) {
             auto Iter = LI.find(IP);
             if (Iter != LI.end()) {
-              if (Iter->second.partialInvariant() == 0 && !Tagged) {
-                IP->Tagged = Acc;
-                Tagged = true;
-              }
-            }
-          }
-          if (Tagged) {
-            break;
-          }
-        }
-        CHECK(Tagged);
-        for (auto *User : Acc->Operation->users()) {
-          if (auto *Inst = dyn_cast<Instruction>(User)) {
-            for (int j = (int) Loops.size() - 1; j >= 0; --j) { // NOLINT
-              if (Loops[j]->contains(Acc->Operation) && !Loops[j]->contains(Inst)) {
-                Acc->ResetLevel = j;
-                break;
+              if (Iter->second.partialInvariant() == 0) {
+                if (!Tag) {
+                  IP->Tagged.push_back(Acc);
+                  Tag = IP;
+                } else if (IP->Tagged.size() >= Tag->Tagged.size()) {
+                  CHECK(Acc == Tag->Tagged.back());
+                  Tag->Tagged.pop_back();
+                  IP->Tagged.push_back(Acc);
+                }
               }
             }
           }
         }
+        if (Tag) {
+          for (auto *User : Acc->Operation->users()) {
+            if (auto *Inst = dyn_cast<Instruction>(User)) {
+              for (int j = (int) Loops.size() - 1; j >= 0; --j) { // NOLINT
+                if (Loops[j]->contains(Acc->Operation) && !Loops[j]->contains(Inst)) {
+                  Acc->ResetLevel = j;
+                  break;
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    for (auto *SMP : Graphs[i]->EntryFilter<SLPMemPort>()) {
+      for (auto *Acc : SMP->Tagged) {
+        ++Acc->ResetLevel;
       }
     }
   }
@@ -1181,26 +1203,25 @@ void analyzeAccumulatorTags(DFGFile &DF, xform::CodeGenContext &CGC,
 void fuseAffineDimensions(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisResult &DAR) {
   struct FuseInfoExtractor : DFGEntryVisitor {
     void Visit(MemPort *MP) override {
-      DType = MP->Load->getType()->getScalarSizeInBits();
+      DBits = MP->Load->getType()->getScalarSizeInBits();
       Padding = MP->fillMode();
-      if (MP->Tagged) {
-        CutOff = MP->Tagged->ResetLevel;
-      }
+      CutOff = resetLevel(MP);
     }
     void Visit(PortMem *PM) override {
-      DType = PM->Store->getValueOperand()->getType()->getScalarSizeInBits();
+      DBits = PM->Store->getValueOperand()->getType()->getScalarSizeInBits();
     }
     void Visit(SLPMemPort *SMP) override {
       auto *MP = SMP->Coal[0];
-      DType = MP->Load->getType()->getScalarSizeInBits();
+      DBits = MP->Load->getType()->getScalarSizeInBits();
+      CutOff = resetLevel(SMP);
     }
     void Visit(SLPPortMem *SPM) override {
       auto *PM = SPM->Coal[0];
-      DType = PM->Store->getValueOperand()->getType()->getScalarSizeInBits();
+      DBits = PM->Store->getValueOperand()->getType()->getScalarSizeInBits();
     }
-    int DType{-1};
+    int DBits{-1};
     int Padding{0};
-    int CutOff;
+    int CutOff{-1};
   };
   auto Graphs = DF.DFGFilter<DFGBase>();
   for (int i = 0; i < (int) Graphs.size(); ++i) { // NOLINT
@@ -1209,13 +1230,35 @@ void fuseAffineDimensions(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisRe
     for (auto &Elem : LI) {
       auto &Pattern = Elem.second;
       FuseInfoExtractor FIE;
-      FIE.CutOff = Pattern.TripCount.size() - 1;
       Elem.first->accept(&FIE);
-      CHECK(FIE.DType != -1);
-      fuseInnerDimensions(Pattern, FIE.DType, DFG->getUnroll(), FIE.Padding, CGC.SE,
+      if (FIE.CutOff == -1) {
+        FIE.CutOff = Pattern.TripCount.size() - 1;
+      }
+      CHECK(FIE.DBits != -1);
+      DSA_LOG(FUSE) << "Before: " << Pattern.toString() << ", CutOff: " << FIE.CutOff;
+      int Before = Pattern.Coef.size();
+      fuseInnerDimensions(Pattern, FIE.DBits / 8, DFG->getUnroll(), CGC.SE,
                           Pattern.TripCount.size() - FIE.CutOff);
+      DSA_LOG(FUSE) << "After: " << Pattern.toString();
+      if (auto *IP = dyn_cast<InputPort>(Elem.first)) {
+        int Delta = Before - Pattern.Coef.size();
+        DSA_LOG(FUSE) << "Fuse Delta: " << Delta;
+        DSA_LOG(FUSE) << IP->dump();
+        for (auto *Acc : IP->Tagged) {
+          Acc->ResetLevel -= Delta;
+          DSA_LOG(FUSE) << Acc->dump() << ": " << Acc->ResetLevel;
+        }
+      }
     }
   }
+}
+
+int resetLevel(InputPort *IP) {
+  if (IP->Tagged.empty()) {
+    return -1;
+  }
+  auto FRed = [](int X, Accumulator *A) { return std::min(X, A->ResetLevel); };
+  return std::accumulate(IP->Tagged.begin(), IP->Tagged.end(), INT_MAX, FRed);
 }
 
 } // namespace analysis

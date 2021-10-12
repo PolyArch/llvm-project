@@ -110,7 +110,7 @@ LinearInfo analyzeIndexExpr(ScalarEvolution *SE, const SCEV *Index,
  * \param SE The SCEV analysis.
  * \param CutOff The dimension to stop fusing. Sometimes we do not want every dimension to be fused.
  */
-void fuseInnerDimensions(LinearInfo &LI, int DType, int Unroll, int P,
+void fuseInnerDimensions(LinearInfo &LI, int DType, int Unroll,
                          ScalarEvolution &SE, int CutOff);
 
 } // namespace analysis

@@ -88,9 +88,9 @@ bool StreamSpecialize::runOnFunction(Function &F) {
     dsa::analysis::analyzeDFGLoops(DF, CGC, DAR);
     dsa::analysis::analyzeAffineMemoryAccess(DF, CGC, DAR);
     dsa::analysis::gatherMemoryCoalescing(DF, *SE, DAR);
+    dsa::analysis::analyzeAccumulatorTags(DF, CGC, DAR);
     dsa::analysis::fuseAffineDimensions(DF, CGC, DAR);
     dsa::analysis::extractSpadFromScope(DF, CGC, DAR);
-    dsa::analysis::analyzeAccumulatorTags(DF, CGC, DAR);
     {
       std::error_code EC;
       llvm::raw_fd_ostream RFO(DF.getName(), EC);
