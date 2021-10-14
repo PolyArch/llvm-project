@@ -732,7 +732,7 @@ void injectConfiguration(CodeGenContext &CGC, analysis::ConfigInfo &CI,
  */
 std::pair<Value*, Value*>
 InjectComputedRepeat(CodeGenContext &CGC, // NOLINT
-                     std::vector<dsa::analysis::LinearInfo> Loops, int N,
+                     std::vector<dsa::analysis::LinearCombine> Loops, int N,
                      int Unroll) {
   auto *IB = CGC.IB;
   auto &SEE = CGC.SEE;
@@ -781,11 +781,11 @@ InjectComputedRepeat(CodeGenContext &CGC, // NOLINT
 }
 
 
-void injectLinearStreamImpl(CodeGenContext &CGC, analysis::LinearInfo &LI,
+void injectLinearStreamImpl(CodeGenContext &CGC, analysis::LinearCombine &LI,
                             int Port, int Unroll, int DType, MemoryOperation MO,
                             Padding P, analysis::SpadInfo &SI, int BuffetIdx) {
 
-  auto InjectRepeat = [&CGC](analysis::LinearInfo LI, int Port, int Unroll) {
+  auto InjectRepeat = [&CGC](analysis::LinearCombine LI, int Port, int Unroll) {
     auto &Loops = LI.TripCount;
     CHECK(Loops.size() == LI.Coef.size() || LI.Coef.empty());
     int N = LI.Coef.empty() ? Loops.size() : LI.partialInvariant();
@@ -804,7 +804,7 @@ void injectLinearStreamImpl(CodeGenContext &CGC, analysis::LinearInfo &LI,
     }
   };
 
-  auto LinearInstantiation = [&CGC](analysis::LinearInfo LI, int Port,
+  auto LinearInstantiation = [&CGC](analysis::LinearCombine LI, int Port,
                                     MemoryOperation MO, Padding P, analysis::SpadInfo &SI,
                                     int BuffetIdx, int DType) {
     auto *IB = CGC.IB;

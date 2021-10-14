@@ -13,13 +13,13 @@
 namespace dsa {
 namespace analysis {
 
-LinearInfo LinearInfo::loopInvariant(ScalarEvolution *SE, int N, const SCEV *Base) {
-  LinearInfo Res;
+LinearCombine LinearCombine::loopInvariant(ScalarEvolution *SE, int N, const SCEV *Base) {
+  LinearCombine Res;
   Res.Base = Base;
   return Res;
 }
 
-const uint64_t *LinearInfo::constInt() const {
+const uint64_t *LinearCombine::constInt() const {
   if (!invariant()) {
     return nullptr;
   }
@@ -30,11 +30,11 @@ const uint64_t *LinearInfo::constInt() const {
   return SC->getAPInt().getRawData();
 }
 
-const SCEV *LinearInfo::invariant() const {
+const SCEV *LinearCombine::invariant() const {
   return partialInvariant() == (int) Coef.size() ? Base : nullptr;
 }
 
-std::string LinearInfo::toString(const std::vector<Loop *> &Loops) {
+std::string LinearCombine::toString(const std::vector<Loop *> &Loops) {
   std::string S;
   llvm::raw_string_ostream RSO(S);
   if (Coef.empty()) {
@@ -67,7 +67,7 @@ std::string LinearInfo::toString(const std::vector<Loop *> &Loops) {
   return RSO.str();
 }
 
-int LinearInfo::partialInvariant() const {
+int LinearCombine::partialInvariant() const {
   for (int i = 0, N = Coef.size(); i < N; ++i) { // NOLINT
     const auto *CI = Coef[i].constInt();
     if (CI && *CI == 0) {
@@ -78,12 +78,12 @@ int LinearInfo::partialInvariant() const {
   return Coef.size();
 }
 
-LinearInfo analyzeIndexExpr(ScalarEvolution *SE, const SCEV *Raw,
+LinearCombine analyzeIndexExpr(ScalarEvolution *SE, const SCEV *Raw,
                             const std::vector<Loop *> &Loops) {
-  LinearInfo Res;
+  LinearCombine Res;
   int i = 0; // NOLINT
   auto AppendZero = [SE, &Res, &Loops]() {
-    auto Coef = LinearInfo::loopInvariant(SE, Loops.size(), SE->getConstant(APInt(64, 0, true)));
+    auto Coef = LinearCombine::loopInvariant(SE, Loops.size(), SE->getConstant(APInt(64, 0, true)));
     Res.Coef.push_back(Coef);
   };
   for (int N = Loops.size(); i < N; ++i) {
@@ -111,7 +111,7 @@ LinearInfo analyzeIndexExpr(ScalarEvolution *SE, const SCEV *Raw,
           << "\n" << *Raw << "\n" << *Cur << "\nNot an invariant in loop " << *Loops[i]
           << "\nCurrent Loop: " << *SARE->getLoop()
           << "\nOuter Most: " << *Loops.back();
-        auto Coef = LinearInfo::loopInvariant(SE, Loops.size(),
+        auto Coef = LinearCombine::loopInvariant(SE, Loops.size(),
                                               SE->getConstant(APInt(64, 0, true)));
         Res.Coef.push_back(Coef);
         continue;
@@ -129,13 +129,13 @@ LinearInfo analyzeIndexExpr(ScalarEvolution *SE, const SCEV *Raw,
   return Res;
 }
 
-void fuseInnerDimensions(LinearInfo &LI, int DType, int Unroll, ScalarEvolution &SE, int CutOff) {
+void fuseInnerDimensions(LinearCombine &LI, int DType, int Unroll, ScalarEvolution &SE, int CutOff) {
   if (LI.Coef.empty()) {
     return;
   }
   int PI = LI.partialInvariant();
-  std::vector<LinearInfo> SlicedCoef(LI.Coef.begin(), LI.Coef.begin() + PI);
-  std::vector<LinearInfo> SlicedLoop(LI.TripCount.begin(), LI.TripCount.begin() + PI);
+  std::vector<LinearCombine> SlicedCoef(LI.Coef.begin(), LI.Coef.begin() + PI);
+  std::vector<LinearCombine> SlicedLoop(LI.TripCount.begin(), LI.TripCount.begin() + PI);
 
   LI.Coef.erase(LI.Coef.begin(), LI.Coef.begin() + PI);
   LI.TripCount.erase(LI.TripCount.begin(), LI.TripCount.begin() + PI);

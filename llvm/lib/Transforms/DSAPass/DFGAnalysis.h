@@ -66,11 +66,11 @@ struct DFGLoopInfo {
   /*!
    * \brief The trip count of each loop level, corresponding to the loop nest above.
    */
-  std::vector<analysis::LinearInfo> TripCount;
+  std::vector<analysis::LinearCombine> TripCount;
 
   DFGLoopInfo() {}
 
-  DFGLoopInfo(const std::vector<Loop*> &L, const std::vector<analysis::LinearInfo> &T) :
+  DFGLoopInfo(const std::vector<Loop*> &L, const std::vector<analysis::LinearCombine> &T) :
     LoopNest(L), TripCount(T) {}
 };
 
@@ -98,7 +98,7 @@ struct DFGAnalysisResult {
    * \brief The linear memory access information of each affine stream.
    *        Filled by `analyzeDFGMemoryAccess`.
    */
-  std::vector<std::unordered_map<DFGEntry*, LinearInfo>> LI;
+  std::vector<std::unordered_map<DFGEntry*, LinearCombine>> LI;
 };
 
 /*!

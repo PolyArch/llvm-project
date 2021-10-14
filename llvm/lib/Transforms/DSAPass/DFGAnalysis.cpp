@@ -646,11 +646,11 @@ void extractSpadFromScope(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisRe
       int Unroll;
       SpadInfo &SI;
       DFGLoopInfo &DLI;
-      std::unordered_map<DFGEntry*, LinearInfo> &LI;
+      std::unordered_map<DFGEntry*, LinearCombine> &LI;
       IRBuilder<> *IB;
       ScalarEvolution &SE;
       Analyzer(int U, SpadInfo &SI, DFGLoopInfo &DLI,
-               std::unordered_map<DFGEntry*, LinearInfo> &LI,
+               std::unordered_map<DFGEntry*, LinearCombine> &LI,
                xform::CodeGenContext &CGC) :
         Unroll(U), SI(SI), DLI(DLI), LI(LI), IB(CGC.IB), SE(CGC.SE) {}
     };
@@ -924,7 +924,7 @@ void analyzeDFGLoops(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisResult 
  *        If abs is true, and -1 is returned, it is not a constant.
  *        If abs is false, constant should be garanteed to call.
  */
-int64_t indexPairOffset(LinearInfo &A, LinearInfo &B, ScalarEvolution &SE, bool Signed) {
+int64_t indexPairOffset(LinearCombine &A, LinearCombine &B, ScalarEvolution &SE, bool Signed) {
   bool SameDims = true;
   if (A.Coef.size() != B.Coef.size()) {
     CHECK(!Signed);
@@ -986,7 +986,7 @@ void analyzeAffineMemoryAccess(DFGFile &DF, dsa::xform::CodeGenContext &CGC,
 template<typename T>
 void gatherMemoryCoalescingImpl(std::vector<DFGEntry*> &Entries, ScalarEvolution &SE,
                                 std::vector<int> &DSU,
-                                std::unordered_map<DFGEntry*, LinearInfo> &LI) {
+                                std::unordered_map<DFGEntry*, LinearCombine> &LI) {
   bool Iterative = true;
   while (Iterative) {
     Iterative = false;
@@ -1024,7 +1024,7 @@ template<typename TSLP, typename TEntry>
 void constructCoalescedMemory(DFGBase *DB, std::vector<DFGEntry*> &Entries,
                               std::vector<int> &DSU, std::vector<int> &DSize,
                               ScalarEvolution &SE, std::unordered_map<DFGEntry*,
-                              LinearInfo> &LI, std::vector<int> &Remove) {
+                              LinearCombine> &LI, std::vector<int> &Remove) {
   for (int j = 0; j < (int) Entries.size(); ++j) { // NOLINT
     if (auto *Entry = dyn_cast<TEntry>(Entries[j])) {
       int DSet = utils::DSUGetSet(j, DSU);
@@ -1059,19 +1059,19 @@ void constructCoalescedMemory(DFGBase *DB, std::vector<DFGEntry*> &Entries,
       for (int j = 0; j < (int) V.size(); ++j) { // NOLINT
         V[j]->ID = j;
       }
-      LinearInfo L = LI[Entry->Coal[0]];
+      LinearCombine L = LI[Entry->Coal[0]];
 
       auto Ptr = Entry->Coal[0]->underlyingInst()->getOperand(TEntry::PtrOperandIdx);
       auto &LoopLI = L.TripCount;
       int DBits = Ptr->getType()->getPointerElementType()->getScalarSizeInBits();
-      LoopLI.insert(LoopLI.begin(), analysis::LinearInfo());
+      LoopLI.insert(LoopLI.begin(), analysis::LinearCombine());
       LoopLI.front().Base = SE.getConstant(APInt(64, Entry->Coal.size() - 1, true));
-      L.Coef.insert(L.Coef.begin(), analysis::LinearInfo());
+      L.Coef.insert(L.Coef.begin(), analysis::LinearCombine());
       L.Coef[0].Base = SE.getConstant(APInt(64, DBits / 8, true));
       // If it used to be a constant, we need to make the higher dimensions to be zero-padded.
       if (L.Coef.size() == 1) {
         auto *SCEVZero = SE.getConstant(APInt(64, 0, true));
-        analysis::LinearInfo ZeroDim = analysis::LinearInfo::loopInvariant(&SE, -1, SCEVZero);
+        analysis::LinearCombine ZeroDim = analysis::LinearCombine::loopInvariant(&SE, -1, SCEVZero);
         L.Coef.reserve(LoopLI.size());
         while (L.Coef.size() < LoopLI.size()) {
           L.Coef.push_back(ZeroDim);

@@ -21,6 +21,29 @@
 
 using namespace llvm;
 
+namespace dsa {
+
+enum DFGClassType {
+#define MACRO(X) X
+#include "./DFGKind.def"
+#undef MACRO
+};
+
+// TODO(@were): Unify all the DFGEntry and DFGBase instances to this class.
+template<DFGClassType TyBegin, DFGClassType TyEnd>
+struct IRBase {
+  IRBase Ty;
+
+  static bool classof(IRBase *Ref) {
+    return Ref->Ty > TyBegin && Ref->Ty < TyEnd;
+  }
+};
+
+template<DFGClassType EntryTy>
+struct InstanceBase : IRBase<EntryTy, static_cast<DFGClassType>(EntryTy + 1)> {};
+
+} // namespace dsa
+
 class DFGFile;
 class DedicatedDFG;
 class TemporalDFG;
