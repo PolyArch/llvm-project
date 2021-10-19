@@ -13,97 +13,90 @@
 namespace dsa {
 namespace analysis {
 
-LinearCombine LinearCombine::loopInvariant(ScalarEvolution *SE, int N, const SCEV *Base) {
-  LinearCombine Res;
-  Res.Base = Base;
-  return Res;
-}
-
-const uint64_t *LinearCombine::constInt() const {
-  if (!invariant()) {
-    return nullptr;
+const uint64_t *LoopInvariant::constInt() const {
+  if (const auto *SC = dyn_cast<SCEVConstant>(Raw)) {
+    return SC->getAPInt().getRawData();
   }
-  const auto *SC = dyn_cast<SCEVConstant>(invariant());
-  if (!SC) {
-    return nullptr;
-  }
-  return SC->getAPInt().getRawData();
+  return nullptr;
 }
 
-const SCEV *LinearCombine::invariant() const {
-  return partialInvariant() == (int) Coef.size() ? Base : nullptr;
-}
-
-std::string LinearCombine::toString(const std::vector<Loop *> &Loops) {
+std::string LinearCombine::toString() const {
   std::string S;
   llvm::raw_string_ostream RSO(S);
-  if (Coef.empty()) {
-    RSO << *Base;
-  } else {
-    CHECK(Loops.empty() || Loops.size() == Coef.size())
-        << Loops.size() << " ? " << Coef.size();
-    RSO << "(";
-    for (int i = 0, N = Coef.size(); i < N; ++i) { // NOLINT
-      if (!Loops.empty()) {
-        if (auto *IndVar = Loops[i]->getCanonicalInductionVariable()) {
-          if (IndVar->hasName()) {
-            RSO << IndVar->getName();
-          } else {
-            ModuleSlotTracker MST(
-                IndVar->getParent()->getParent()->getParent());
-            MST.incorporateFunction(*IndVar->getParent()->getParent());
-            RSO << "%" << MST.getLocalSlot(IndVar);
-          }
-        } else {
-          RSO << "i" << i;
-        }
-      } else {
-        RSO << "i" << i;
-      }
-      RSO << " * " << Coef[i].toString(Loops) << " + ";
-    }
-    RSO << *Base << ")";
+  RSO << "(";
+  for (int i = 0, N = Coef.size(); i < N; ++i) { // NOLINT
+    RSO << "i" << i;
+    RSO << " * " << Coef[i]->toString() << " + ";
   }
+  RSO << Base->toString() << ")";
   return RSO.str();
+}
+
+const uint64_t *constInt(SEWrapper *SW) {
+  if (auto *LI = dyn_cast<LoopInvariant>(SW)) {
+    return LI->constInt();
+  }
+  return nullptr;
 }
 
 int LinearCombine::partialInvariant() const {
   for (int i = 0, N = Coef.size(); i < N; ++i) { // NOLINT
-    const auto *CI = Coef[i].constInt();
-    if (CI && *CI == 0) {
-      continue;
+    if (const auto *CI = constInt(Coef[i])) {
+      if (CI && *CI == 0) {
+        continue;
+      }
     }
     return i;
   }
   return Coef.size();
 }
 
-LinearCombine analyzeIndexExpr(ScalarEvolution *SE, const SCEV *Raw,
-                            const std::vector<Loop *> &Loops) {
-  LinearCombine Res;
+LinearCombine::~LinearCombine() {
+  for (int i = 0; i < (int) Coef.size(); ++i) { // NOLINT
+    delete Coef[i];
+    delete TripCount[i];
+  }
+}
+
+LinearCombine *LoopInvariant::toLinearCombine(ScalarEvolution *SE) {
+  auto *Res = new LinearCombine(this->Parent.Raw, this->Raw);
+  Res->TripCount = this->TripCount;
+  Res->Coef.reserve(TripCount.size());
+  if (SE) {
+    for (int i = 0; i < (int) TripCount.size(); ++i) { // NOLINT
+      Res->Coef.push_back(new LoopInvariant(Res, SE->getConstant(APInt(64, 0, true))));
+    }
+  }
+  return Res;
+}
+
+SEWrapper *analyzeIndexExpr(ScalarEvolution *SE, const SCEV *Raw, void *Parent,
+                            const std::vector<Loop *> &Loops,
+                            const std::vector<SEWrapper *> &TripCount) {
+  LinearCombine *Res = new LinearCombine(Parent, Raw);
   int i = 0; // NOLINT
-  auto AppendZero = [SE, &Res, &Loops]() {
-    auto Coef = LinearCombine::loopInvariant(SE, Loops.size(), SE->getConstant(APInt(64, 0, true)));
-    Res.Coef.push_back(Coef);
-  };
   for (int N = Loops.size(); i < N; ++i) {
     if (!SE->isLoopInvariant(Raw, Loops[i])) {
       break;
     }
-    AppendZero();
+    Res->Coef.push_back(new LoopInvariant(Parent, SE->getConstant(APInt(64, 0))));
+    Res->TripCount.push_back(TripCount[i]);
   }
   if (!isa<SCEVAddRecExpr>(Raw) || i == (int)Loops.size()) {
-    CHECK(i == (int)Loops.size()) << i << " != " << Loops.size() << ": " << *Raw;
-    Res.Coef.clear();
-    Res.Coef.shrink_to_fit();
-    Res.Base = Raw;
-    return Res;
+    if (i == (int)Loops.size()) {
+      delete Res;
+      auto *LI = new LoopInvariant(Parent, Raw);
+      LI->TripCount = TripCount;
+      return LI;
+    }
+    return nullptr;
   }
   auto *Cur = Raw;
   for (int N = Loops.size(); i < N; ++i) {
     if (const auto *SARE = dyn_cast<SCEVAddRecExpr>(Cur)) {
       if (!Loops.back()->contains(SARE->getLoop())) {
-        AppendZero();
+        Res->Coef.push_back(new LoopInvariant(Res, SE->getConstant(APInt(64, 0))));
+        Res->TripCount.push_back(TripCount[i]);
         continue;
       }
       if (SARE->getLoop() != Loops[i]) {
@@ -111,21 +104,24 @@ LinearCombine analyzeIndexExpr(ScalarEvolution *SE, const SCEV *Raw,
           << "\n" << *Raw << "\n" << *Cur << "\nNot an invariant in loop " << *Loops[i]
           << "\nCurrent Loop: " << *SARE->getLoop()
           << "\nOuter Most: " << *Loops.back();
-        auto Coef = LinearCombine::loopInvariant(SE, Loops.size(),
-                                              SE->getConstant(APInt(64, 0, true)));
-        Res.Coef.push_back(Coef);
+        Res->Coef.push_back(new LoopInvariant(Res, SE->getConstant(APInt(64, 0))));
         continue;
       }
-      Res.Coef.push_back(analyzeIndexExpr(SE, SARE->getStepRecurrence(*SE), Loops));
+      auto SliceLoop = std::vector<Loop*>(Loops.begin() + i + 1, Loops.end());
+      auto SliceTripCount = std::vector<SEWrapper*>(TripCount.begin() + i + 1, TripCount.end());
+      Res->Coef.push_back(analyzeIndexExpr(SE, SARE->getStepRecurrence(*SE), Res,
+                                           SliceLoop, SliceTripCount));
+      Res->TripCount.push_back(TripCount[i]);
       Cur = SARE->getStart();
     } else {
-        CHECK(SE->isLoopInvariant(Cur, Loops[i]))
-          << "\n" << *Raw << "\n" << *Cur << "\nNot an invariant in loop " << *Loops[i];
-      AppendZero();
+      CHECK(SE->isLoopInvariant(Cur, Loops[i]))
+        << "\n" << *Raw << "\n" << *Cur << "\nNot an invariant in loop " << *Loops[i];
+      Res->Coef.push_back(new LoopInvariant(Res, SE->getConstant(APInt(64, 0))));
+      Res->TripCount.push_back(TripCount[i]);
     }
   }
-  CHECK(Res.Coef.size() == Loops.size()) << Res.Coef.size() << " != " << Loops.size();
-  Res.Base = Cur;
+  CHECK(Res->Coef.size() == Loops.size()) << Res->Coef.size() << " != " << Loops.size();
+  Res->Base = analyzeIndexExpr(SE, Cur, Res, {}, {});
   return Res;
 }
 
@@ -134,8 +130,8 @@ void fuseInnerDimensions(LinearCombine &LI, int DType, int Unroll, ScalarEvoluti
     return;
   }
   int PI = LI.partialInvariant();
-  std::vector<LinearCombine> SlicedCoef(LI.Coef.begin(), LI.Coef.begin() + PI);
-  std::vector<LinearCombine> SlicedLoop(LI.TripCount.begin(), LI.TripCount.begin() + PI);
+  std::vector<SEWrapper*> SlicedCoef(LI.Coef.begin(), LI.Coef.begin() + PI);
+  std::vector<SEWrapper*> SlicedLoop(LI.TripCount.begin(), LI.TripCount.begin() + PI);
 
   LI.Coef.erase(LI.Coef.begin(), LI.Coef.begin() + PI);
   LI.TripCount.erase(LI.TripCount.begin(), LI.TripCount.begin() + PI);
@@ -143,28 +139,33 @@ void fuseInnerDimensions(LinearCombine &LI, int DType, int Unroll, ScalarEvoluti
   auto &Coef = LI.Coef;
   auto &Loop = LI.TripCount;
   while ((int) Coef.size() > CutOff) {
-    if (const auto *S1D = Coef.front().constInt()) {
+    if (const auto *S1D = constInt(Coef.front())) {
       if (((int) *S1D) == DType) {
         DSA_LOG(FUSE) << "S1D: " << *S1D << " , DType" << DType;
-        if (const auto *N = Loop[0].constInt()) {
+        if (const auto *N = constInt(Loop[0])) {
           // Fuse it only when it is divisible.
           DSA_LOG(FUSE) << "InnerN: " << *N;
           if ((*N + 1) % Unroll) {
             break;
           }
-          if (const auto *S2D = Coef[1].constInt()) {
+          if (const auto *S2D = constInt(Coef[1])) {
             DSA_LOG(FUSE) << "Stride2D: " << *S2D;
             // TODO(@were): Relax this condition.
-            if (Loop[1].invariant()) {
+            if (isa<LoopInvariant>(Loop[1])) {
               if ((*S1D) * (*N + 1) == *S2D) {
                 Loop.erase(Loop.begin());
                 Coef.erase(Coef.begin());
-                Coef.front().Base = SE.getConstant(APInt(64, DType, true));
+                auto *LoopParent = Loop.front()->Parent.Raw;
+                auto *CoefParent = Coef.front()->Parent.Raw;
+                Coef.front() = new LoopInvariant(LoopParent,
+                                                 SE.getConstant(APInt(64, DType, true)));
                 auto *SCEVN = SE.getConstant(APInt(64, *N + 1, true));
                 auto *SCEVNegOne = SE.getConstant(APInt(64, -1, true));
-                Loop.front().Base = SE.getMulExpr(Loop.front().Base, SCEVN);
-                Loop.front().Base = SE.getAddExpr(Loop.front().Base, SCEVN);
-                Loop.front().Base = SE.getAddExpr(Loop.front().Base, SCEVNegOne);
+                auto *NewLoop = Loop.front()->Raw;
+                NewLoop = SE.getMulExpr(NewLoop, SCEVN);
+                NewLoop = SE.getAddExpr(NewLoop, SCEVN);
+                NewLoop = SE.getAddExpr(NewLoop, SCEVNegOne);
+                Loop.front() = new LoopInvariant(CoefParent, NewLoop);
                 continue;
               }
             }
@@ -197,14 +198,16 @@ struct StreamAnalysisPass : public FunctionPass {
         if (auto *Load = dyn_cast<LoadInst>(&I)) {
           auto *Index = Load->getPointerOperand();
           CHECK(SE->isSCEVable(Index->getType()));
-          auto LI = analyzeIndexExpr(SE, SE->getSCEV(Index), Loops);
-          DSA_LOG(LOOP) << LI.toString();
+          auto *LI = analyzeIndexExpr(SE, SE->getSCEV(Index), Load, Loops,
+                                      std::vector<SEWrapper*>(Loops.size(), nullptr));
+          DSA_LOG(LOOP) << LI->toString();
         }
       }
     }
     for (auto *L : Loops) {
-      auto LI = analyzeIndexExpr(SE, SE->getBackedgeTakenCount(L), Loops);
-      DSA_LOG(LOOP) << LI.toString();
+      auto *LI = analyzeIndexExpr(SE, SE->getBackedgeTakenCount(L), L, Loops,
+                                  std::vector<SEWrapper*>(Loops.size(), nullptr));
+      DSA_LOG(LOOP) << LI->toString();
     }
   }
 
