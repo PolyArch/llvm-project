@@ -982,8 +982,8 @@ void analyzeAffineMemoryAccess(DFGFile &DF, dsa::xform::CodeGenContext &CGC,
     void Visit(PortMem *PM) override {
       auto &LI = DAR.LI[PM->Parent->ID];
       auto &DLI = DAR.DLI[PM->Parent->ID];
-      auto *Res = analyzeIndexExpr(&SE, SE.getSCEV(PM->Store->getPointerOperand()), PM, DLI.LoopNest,
-                                   DLI.TripCount);
+      auto *Res = analyzeIndexExpr(&SE, SE.getSCEV(PM->Store->getPointerOperand()), PM,
+                                   DLI.LoopNest, DLI.TripCount);
       if (auto *LC = dyn_cast<LinearCombine>(Res)) {
         LC->TripCount = DLI.TripCount;
         auto PI = LC->partialInvariant();
@@ -1105,14 +1105,14 @@ void constructCoalescedMemory(DFGBase *DB, std::vector<DFGEntry*> &Entries,
       int DBits = Ptr->getType()->getPointerElementType()->getScalarSizeInBits();
       auto &TripCount = L->TripCount;
       const auto *ExtraTC = SE.getConstant(APInt(64, Entry->Coal.size() - 1, true));
-      TripCount.insert(TripCount.begin(), new analysis::LoopInvariant(Entry, ExtraTC));
+      TripCount.insert(TripCount.begin(), LoopInvariant::get(Entry, ExtraTC));
       auto &Coef = L->Coef;
       const auto *ExtraCoef = SE.getConstant(APInt(64, DBits / 8, true));
-      Coef.insert(L->Coef.begin(), new LoopInvariant(Entry, ExtraCoef));
+      Coef.insert(L->Coef.begin(), LoopInvariant::get(Entry, ExtraCoef));
       // If it used to be a constant, we need to make the higher dimensions to be zero-padded.
       if (Coef.size() == 1) {
         auto *SCEVZero = SE.getConstant(APInt(64, 0, true));
-        auto *ZeroCoef = new LoopInvariant(Entry, SCEVZero);
+        auto *ZeroCoef = LoopInvariant::get(Entry, SCEVZero);
         Coef.reserve(TripCount.size());
         while (Coef.size() < TripCount.size()) {
           Coef.push_back(ZeroCoef);

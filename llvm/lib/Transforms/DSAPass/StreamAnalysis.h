@@ -121,9 +121,10 @@ struct LoopInvariant : SEWrapper {
    */
   const uint64_t *constInt() const;
 
-  LoopInvariant(void *Parent, const SCEV *Raw) : SEWrapper(Parent, Raw) {
-    this->TyEnum = kLoopInvariant;
-  }
+  /*!
+   * \brief Wrapped constructor.
+   */
+  static LoopInvariant *get(void *Parent, const SCEV *Raw);
 
   /*!
    * \brief A loop invariant can also be represented in a trivial linear combination.
@@ -131,6 +132,13 @@ struct LoopInvariant : SEWrapper {
   LinearCombine *toLinearCombine(ScalarEvolution *SE);
 
   RTTI_CLASS_OF(SEWrapper, kLoopInvariant)
+
+ private:
+  LoopInvariant(void *Parent, const SCEV *Raw) : SEWrapper(Parent, Raw) {
+    this->TyEnum = kLoopInvariant;
+  }
+
+  static std::map<std::pair<void*, const SCEV*>, LoopInvariant*> UniqueInvariant;
 };
 
 

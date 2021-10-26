@@ -20,6 +20,17 @@ const uint64_t *LoopInvariant::constInt() const {
   return nullptr;
 }
 
+std::map<std::pair<void*, const SCEV*>, LoopInvariant*> LoopInvariant::UniqueInvariant;
+
+LoopInvariant *LoopInvariant::get(void *Parent, const SCEV *Raw) {
+  auto Iter = UniqueInvariant.find({Parent, Raw});
+  if (Iter != UniqueInvariant.end()) {
+    return Iter->second;
+  }
+  UniqueInvariant[{Parent, Raw}] = new LoopInvariant(Parent, Raw);
+  return UniqueInvariant[{Parent, Raw}];
+}
+
 std::string SEWrapper::toString() const {
   std::string S;
   llvm::raw_string_ostream RSO(S);
@@ -73,7 +84,7 @@ LinearCombine *LoopInvariant::toLinearCombine(ScalarEvolution *SE) {
   Res->Coef.reserve(TripCount.size());
   if (SE) {
     for (int i = 0; i < (int) TripCount.size(); ++i) { // NOLINT
-      Res->Coef.push_back(new LoopInvariant(Res, SE->getConstant(APInt(64, 0, true))));
+      Res->Coef.push_back(LoopInvariant::get(Res, SE->getConstant(APInt(64, 0, true))));
     }
   }
   return Res;
@@ -93,21 +104,21 @@ SEWrapper *analyzeIndexExpr(ScalarEvolution *SE, const SCEV *Raw, void *Parent,
   }
   if (!isa<SCEVAddRecExpr>(Raw) || i == (int)Loops.size()) {
     if (i == (int)Loops.size()) {
-      auto *LI = new LoopInvariant(Parent, Raw);
+      auto *LI = LoopInvariant::get(Parent, Raw);
       LI->TripCount = TripCount;
       return LI;
     }
-    return nullptr;
+    return new SEWrapper(Parent, Raw);
   }
   LinearCombine *Res = new LinearCombine(Parent, Raw);
   for (int j = 0; j < i; ++j) { // NOLINT
-    Res->Coef.push_back(new LoopInvariant(Parent, SE->getConstant(APInt(64, 0))));
+    Res->Coef.push_back(LoopInvariant::get(Parent, SE->getConstant(APInt(64, 0))));
   }
   auto *Cur = Raw;
   for (int N = Loops.size(); i < N; ++i) {
     if (const auto *SARE = dyn_cast<SCEVAddRecExpr>(Cur)) {
       if (!Loops.back()->contains(SARE->getLoop())) {
-        Res->Coef.push_back(new LoopInvariant(Res, SE->getConstant(APInt(64, 0))));
+        Res->Coef.push_back(LoopInvariant::get(Res, SE->getConstant(APInt(64, 0))));
         continue;
       }
       if (SARE->getLoop() != Loops[i]) {
@@ -115,7 +126,7 @@ SEWrapper *analyzeIndexExpr(ScalarEvolution *SE, const SCEV *Raw, void *Parent,
           << "\n" << *Raw << "\n" << *Cur << "\nNot an invariant in loop " << *Loops[i]
           << "\nCurrent Loop: " << *SARE->getLoop()
           << "\nOuter Most: " << *Loops.back();
-        Res->Coef.push_back(new LoopInvariant(Res, SE->getConstant(APInt(64, 0))));
+        Res->Coef.push_back(LoopInvariant::get(Res, SE->getConstant(APInt(64, 0))));
         continue;
       }
       std::vector<Loop*> SliceLoop(Loops.begin() + i + 1, Loops.end());
@@ -124,9 +135,8 @@ SEWrapper *analyzeIndexExpr(ScalarEvolution *SE, const SCEV *Raw, void *Parent,
                                            SliceLoop, SliceTripCount));
       Cur = SARE->getStart();
     } else {
-      CHECK(SE->isLoopInvariant(Cur, Loops[i]))
-        << "\n" << *Raw << "\n" << *Cur << "\nNot an invariant in loop " << *Loops[i];
-      Res->Coef.push_back(new LoopInvariant(Res, SE->getConstant(APInt(64, 0))));
+      // TODO(@were): Check this! (SE->isLoopInvariant(Cur, Loops[i]))
+      Res->Coef.push_back(LoopInvariant::get(Res, SE->getConstant(APInt(64, 0))));
     }
   }
   Res->TripCount = TripCount;
@@ -172,7 +182,7 @@ void fuseInnerDimensions(LinearCombine &LI, int DType, int Unroll, ScalarEvoluti
                 Coef.erase(Coef.begin());
                 auto *LoopParent = Loop.front()->Parent.Raw;
                 auto *CoefParent = Coef.front()->Parent.Raw;
-                Coef.front() = new LoopInvariant(LoopParent,
+                Coef.front() = LoopInvariant::get(LoopParent,
                                                  SE.getConstant(APInt(64, DType, true)));
                 auto *SCEVN = SE.getConstant(APInt(64, *N + 1, true));
                 auto *SCEVNegOne = SE.getConstant(APInt(64, -1, true));
@@ -180,7 +190,7 @@ void fuseInnerDimensions(LinearCombine &LI, int DType, int Unroll, ScalarEvoluti
                 NewLoop = SE.getMulExpr(NewLoop, SCEVN);
                 NewLoop = SE.getAddExpr(NewLoop, SCEVN);
                 NewLoop = SE.getAddExpr(NewLoop, SCEVNegOne);
-                Loop.front() = new LoopInvariant(CoefParent, NewLoop);
+                Loop.front() = LoopInvariant::get(CoefParent, NewLoop);
                 continue;
               }
             }
