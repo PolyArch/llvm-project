@@ -20,12 +20,19 @@ const uint64_t *LoopInvariant::constInt() const {
   return nullptr;
 }
 
+std::string SEWrapper::toString() const {
+  std::string S;
+  llvm::raw_string_ostream RSO(S);
+  RSO << *Raw;
+  return RSO.str();
+}
+
 std::string LinearCombine::toString() const {
   std::string S;
   llvm::raw_string_ostream RSO(S);
   RSO << "(";
   for (int i = 0, N = Coef.size(); i < N; ++i) { // NOLINT
-    RSO << "i" << i;
+    RSO << "i" << i << "[" << TripCount[i]->toString() << "]";
     RSO << " * " << Coef[i]->toString() << " + ";
   }
   RSO << Base->toString() << ")";
@@ -52,10 +59,12 @@ int LinearCombine::partialInvariant() const {
 }
 
 LinearCombine::~LinearCombine() {
-  for (int i = 0; i < (int) Coef.size(); ++i) { // NOLINT
-    delete Coef[i];
-    delete TripCount[i];
-  }
+  // for (int i = 0; i < (int) Coef.size(); ++i) { // NOLINT
+  //   delete Coef[i];
+  // }
+  // for (int i = 0; i < (int) TripCount.size(); ++i) { // NOLINT
+  //   delete TripCount[i];
+  // }
 }
 
 LinearCombine *LoopInvariant::toLinearCombine(ScalarEvolution *SE) {
@@ -73,30 +82,32 @@ LinearCombine *LoopInvariant::toLinearCombine(ScalarEvolution *SE) {
 SEWrapper *analyzeIndexExpr(ScalarEvolution *SE, const SCEV *Raw, void *Parent,
                             const std::vector<Loop *> &Loops,
                             const std::vector<SEWrapper *> &TripCount) {
-  LinearCombine *Res = new LinearCombine(Parent, Raw);
+  for (int i = 0; i < (int) TripCount.size(); ++i) { // NOLINT
+    DSA_LOG(AFFINE) << i << ": " << TripCount[i]->toString();
+  }
   int i = 0; // NOLINT
   for (int N = Loops.size(); i < N; ++i) {
     if (!SE->isLoopInvariant(Raw, Loops[i])) {
       break;
     }
-    Res->Coef.push_back(new LoopInvariant(Parent, SE->getConstant(APInt(64, 0))));
-    Res->TripCount.push_back(TripCount[i]);
   }
   if (!isa<SCEVAddRecExpr>(Raw) || i == (int)Loops.size()) {
     if (i == (int)Loops.size()) {
-      delete Res;
       auto *LI = new LoopInvariant(Parent, Raw);
       LI->TripCount = TripCount;
       return LI;
     }
     return nullptr;
   }
+  LinearCombine *Res = new LinearCombine(Parent, Raw);
+  for (int j = 0; j < i; ++j) { // NOLINT
+    Res->Coef.push_back(new LoopInvariant(Parent, SE->getConstant(APInt(64, 0))));
+  }
   auto *Cur = Raw;
   for (int N = Loops.size(); i < N; ++i) {
     if (const auto *SARE = dyn_cast<SCEVAddRecExpr>(Cur)) {
       if (!Loops.back()->contains(SARE->getLoop())) {
         Res->Coef.push_back(new LoopInvariant(Res, SE->getConstant(APInt(64, 0))));
-        Res->TripCount.push_back(TripCount[i]);
         continue;
       }
       if (SARE->getLoop() != Loops[i]) {
@@ -107,18 +118,22 @@ SEWrapper *analyzeIndexExpr(ScalarEvolution *SE, const SCEV *Raw, void *Parent,
         Res->Coef.push_back(new LoopInvariant(Res, SE->getConstant(APInt(64, 0))));
         continue;
       }
-      auto SliceLoop = std::vector<Loop*>(Loops.begin() + i + 1, Loops.end());
-      auto SliceTripCount = std::vector<SEWrapper*>(TripCount.begin() + i + 1, TripCount.end());
+      std::vector<Loop*> SliceLoop(Loops.begin() + i + 1, Loops.end());
+      std::vector<SEWrapper*> SliceTripCount(TripCount.begin() + i + 1, TripCount.end());
       Res->Coef.push_back(analyzeIndexExpr(SE, SARE->getStepRecurrence(*SE), Res,
                                            SliceLoop, SliceTripCount));
-      Res->TripCount.push_back(TripCount[i]);
       Cur = SARE->getStart();
     } else {
       CHECK(SE->isLoopInvariant(Cur, Loops[i]))
         << "\n" << *Raw << "\n" << *Cur << "\nNot an invariant in loop " << *Loops[i];
       Res->Coef.push_back(new LoopInvariant(Res, SE->getConstant(APInt(64, 0))));
-      Res->TripCount.push_back(TripCount[i]);
     }
+  }
+  Res->TripCount = TripCount;
+  for (int i = 0; i < (int) Loops.size(); ++i) { // NOLINT
+    DSA_LOG(AFFINE)
+      << i << ": " << "Coef " << Res->Coef[i]->toString()
+      << " ,Trip " << Res->TripCount[i]->toString();
   }
   CHECK(Res->Coef.size() == Loops.size()) << Res->Coef.size() << " != " << Loops.size();
   Res->Base = analyzeIndexExpr(SE, Cur, Res, {}, {});

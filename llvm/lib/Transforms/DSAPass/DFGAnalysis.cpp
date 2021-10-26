@@ -890,15 +890,17 @@ void analyzeDFGLoops(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisResult 
       auto &LoopNest = DD->LoopNest;
       DLI.LoopNest = LoopNest;
       for (int i = (int) LoopNest.size() - 1; i >= 0; --i) { // NOLINT
-        auto LoopSlice = std::vector<Loop*>(LoopNest.begin() + i, LoopNest.end());
         auto *NSCEV = SE.getBackedgeTakenCount(LoopNest[i]);
         if (isa<SCEVCouldNotCompute>(NSCEV)) {
           DLI.TripCount.emplace_back();
         } else {
+          auto LoopSlice = std::vector<Loop*>(LoopNest.begin() + i + 1, LoopNest.end());
           DLI.TripCount.push_back(analysis::analyzeIndexExpr(&SE, NSCEV, LoopNest[i],
                                                              LoopSlice, DLI.TripCount));
+          DSA_LOG(AFFINE) << i << ": " << DLI.TripCount.back()->toString();
         }
       }
+      std::reverse(DLI.TripCount.begin(), DLI.TripCount.end());
     }
 
     void Visit(TemporalDFG *TD) override {}
@@ -1003,6 +1005,13 @@ void analyzeAffineMemoryAccess(DFGFile &DF, dsa::xform::CodeGenContext &CGC,
   for (int i = 0; i < (int) DFGs.size(); ++i) { // NOLINT
     for (auto *Elem : DFGs[i]->Entries) {
       Elem->accept(&AE);
+      {
+        auto Iter = DAR.LI[i].find(Elem);
+        if (Iter != DAR.LI[i].end()) {
+          DSA_LOG(AFFINE) << Elem->dump();
+          DSA_LOG(AFFINE) << Iter->second->toString();
+        }
+      }
     }
   }
 }
@@ -1090,21 +1099,23 @@ void constructCoalescedMemory(DFGBase *DB, std::vector<DFGEntry*> &Entries,
       } else if (auto LI = dyn_cast<LoopInvariant>(Raw)) {
         L = LI->toLinearCombine(&SE);
       }
-
+      CHECK(L);
+      L = new LinearCombine(*L);
       auto Ptr = Entry->Coal[0]->underlyingInst()->getOperand(TEntry::PtrOperandIdx);
-      auto &LoopLI = L->TripCount;
       int DBits = Ptr->getType()->getPointerElementType()->getScalarSizeInBits();
-      const auto *TripCount = SE.getConstant(APInt(64, Entry->Coal.size() - 1, true));
-      LoopLI.insert(LoopLI.begin(), new analysis::LoopInvariant(Entry, TripCount));
-      const auto *Coef = SE.getConstant(APInt(64, DBits / 8, true));
-      L->Coef.insert(L->Coef.begin(), new LoopInvariant(Entry, Coef));
+      auto &TripCount = L->TripCount;
+      const auto *ExtraTC = SE.getConstant(APInt(64, Entry->Coal.size() - 1, true));
+      TripCount.insert(TripCount.begin(), new analysis::LoopInvariant(Entry, ExtraTC));
+      auto &Coef = L->Coef;
+      const auto *ExtraCoef = SE.getConstant(APInt(64, DBits / 8, true));
+      Coef.insert(L->Coef.begin(), new LoopInvariant(Entry, ExtraCoef));
       // If it used to be a constant, we need to make the higher dimensions to be zero-padded.
-      if (L->Coef.size() == 1) {
+      if (Coef.size() == 1) {
         auto *SCEVZero = SE.getConstant(APInt(64, 0, true));
         auto *ZeroCoef = new LoopInvariant(Entry, SCEVZero);
-        L->Coef.reserve(LoopLI.size());
-        while (L->Coef.size() < LoopLI.size()) {
-          L->Coef.push_back(ZeroCoef);
+        Coef.reserve(TripCount.size());
+        while (Coef.size() < TripCount.size()) {
+          Coef.push_back(ZeroCoef);
         }
       }
       LI[Entry] = L;
@@ -1231,10 +1242,22 @@ void analyzeAccumulatorTags(DFGFile &DF, xform::CodeGenContext &CGC,
         }
       }
     }
-    for (auto *SMP : Graphs[i]->EntryFilter<SLPMemPort>()) {
-      for (auto *Acc : SMP->Tagged) {
-        ++Acc->ResetLevel;
-        DSA_LOG(ACC) << Acc->dump() << " +Reset@" << Acc->ResetLevel;
+    for (auto *IP : Graphs[i]->EntryFilter<InputPort>()) {
+      if (!IP->Tagged.empty()) {
+        DSA_LOG(ACC) << IP->dump(); 
+        auto Iter = DAR.LI[i].find(IP);
+        CHECK(Iter != DAR.LI[i].end());
+        DSA_LOG(ACC) << Iter->second << " " << Iter->second->toString();
+        auto *LC = dyn_cast<LinearCombine>(Iter->second);
+        CHECK(LC);
+        for (auto *Acc : IP->Tagged) {
+          if (isa<SLPMemPort>(IP)) {
+            ++Acc->ResetLevel;
+          }
+          CHECK(Acc->ResetLevel < (int) LC->Coef.size());
+          DSA_LOG(ACC) << Acc->dump() << ", Reset@" << Acc->ResetLevel;
+        }
+        DSA_LOG(ACC) << "Finalized reset: " << resetLevel(IP);
       }
     }
   }
@@ -1275,6 +1298,7 @@ void fuseAffineDimensions(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisRe
           FIE.CutOff = Pattern->TripCount.size() - 1;
         }
         CHECK(FIE.DBits != -1);
+        DSA_LOG(FUSE) << Pattern << " " << Elem.first->dump();
         DSA_LOG(FUSE) << "Before: " << Pattern->toString() << ", CutOff: " << FIE.CutOff;
         int Before = Pattern->Coef.size();
         fuseInnerDimensions(*Pattern, FIE.DBits / 8, DFG->getUnroll(), CGC.SE,
