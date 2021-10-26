@@ -622,10 +622,10 @@ void extractSpadFromScope(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisRe
                 if (auto *CIS3D = dyn_cast<SCEVConstant>(Stride[2])) {
                   if (CIS2D->getAPInt().getSExtValue() == 0 && CIS3D->getAPInt().getSExtValue() != 0) {
                     int DType = MP->Load->getType()->getScalarSizeInBits() / 8;
-                    int BufferSize = (CIN1D->getAPInt().getSExtValue() + 1) * 2 * DType * SLPMul;
+                    int BufferSize = (CIN1D->getAPInt().getSExtValue()) * 2 * DType * SLPMul;
                     DSA_LOG(BUFFET)
                       << SI.Buffet.size() << ": " << MP->dump() << ", "
-                      << (CIN1D->getAPInt().getSExtValue() + 1) << " * " << SLPMul << " * " << DType
+                      << (CIN1D->getAPInt().getSExtValue()) << " * " << SLPMul << " * " << DType
                       << " * 2 = " << BufferSize << "\n" << LC->toString() << "\n"
                       << SI.isSpad(MP->Load);
                     // MP, Total, BufferSize, -1
@@ -894,6 +894,7 @@ void analyzeDFGLoops(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisResult 
         if (isa<SCEVCouldNotCompute>(NSCEV)) {
           DLI.TripCount.emplace_back();
         } else {
+          NSCEV = SE.getAddExpr(NSCEV, SE.getConstant(APInt(64, 1, true)));
           auto LoopSlice = std::vector<Loop*>(LoopNest.begin() + i + 1, LoopNest.end());
           DLI.TripCount.push_back(analysis::analyzeIndexExpr(&SE, NSCEV, LoopNest[i],
                                                              LoopSlice, DLI.TripCount));
@@ -1104,7 +1105,7 @@ void constructCoalescedMemory(DFGBase *DB, std::vector<DFGEntry*> &Entries,
       auto Ptr = Entry->Coal[0]->underlyingInst()->getOperand(TEntry::PtrOperandIdx);
       int DBits = Ptr->getType()->getPointerElementType()->getScalarSizeInBits();
       auto &TripCount = L->TripCount;
-      const auto *ExtraTC = SE.getConstant(APInt(64, Entry->Coal.size() - 1, true));
+      const auto *ExtraTC = SE.getConstant(APInt(64, Entry->Coal.size(), true));
       TripCount.insert(TripCount.begin(), LoopInvariant::get(Entry, ExtraTC));
       auto &Coef = L->Coef;
       const auto *ExtraCoef = SE.getConstant(APInt(64, DBits / 8, true));

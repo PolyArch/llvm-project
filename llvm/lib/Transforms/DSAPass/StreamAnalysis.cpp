@@ -177,19 +177,16 @@ void fuseInnerDimensions(LinearCombine &LI, int DType, int Unroll, ScalarEvoluti
             DSA_LOG(FUSE) << "Stride2D: " << *S2D;
             // TODO(@were): Relax this condition.
             if (isa<LoopInvariant>(Loop[1])) {
-              if ((*S1D) * (*N + 1) == *S2D) {
+              if ((*S1D) * (*N) == *S2D) {
                 Loop.erase(Loop.begin());
                 Coef.erase(Coef.begin());
                 auto *LoopParent = Loop.front()->Parent.Raw;
                 auto *CoefParent = Coef.front()->Parent.Raw;
                 Coef.front() = LoopInvariant::get(LoopParent,
-                                                 SE.getConstant(APInt(64, DType, true)));
-                auto *SCEVN = SE.getConstant(APInt(64, *N + 1, true));
-                auto *SCEVNegOne = SE.getConstant(APInt(64, -1, true));
+                                                  SE.getConstant(APInt(64, DType, true)));
+                auto *SCEVN = SE.getConstant(APInt(64, *N, true));
                 auto *NewLoop = Loop.front()->Raw;
                 NewLoop = SE.getMulExpr(NewLoop, SCEVN);
-                NewLoop = SE.getAddExpr(NewLoop, SCEVN);
-                NewLoop = SE.getAddExpr(NewLoop, SCEVNegOne);
                 Loop.front() = LoopInvariant::get(CoefParent, NewLoop);
                 continue;
               }

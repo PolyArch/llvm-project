@@ -747,7 +747,7 @@ injectComputedRepeat(CodeGenContext &CGC, // NOLINT
       Stretch = IB->CreateMul(Stretch, IB->getInt64(1 << DSA_REPEAT_DIGITAL_POINT));
       Stretch = IB->CreateSDiv(Stretch, IB->getInt64(Unroll));
     }
-    auto *Dim0 = IB->CreateAdd(SEE.expandCodeFor(Base), IB->getInt64(1));
+    auto *Dim0 = SEE.expandCodeFor(Base);
     Repeat = CeilDiv(Dim0, IB->getInt64(Unroll), IB);
     DSA_LOG(CODEGEN) << *Repeat;
     break;
@@ -755,9 +755,9 @@ injectComputedRepeat(CodeGenContext &CGC, // NOLINT
   case 2: {
     auto *Outer = dyn_cast<analysis::LoopInvariant>(Loops[1]);
     CHECK(Outer);
-    auto *Dim1 = IB->CreateAdd(SEE.expandCodeFor(Outer->Raw), IB->getInt64(1));
+    auto *Dim1 = SEE.expandCodeFor(Outer->Raw);
     if (auto *LC = dyn_cast<analysis::LinearCombine>(Loops[0])) {
-      auto *Dim0 = IB->CreateAdd(SEE.expandCodeFor(LC->Base->Raw), IB->getInt64(1));
+      auto *Dim0 = SEE.expandCodeFor(LC->Base->Raw);
       if (Unroll == 1) {
         // (Dim0 + Dim0 + (Dim1 - 1) * Stretch) * Dim1 / 2
         Stretch = SEE.expandCodeFor(LC->Coef[1]->Raw);
@@ -831,7 +831,7 @@ void injectLinearStreamImpl(CodeGenContext &CGC, analysis::LinearCombine &LI,
     std::vector<Value*> N;
     std::vector<Value*> Stride;
     for (int j = i; j < (int) Loops.size(); ++j) { // NOLINT
-      N.push_back(IB->CreateAdd(SEE.expandCodeFor(Loops[j]->base()), IB->getInt64(1)));
+      N.push_back(SEE.expandCodeFor(Loops[j]->base()));
       Stride.push_back(SEE.expandCodeFor(LC->Coef[j]->base()));
     }
     switch (Dim) {
@@ -990,10 +990,10 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
           if (LoopN.size() == 2) {
             // TODO(@were): Support stretch later.
             auto *InnerN = CGC.SEE.expandCodeFor(LoopN[0]->base());
-            auto *OuterN = CGC.SEE.expandCodeFor(LoopN[1]->base());
+            auto *OuterN = IB->CreateSub(CGC.SEE.expandCodeFor(LoopN[1]->base()), IB->getInt64(1));
             CGC.SS_RECURRENCE(
               PM->SoftPortNum, MP->SoftPortNum,
-              IB->CreateMul(IB->CreateAdd(InnerN, IB->getInt64(1)), OuterN), DType);
+              IB->CreateMul(InnerN, OuterN), DType);
           } else {
             CHECK(false) << "Not supported yet";
           }
@@ -1340,8 +1340,7 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
         }
         Value *N = IB->getInt64(1);
         for (; i < (int) DLI.LoopNest.size(); ++i) {
-          N = IB->CreateMul(N, IB->CreateAdd(SEE.expandCodeFor(DLI.TripCount[i]->base()),
-                                             IB->getInt64(1)));
+          N = IB->CreateMul(N, SEE.expandCodeFor(DLI.TripCount[i]->base()));
         }
         CGC.SS_RECURRENCE(SOP->SoftPortNum, SIP->SoftPortNum, N, Bytes);
       } else if (isa<TemporalDFG>(SIP->Parent)) {
