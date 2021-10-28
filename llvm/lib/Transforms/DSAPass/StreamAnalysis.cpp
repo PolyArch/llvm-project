@@ -93,12 +93,10 @@ LinearCombine *LoopInvariant::toLinearCombine(ScalarEvolution *SE) {
 SEWrapper *analyzeIndexExpr(ScalarEvolution *SE, const SCEV *Raw, void *Parent,
                             const std::vector<Loop *> &Loops,
                             const std::vector<SEWrapper *> &TripCount) {
-  for (int i = 0; i < (int) TripCount.size(); ++i) { // NOLINT
-    DSA_LOG(AFFINE) << i << ": " << TripCount[i]->toString();
-  }
   int i = 0; // NOLINT
   for (int N = Loops.size(); i < N; ++i) {
     if (!SE->isLoopInvariant(Raw, Loops[i])) {
+      DSA_LOG(AFFINE) << *Raw << " is a invariant @" << *Loops[i];
       break;
     }
   }
@@ -110,6 +108,7 @@ SEWrapper *analyzeIndexExpr(ScalarEvolution *SE, const SCEV *Raw, void *Parent,
     }
     return new SEWrapper(Parent, Raw);
   }
+  DSA_LOG(AFFINE) << "Invariant stops @" << i;
   LinearCombine *Res = new LinearCombine(Parent, Raw);
   for (int j = 0; j < i; ++j) { // NOLINT
     Res->Coef.push_back(LoopInvariant::get(Parent, SE->getConstant(APInt(64, 0))));
@@ -141,8 +140,12 @@ SEWrapper *analyzeIndexExpr(ScalarEvolution *SE, const SCEV *Raw, void *Parent,
   }
   Res->TripCount = TripCount;
   for (int i = 0; i < (int) Loops.size(); ++i) { // NOLINT
-    DSA_LOG(AFFINE)
-      << i << ": " << "Coef " << Res->Coef[i]->toString()
+    if (Loops[i]->getCanonicalInductionVariable()) {
+      DSA_LOG(AFFINE) << "i" << i << " -> "<< *Loops[i]->getCanonicalInductionVariable();
+    } else {
+      DSA_LOG(AFFINE) << "i" << i;
+    }
+    DSA_LOG(AFFINE) << i << ": " << "Coef " << Res->Coef[i]->toString()
       << " ,Trip " << Res->TripCount[i]->toString();
   }
   CHECK(Res->Coef.size() == Loops.size()) << Res->Coef.size() << " != " << Loops.size();

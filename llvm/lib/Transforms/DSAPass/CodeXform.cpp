@@ -476,6 +476,8 @@ struct DFGPrinter : dsa::DFGVisitor {
         OS << "Input" << DBits << ": Operand_" << Name << "\n";
         OS << Name << " = Operand_" << Name << "\n";
         OS << "Output" << DBits << ": " << Name << "\n";
+      } else if (!APM->Operand) {
+        Visit(static_cast<OutputPort*>(APM));
       } else {
         CHECK(false) << "Not supported yet!";
       }
@@ -1108,7 +1110,7 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
         CGC.INSTANTIATE_1D_INDIRECT(
             Cur->SoftPortNum, Cur->Load->getType()->getScalarSizeInBits() / 8,
             Cur->IndexOutPort, Cur->Index->Load->getType()->getScalarSizeInBits() / 8,
-            GEP->getOperand(0), Cur->Load->getType()->getScalarSizeInBits() / 8,
+            GEP->getOperand(0), IB->getInt64(0),
             Num, MT, DMO_Read);
 
         // TODO: Support indirect read on the SPAD(?)
@@ -1370,8 +1372,10 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
         APM->Meta.set("cmd", "0.1");
         return;
       }
-      // // TODO: Support OpCode() == 3.
-      CHECK(APM->OpCode == 0);
+      // TODO: Support OpCode() == 3.
+      if (APM->Operand) {
+        CHECK(APM->OpCode == 0);
+      }
 
       int IdxPort = -1;
       auto *IB = CGC.IB;
@@ -1419,7 +1423,7 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
       auto *GEP = dyn_cast<GetElementPtrInst>(APM->Store->getPointerOperand());
       CHECK(GEP);
       CGC.INSTANTIATE_1D_INDIRECT(APM->SoftPortNum, DType, IdxPort, IdxType,
-                                  GEP->getOperand(0), DType,
+                                  GEP->getOperand(0), IB->getInt64(0),
                                   N, DMT_SPAD, DMO_Add);
       DSA_LOG(CODEGEN)
         << "[AtomicSpad] WritePort: " << APM->SoftPortNum << ", DType: " << DType
