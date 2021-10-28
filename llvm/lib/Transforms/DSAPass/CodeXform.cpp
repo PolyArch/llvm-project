@@ -1092,29 +1092,25 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
         CGC.SS_CONFIG_PORT(INDs[i], DPF_PortBroadcast, true);
       }
 
-      auto *Index = IMP->Index->Load->getPointerOperand();
-      auto Analyzed = IMP->Parent->AnalyzeDataStream(
-          Index, IMP->Index->Load->getType()->getScalarSizeInBits() / 8);
       auto &LI = DAR.LI[IMP->Parent->ID];
-      CHECK(LI.find(IMP->Index) != LI.end());
-      auto *IdxLI = LI[IMP->Index];
+      CHECK(LI.find(IMP) != LI.end());
+      auto *IdxLI = LI[IMP];
+      CHECK(false) << IdxLI->toString();
+      int DType = IMP->Load->getType()->getScalarSizeInBits() / 8;
+      int IType = IMP->Index->Load->getType()->getScalarSizeInBits();
       injectLinearStreamImpl(CGC, IdxLI, IMP->Index->SoftPortNum,
-                             IMP->Parent->getUnroll(),
-                             IMP->Index->Load->getType()->getScalarSizeInBits() / 8,
+                             IMP->Parent->getUnroll(), IType,
                              DMO_Read, DP_NoPadding, SI, -1);
 
       for (size_t i = 0; i < Together.size(); ++i) { // NOLINT
         auto *Cur = Together[i];
-        int IBits = Cur->Index->Load->getType()->getScalarSizeInBits();
-        auto *Num = IB->CreateUDiv(Analyzed.BytesFromMemory(IB),
-                                  IB->getInt64(IBits / 8));
         auto *GEP = dyn_cast<GetElementPtrInst>(Cur->Load->getPointerOperand());
         auto MT = SI.isSpad(GEP->getOperand(0)) ? DMT_SPAD : DMT_DMA;
         CGC.INSTANTIATE_1D_INDIRECT(
             Cur->SoftPortNum, Cur->Load->getType()->getScalarSizeInBits() / 8,
             Cur->IndexOutPort, Cur->Index->Load->getType()->getScalarSizeInBits() / 8,
             GEP->getOperand(0), IB->getInt64(0),
-            Num, MT, DMO_Read);
+            nullptr, MT, DMO_Read);
 
         // TODO: Support indirect read on the SPAD(?)
         Cur->Meta.set("src", dsa::dfg::MetaPort::DataText[(int)DMT_DMA]);

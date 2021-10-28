@@ -605,8 +605,11 @@ void extractSpadFromScope(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisRe
   for (int i = 0; i < (int) DFGs.size(); ++i) { // NOLINT
     auto *DFG = DFGs[i];
     struct Analyzer : DFGEntryVisitor {
-      void Visit(MemPort *MP) {
-        auto &IdxLI = LI[MP];
+      void Visit(IndMemPort *) override {}
+      void Visit(AtomicPortMem *) override {}
+
+      void Visit(MemPort *MP) override {
+        auto *IdxLI = LI[MP];
         std::vector<const SCEV*> N;
         std::vector<const SCEV*> Stride;
         if (auto *LC = dyn_cast<LinearCombine>(IdxLI)) {
@@ -982,7 +985,9 @@ void analyzeAffineMemoryAccess(DFGFile &DF, dsa::xform::CodeGenContext &CGC,
     }
     void Visit(IndMemPort *IMP) override {
       analyze(IMP->Load->getPointerOperand(), IMP);
-      IMP->Index->accept(this);
+    }
+    void Visit(AtomicPortMem *APM) override {
+      analyze(APM->Store->getPointerOperand(), APM);
     }
     void analyze(Value *Ptr, DFGEntry *DE) {
       auto &LI = DAR.LI[DE->Parent->ID];

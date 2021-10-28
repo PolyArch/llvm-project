@@ -6,6 +6,7 @@
 #include <tuple>
 
 #include "llvm/Analysis/LoopInfo.h"
+#include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/IR/Constant.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Instructions.h"
@@ -136,6 +137,10 @@ Constant *createConstant(LLVMContext &Context, uint64_t Val, int Bits = 64);
 Value *CeilDiv(Value *A, Value *B, Instruction *InsertBefore);
 
 Value *CeilDiv(Value *A, Value *B, IRBuilder<> *IB);
+
+Value *stripCast(Value *);
+
+const SCEV *stripCast(const SCEV *SE);
 
 std::string funcNameToDFGName(const StringRef &Name);
 
