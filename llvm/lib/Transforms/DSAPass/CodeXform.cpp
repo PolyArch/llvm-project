@@ -785,9 +785,16 @@ injectComputedRepeat(CodeGenContext &CGC, // NOLINT
   return {Repeat, Stretch};
 }
 
-void injectLinearStreamImpl(CodeGenContext &CGC, analysis::LinearCombine &LI,
+void injectLinearStreamImpl(CodeGenContext &CGC, analysis::SEWrapper *SW,
                             int Port, int Unroll, int DType, MemoryOperation MO,
                             Padding P, analysis::SpadInfo &SI, int BuffetIdx) {
+  analysis::LinearCombine *LCPtr = dyn_cast<analysis::LinearCombine>(SW);
+  if (!LCPtr) {
+    auto *LI = dyn_cast<analysis::LoopInvariant>(SW);
+    CHECK(LI) << SW->toString();
+    LCPtr = LI->toLinearCombine(&CGC.SE);
+  }
+  analysis::LinearCombine &LC = *LCPtr;
 
   auto InjectRepeat = [&CGC](analysis::LinearCombine &LI, int Port, int Unroll) {
     auto &Loops = LI.TripCount;
@@ -925,10 +932,10 @@ void injectLinearStreamImpl(CodeGenContext &CGC, analysis::LinearCombine &LI,
   };
 
   if (MO == MemoryOperation::DMO_Read) {
-    InjectRepeat(LI, Port, Unroll);
+    InjectRepeat(LC, Port, Unroll);
   }
 
-  LinearInstantiation(&LI, Port, MO, P, SI, BuffetIdx, DType);
+  LinearInstantiation(&LC, Port, MO, P, SI, BuffetIdx, DType);
 }
 
 
@@ -986,7 +993,7 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
           LC->TripCount.pop_back();
 
           injectLinearStreamImpl(
-            CGC, *LC, MP->SoftPortNum, DFG->getUnroll(), DType, DMO_Read,
+            CGC, LC, MP->SoftPortNum, DFG->getUnroll(), DType, DMO_Read,
             (Padding) MP->fillMode(), SI, -1);
 
           if (LoopN.size() == 2) {
@@ -1001,7 +1008,7 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
           }
 
           injectLinearStreamImpl(
-            CGC, *LC, PM->SoftPortNum, DFG->getUnroll(), DType, DMO_Write, (Padding) 0, SI, -1);
+            CGC, LC, PM->SoftPortNum, DFG->getUnroll(), DType, DMO_Write, (Padding) 0, SI, -1);
 
           // Performance Model
           int II = 1;
@@ -1027,7 +1034,7 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
           }
           PM->Meta.set("dest", "localport");
           PM->Meta.set("dest", MP->name());
-          {
+          if (Conc != -1) {
             std::ostringstream OSS;
             OSS << Conc * DType;
             PM->Meta.set("conc", OSS.str());
@@ -1091,11 +1098,7 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
       auto &LI = DAR.LI[IMP->Parent->ID];
       CHECK(LI.find(IMP->Index) != LI.end());
       auto *IdxLI = LI[IMP->Index];
-      auto *LC = dyn_cast<analysis::LinearCombine>(IdxLI);
-      if (!LC) {
-        LC = dyn_cast<analysis::LoopInvariant>(IdxLI)->toLinearCombine(nullptr);
-      }
-      injectLinearStreamImpl(CGC, *LC, IMP->Index->SoftPortNum,
+      injectLinearStreamImpl(CGC, IdxLI, IMP->Index->SoftPortNum,
                              IMP->Parent->getUnroll(),
                              IMP->Index->Load->getType()->getScalarSizeInBits() / 8,
                              DMO_Read, DP_NoPadding, SI, -1);
@@ -1145,11 +1148,7 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
         DSA_LOG(CODEGEN) << "Config BMSS: " << tagBitmask(ResetLevel);
         CGC.CONFIG_PARAM(DSARF::BMSS, tagBitmask(ResetLevel), true);
       }
-      auto *LC = dyn_cast<analysis::LinearCombine>(IdxLI);
-      if (!LC) {
-        LC = dyn_cast<analysis::LoopInvariant>(IdxLI)->toLinearCombine(nullptr);
-      }
-      injectLinearStreamImpl(CGC, *LC, Port, DFG->getUnroll(), DType, DMO_Read,
+      injectLinearStreamImpl(CGC, IdxLI, Port, DFG->getUnroll(), DType, DMO_Read,
                              (Padding) MP->fillMode(), SI, BIter - SI.Buffet.begin());
 
       if (!MP->Tagged.empty()) {
@@ -1186,7 +1185,7 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
         CGC.CONFIG_PARAM(DSARF::BMSS, tagBitmask(ResetLevel), true);
         CHECK(ResetLevel < (int) LC->Coef.size()) << ResetLevel << ", " << LC->Coef.size();
       }
-      injectLinearStreamImpl(CGC, *LC, Port, DFG->getUnroll(), DType, DMO_Read,
+      injectLinearStreamImpl(CGC, LC, Port, DFG->getUnroll(), DType, DMO_Read,
                              (Padding) MP->fillMode(), SI, BIter - SI.Buffet.begin());
       if (!SMP->Tagged.empty()) {
         CGC.CONFIG_PARAM(DSARF::BMSS, (int) 0, false);
@@ -1204,11 +1203,7 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
       CGC.SEE.setInsertPoint(DFG->DefaultIP());
       int DType = PM->Store->getValueOperand()->getType()->getScalarSizeInBits() / 8;
       auto *IdxLI = DAR.LI[PM->Parent->ID][PM];
-      auto *LC = dyn_cast<analysis::LinearCombine>(IdxLI);
-      if (!LC) {
-        LC = dyn_cast<analysis::LoopInvariant>(IdxLI)->toLinearCombine(nullptr);
-      }
-      injectLinearStreamImpl(CGC, *LC, PM->SoftPortNum, DFG->getUnroll(), DType,
+      injectLinearStreamImpl(CGC, IdxLI, PM->SoftPortNum, DFG->getUnroll(), DType,
                              DMO_Write, DP_NoPadding, SI, -1);
 
       PM->IntrinInjected = true;
@@ -1223,11 +1218,7 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
       int DType = PM->Store->getValueOperand()->getType()->getScalarSizeInBits() / 8;
       CHECK(SPM->Coal.size() >= 2) << SPM->Coal.size();
       auto *IdxLI = DAR.LI[SPM->Parent->ID][SPM];
-      auto *LC = dyn_cast<analysis::LinearCombine>(IdxLI);
-      if (!LC) {
-        LC = dyn_cast<analysis::LoopInvariant>(IdxLI)->toLinearCombine(nullptr);
-      }
-      injectLinearStreamImpl(CGC, *LC, SPM->SoftPortNum, DFG->getUnroll(), DType, DMO_Write,
+      injectLinearStreamImpl(CGC, IdxLI, SPM->SoftPortNum, DFG->getUnroll(), DType, DMO_Write,
                              DP_NoPadding, SI, -1);
 
       SPM->IntrinInjected = true;
@@ -1392,12 +1383,7 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
 
             CHECK(LI.find(MP) != LI.end()) << MP->ID << ": " << MP->dump();
             int DType = MP->Load->getType()->getScalarSizeInBits() / 8;
-            analysis::LinearCombine *LC = dyn_cast<analysis::LinearCombine>(LI[MP]);
-            if (!LC) {
-              auto *LoopI = dyn_cast<analysis::LoopInvariant>(LI[MP]);
-              LC = LoopI->toLinearCombine(nullptr);
-            }
-            injectLinearStreamImpl(CGC, *LC, MP->SoftPortNum, DFG->getUnroll(), DType, DMO_Read,
+            injectLinearStreamImpl(CGC, LI[MP], MP->SoftPortNum, DFG->getUnroll(), DType, DMO_Read,
                                    (Padding) MP->fillMode(), SI, -1);
             IdxPort = IMP->IndexOutPort;
           }

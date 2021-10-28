@@ -96,7 +96,6 @@ SEWrapper *analyzeIndexExpr(ScalarEvolution *SE, const SCEV *Raw, void *Parent,
   int i = 0; // NOLINT
   for (int N = Loops.size(); i < N; ++i) {
     if (!SE->isLoopInvariant(Raw, Loops[i])) {
-      DSA_LOG(AFFINE) << *Raw << " is a invariant @" << *Loops[i];
       break;
     }
   }
@@ -108,7 +107,6 @@ SEWrapper *analyzeIndexExpr(ScalarEvolution *SE, const SCEV *Raw, void *Parent,
     }
     return new SEWrapper(Parent, Raw);
   }
-  DSA_LOG(AFFINE) << "Invariant stops @" << i;
   LinearCombine *Res = new LinearCombine(Parent, Raw);
   for (int j = 0; j < i; ++j) { // NOLINT
     Res->Coef.push_back(LoopInvariant::get(Parent, SE->getConstant(APInt(64, 0))));
