@@ -196,6 +196,8 @@ struct LoopInvariant : SEWrapper {
    */
   LinearCombine *toLinearCombine(ScalarEvolution *SE);
 
+  std::string toString() const override;
+
   RTTI_CLASS_OF(SEWrapper, kLoopInvariant)
 
  private:

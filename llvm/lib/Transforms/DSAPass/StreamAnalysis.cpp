@@ -31,6 +31,7 @@ LoopInvariant *LoopInvariant::get(void *Parent, const SCEV *Raw) {
   return UniqueInvariant[{Parent, Raw}];
 }
 
+
 std::string SEWrapper::toString() const {
   std::string S;
   llvm::raw_string_ostream RSO(S);
@@ -47,6 +48,25 @@ std::string LinearCombine::toString() const {
     RSO << " * " << Coef[i]->toString() << " + ";
   }
   RSO << Base->toString() << ")";
+  return RSO.str();
+}
+
+std::string LoopInvariant::toString() const {
+  std::string S;
+  llvm::raw_string_ostream RSO(S);
+  if (const auto *SC = dyn_cast<SCEVConstant>(Raw)) {
+    RSO << SC->getAPInt().getSExtValue();
+  } else {
+    RSO << "(" << *Raw << ")";
+    if (!TripCount.empty()) {
+      RSO << " x (";
+      for (int i = 0, N = TripCount.size(); i < N; ++i) { // NOLINT
+        if (i) RSO << " * ";
+        RSO << TripCount[i]->toString();
+      }
+      RSO << ")";
+    }
+  }
   return RSO.str();
 }
 
@@ -81,8 +101,9 @@ LinearCombine::~LinearCombine() {
 LinearCombine *LoopInvariant::toLinearCombine(ScalarEvolution *SE) {
   auto *Res = new LinearCombine(this->Parent.Raw, this->Raw);
   Res->TripCount = this->TripCount;
-  Res->Coef.reserve(TripCount.size());
+  Res->Base = this;
   if (SE) {
+    Res->Coef.reserve(TripCount.size());
     for (int i = 0; i < (int) TripCount.size(); ++i) { // NOLINT
       Res->Coef.push_back(LoopInvariant::get(Res, SE->getConstant(APInt(64, 0, true))));
     }

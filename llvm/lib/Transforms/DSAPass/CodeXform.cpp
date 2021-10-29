@@ -773,7 +773,7 @@ injectComputedRepeat(CodeGenContext &CGC, // NOLINT
         CHECK(false) << "Support this later...";
       }
     } else {
-      auto *Dim0 = IB->CreateAdd(SEE.expandCodeFor(Loops[0]->Raw), IB->getInt64(1));
+      auto *Dim0 = SEE.expandCodeFor(Loops[0]->Raw);
       Repeat = IB->CreateMul(CeilDiv(Dim0, IB->getInt64(Unroll), IB), Dim1);
       DSA_LOG(CODEGEN) << *Repeat;
     }
@@ -785,9 +785,19 @@ injectComputedRepeat(CodeGenContext &CGC, // NOLINT
   return {Repeat, Stretch};
 }
 
+Value *computeTripCount(std::vector<analysis::SEWrapper*> &TC, IRBuilder<> *IB, SCEVExpander *SEE) {
+  // TODO(@were): Compute it.
+  Value *Res = IB->getInt64(1);
+  for (int i = 0, N = TC.size(); i < N; ++i) { // NOLINT
+    Res = IB->CreateMul(Res, SEE->expandCodeFor(TC[i]->Raw));
+  }
+  return Res;
+}
+
+
 void injectLinearStreamImpl(CodeGenContext &CGC, analysis::SEWrapper *SW,
-                            int Port, int Unroll, int DType, MemoryOperation MO,
-                            Padding P, analysis::SpadInfo &SI, int BuffetIdx) {
+                              int Port, int Unroll, int DType, MemoryOperation MO,
+                              Padding P, analysis::SpadInfo &SI, int BuffetIdx) {
   analysis::LinearCombine *LCPtr = dyn_cast<analysis::LinearCombine>(SW);
   if (!LCPtr) {
     auto *LI = dyn_cast<analysis::LoopInvariant>(SW);
@@ -1094,13 +1104,45 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
 
       auto &LI = DAR.LI[IMP->Parent->ID];
       CHECK(LI.find(IMP) != LI.end());
-      auto *IdxLI = LI[IMP];
-      CHECK(false) << IdxLI->toString();
       int DType = IMP->Load->getType()->getScalarSizeInBits() / 8;
-      int IType = IMP->Index->Load->getType()->getScalarSizeInBits();
-      injectLinearStreamImpl(CGC, IdxLI, IMP->Index->SoftPortNum,
+
+      // (DType * (?)) + %SAR
+      auto *IdxLI = LI[IMP];
+      int IType = 8;
+      analysis::SEWrapper *Idx = nullptr;
+
+      if (auto *SA = dyn_cast<analysis::SWBinary>(IdxLI)) {
+        CHECK(SA && SA->Op == 0) << IdxLI->toString();
+        const auto *Idx = SA->A;
+        // const SCEV *SAR = SA->B->Raw;
+        // Strip the Coef
+        if (DType == 1) {
+          CHECK(false) << Idx->toString();
+        } else {
+          auto *SM = dyn_cast<analysis::SWBinary>(Idx);
+          CHECK(SM);
+          if (const auto *SC = dyn_cast<SCEVConstant>(SM->A->Raw)) {
+            CHECK(SC->getAPInt().getSExtValue() == DType);
+          } else {
+            CHECK(false);
+          }
+          Idx = SM->B;
+        }
+        if (const auto *SCE = dyn_cast<analysis::SWCast>(Idx)) {
+          IType = SCE->srcTy()->getScalarSizeInBits() / 8;
+          Idx = SCE->Stripped;
+        }
+      } else if (auto *LC = dyn_cast<analysis::LinearCombine>(IdxLI)) {
+        CHECK(false) << LC->Base->toString();
+      }
+
+      auto *IndPtr = dyn_cast<analysis::IndirectPointer>(Idx);
+      injectLinearStreamImpl(CGC, IndPtr->Pointer, IMP->Index->SoftPortNum,
                              IMP->Parent->getUnroll(), IType,
                              DMO_Read, DP_NoPadding, SI, -1);
+
+      auto *ILC = dyn_cast<analysis::LinearCombine>(IndPtr->Pointer);
+      Value *N = computeTripCount(ILC->TripCount, CGC.IB, &CGC.SEE);
 
       for (size_t i = 0; i < Together.size(); ++i) { // NOLINT
         auto *Cur = Together[i];
@@ -1109,8 +1151,7 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
         CGC.INSTANTIATE_1D_INDIRECT(
             Cur->SoftPortNum, Cur->Load->getType()->getScalarSizeInBits() / 8,
             Cur->IndexOutPort, Cur->Index->Load->getType()->getScalarSizeInBits() / 8,
-            GEP->getOperand(0), IB->getInt64(0),
-            nullptr, MT, DMO_Read);
+            GEP->getOperand(0), IB->getInt64(0), N, MT, DMO_Read);
 
         // TODO: Support indirect read on the SPAD(?)
         Cur->Meta.set("src", dsa::dfg::MetaPort::DataText[(int)DMT_DMA]);
@@ -1139,6 +1180,7 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
       auto Cond = [MP] (analysis::SpadInfo::BuffetEntry &BE) { return std::get<0>(BE) == MP; };
       auto BIter = std::find_if(SI.Buffet.begin(), SI.Buffet.end(), Cond);
       auto *IdxLI = DAR.LI[MP->Parent->ID][MP];
+      CHECK(DAR.LI[MP->Parent->ID].find(MP) != DAR.LI[MP->Parent->ID].end()) << MP->dump();
       if (!MP->Tagged.empty()) {
         int ResetLevel = analysis::resetLevel(MP);
         DSA_LOG(CODEGEN) << "Config BMSS: " << tagBitmask(ResetLevel);
@@ -1229,6 +1271,7 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
       auto &TripCount = DAR.DLI[IC->Parent->ID].TripCount;
       auto CR = injectComputedRepeat(CGC, TripCount, TripCount.size(), IC->Parent->getUnroll());
       CHECK(!CR.second) << "Should not be stretched!";
+      DSA_LOG(CODEGEN) << *IC->Val << " x " << *CR.first;
       CGC.SS_CONST(IC->SoftPortNum, IC->Val, CR.first,
                    IC->Val->getType()->getScalarSizeInBits() / 8);
       IC->IntrinInjected = true;
