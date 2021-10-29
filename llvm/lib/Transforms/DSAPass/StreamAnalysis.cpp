@@ -131,6 +131,19 @@ std::string SWCast::toString() const {
 SEWrapper *analyzeIndexExpr(ScalarEvolution *SE, const SCEV *Raw, void *Parent,
                             const std::vector<Loop *> &Loops,
                             const std::vector<SEWrapper *> &TripCount) {
+  int i = 0; // NOLINT
+  for (int N = Loops.size(); i < N; ++i) {
+    if (!SE->isLoopInvariant(Raw, Loops[i])) {
+      break;
+    }
+  }
+  if (i == (int)Loops.size()) {
+    if (i == (int)Loops.size()) {
+      auto *LI = LoopInvariant::get(Parent, Raw);
+      LI->TripCount = TripCount;
+      return LI;
+    }
+  }
   if (auto *Res = analyzeCast(SE, Raw, Parent, Loops, TripCount)) {
     return Res;
   }
@@ -140,20 +153,7 @@ SEWrapper *analyzeIndexExpr(ScalarEvolution *SE, const SCEV *Raw, void *Parent,
   if (auto *Res = analyzeBinary(SE, Raw, Parent, Loops, TripCount)) {
     return Res;
   }
-  int i = 0; // NOLINT
-  for (int N = Loops.size(); i < N; ++i) {
-    if (!SE->isLoopInvariant(Raw, Loops[i])) {
-      break;
-    }
-  }
-  if (!isa<SCEVAddRecExpr>(Raw) || i == (int)Loops.size()) {
-    if (i == (int)Loops.size()) {
-      auto *LI = LoopInvariant::get(Parent, Raw);
-      LI->TripCount = TripCount;
-      return LI;
-    }
-    return new SEWrapper(Parent, Raw);
-  }
+  CHECK(isa<SCEVAddRecExpr>(Raw)) << *Raw << " " << Raw->getSCEVType();
   LinearCombine *Res = new LinearCombine(Parent, Raw);
   for (int j = 0; j < i; ++j) { // NOLINT
     Res->Coef.push_back(LoopInvariant::get(Parent, SE->getConstant(APInt(64, 0))));
