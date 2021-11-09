@@ -7,12 +7,179 @@
 
 #include "./DFGEntry.h"
 #include "./DFGIR.h"
+#include "./RTTIUtils.h"
 
 namespace dsa {
 
 namespace xform {
 
 struct CodeGenContext;
+
+enum DataStreamKind {
+  kDataStream,
+  kLinear1D,
+  kLinear2D,
+  kIndirect1D,
+  kIndirect2D
+};
+
+/*!
+ * \brief The base class of indirect stream emission.
+ */
+struct DataStream {
+  /*!
+   * \brief RTTI type.
+   */
+  int TyEnum{kDataStream};
+  /*!
+   * \brief Port destination.
+   */
+  int DestPort{-1};
+  /*!
+   * \brief The data type of data accessed.
+   */
+  int DType;
+  /*!
+   * \brief The data type of index.
+   */
+  int IType;
+  /*!
+   * \brief Emit this stream to program intrinsic.
+   */
+  virtual void emitIntrinsic(xform::CodeGenContext &CGC) = 0;
+
+  DataStream(int D, int I) : DType(D), IType(I) {}
+
+  RTTI_CLASS_OF(DataStream, kDataStream)
+};
+
+struct Linear1D : DataStream {
+  /*
+   * \brief Begin address.
+   */
+  const SCEV *SAR;
+  /*!
+   * \brief Trip count.
+   */
+  const SCEV *L1D;
+  /*!
+   * \brief Word stride.
+   */
+  const SCEV *I1D;
+  /*!
+   * \brief Repeat.
+   */
+  const SCEV *Repeat;
+  /*!
+   * \brief Repeat stretch.
+   */
+  const SCEV *RStretch;
+
+  void emitIntrinsic(xform::CodeGenContext &CGC) override;
+
+  RTTI_CLASS_OF(DataStream, kLinear1D)
+};
+
+struct Linear2D : DataStream {
+  /*!
+   * \brief Inner dimension.
+   */
+  Linear1D L1D;
+  /*!
+   * \brief Outer trip count.
+   */
+  const SCEV *L2D;
+  /*!
+   * \brief Inner stride.
+   */
+  const SCEV *I2D;
+  /*!
+   * \brief Inner stretch.
+   */
+  const SCEV *E2D;
+
+  RTTI_CLASS_OF(DataStream, kLinear2D)
+};
+
+/*!
+ * \brief The extracted 1D stream. a[b[i]].
+ */
+// TODO(@were): Support more complicated pattern than b[i].
+struct Indirect1D : DataStream {
+  /*!
+   * \brief The base address of indirect load.
+   */
+  const SCEV *SAR;
+  /*!
+   * \brief The trip count of loading.
+   */
+  const SCEV *L1D;
+  /*!
+   * \brief The port of index analysis.
+   */
+  int IdxPort{-1};
+  /*!
+   * \brief Stream of b[i].
+   */
+  const analysis::SEWrapper *Idx;
+  /*!
+   * \brief Emit this stream to program intrinsic.
+   */
+  void emitIntrinsic(xform::CodeGenContext &CGC);
+
+  Indirect1D(int D, int I, const SCEV *S, const SCEV *L, const analysis::SEWrapper *Idx) :
+    DataStream(D, I), SAR(S), L1D(L), Idx(Idx) {
+    TyEnum = kIndirect1D;
+  }
+
+  RTTI_CLASS_OF(DataStream, kIndirect1D)
+};
+
+/*!
+ * \brief The extracted 1D stream. (a + b[i])[idx[j] + j * stride1d].
+ */
+struct Indirect2D : DataStream {
+  /*!
+   * \brief The port where (a + b[i]) comes.
+   */
+  int OffsetPort{-1};
+  /*!
+   * \brief The begin address can either be a stream or a constant.
+   */
+  analysis::SEWrapper *SAR;
+  /*
+   * \brief The port where idx[j] comes.
+   */
+  int IdxPort{-1};
+  /*!
+   * \brief The index can either be a stream or a constant 0.
+   */
+  analysis::SEWrapper *Idx;
+  /*!
+   * \brief The 1D trip count can either be a stream or a constant from L1D register.
+   */
+  analysis::SEWrapper *L1D;
+  /*!
+   * \brief Later, this L1D will be instantiated into this DFG.
+   */
+  DedicatedDFG *L1DDFG{nullptr};
+  /*!
+   * \brief The outer loop trip count.
+   */
+  const SCEV *L2D;
+  /*!
+   * \brief Emit this stream to program intrinsic.
+   */
+  void emitIntrinsic(xform::CodeGenContext &CGC);
+
+  Indirect2D(int D, int I, analysis::SEWrapper *S, analysis::SEWrapper *Idx,
+             analysis::SEWrapper *L1D, const SCEV *L2D) :
+    DataStream(D, I), SAR(S), Idx(Idx), L1D(L1D), L2D(L2D) {
+    TyEnum = kIndirect2D;
+  }
+
+  RTTI_CLASS_OF(DataStream, kIndirect2D)
+};
 
 } // namespace xform
 
@@ -100,6 +267,10 @@ struct DFGAnalysisResult {
    *        Filled by `analyzeDFGMemoryAccess`.
    */
   std::vector<std::unordered_map<DFGEntry*, SEWrapper*>> LI;
+  /*!
+   * \brief Data structures for streams that are ready-codegen.
+   */
+  std::vector<std::unordered_map<DFGEntry*, xform::DataStream*>> Streams;
 };
 
 /*!
@@ -187,12 +358,26 @@ bfsOperands(DFGBase *DB, Instruction *From, DominatorTree *DT);
 void fuseAffineDimensions(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisResult &DAR);
 
 /*!
+ * \brief Extract analyzed streams to ready-codegen format.
+ * \param DF The DFG file to be analyzed.
+ * \param CGC The context required for the analysis.
+ * \param DAR The result to be written to.
+ */
+xform::DataStream*
+analyzedWrapperToStream(DFGEntry *DE, xform::CodeGenContext &CGC, DFGAnalysisResult &DAR);
+
+/*!
  * \brief A wrapper helper function.
  *        If an input port is used as a tag of accumulator, return the
  *        affine loop level of resetting the register.
  * \param IP The input port to inspect.
  */
 int resetLevel(InputPort *IP);
+
+/*!
+ * \brief TODO(@were): doc this!
+ */
+const SCEV *productTripCount(std::vector<analysis::SEWrapper*> &TC, ScalarEvolution *SE);
 
 } // namespace analysis
 } // namespace dsa

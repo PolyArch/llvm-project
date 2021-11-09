@@ -153,7 +153,7 @@ SEWrapper *analyzeIndexExpr(ScalarEvolution *SE, const SCEV *Raw, void *Parent,
   if (auto *Res = analyzeBinary(SE, Raw, Parent, Loops, TripCount)) {
     return Res;
   }
-  CHECK(isa<SCEVAddRecExpr>(Raw)) << *Raw << " " << Raw->getSCEVType();
+  CHECK(isa<SCEVAddRecExpr>(Raw)) << *Raw;
   LinearCombine *Res = new LinearCombine(Parent, Raw);
   for (int j = 0; j < i; ++j) { // NOLINT
     Res->Coef.push_back(LoopInvariant::get(Parent, SE->getConstant(APInt(64, 0))));

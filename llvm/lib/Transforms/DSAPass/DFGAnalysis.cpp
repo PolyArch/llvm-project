@@ -493,7 +493,6 @@ struct DFGEntryAnalyzer : DFGVisitor {
             if (!DB.BelongOtherDFG(UserInst) && !DB.InThisDFG(UserInst)) {
               Entries.push_back(new OutputPort(&DB, Inst));
               DSA_LOG(DFG) << "Write to register: " << *Inst;
-                         DSA_INFO << "User: " << UserInst;
             }
           }
         }
@@ -643,7 +642,7 @@ void extractSpadFromScope(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisRe
         SLPMul = 1;
       }
 
-      void Visit(SLPMemPort *SMP) {
+      void Visit(SLPMemPort *SMP) override {
         SLPMul = SMP->Coal.size();
       }
 
@@ -746,7 +745,8 @@ void extractDFGFromScope(DFGFile &DF, dsa::xform::CodeGenContext &CGC) {
 ConfigInfo extractDFGPorts(std::string FName, DFGFile &DF, SpadInfo &SI) {
   auto *SBCONFIG = getenv("SBCONFIG");
   CHECK(SBCONFIG);
-  auto Cmd = formatv("ss_sched {0} {1} {2} -e 0 > /dev/null", "-v", SBCONFIG, FName).str();
+  std::string DummyFlag = dsa::utils::ModuleContext().DUMMY ? "--dummy" : "-v";
+  auto Cmd = formatv("ss_sched {0} {1} {2} -e 0 > /dev/null", DummyFlag, SBCONFIG, FName).str();
   DSA_LOG(CONFIG) << Cmd;
   CHECK(system(Cmd.c_str()) == 0) << "Not successfully scheduled! Try another DFG!";
 
@@ -769,6 +769,7 @@ ConfigInfo extractDFGPorts(std::string FName, DFGFile &DF, SpadInfo &SI) {
   std::string IndirectPrefix = PortPrefix + "indirect_";
   std::string IBuffetPrefix = PortPrefix + "IBuffet";
   std::string OBuffetPrefix = PortPrefix + "OBuffet";
+  std::string L2DPrefix = PortPrefix + "l2d_";
   while (std::getline(Ifs, Line)) {
     std::istringstream Iss(Line);
     std::string Token;
@@ -866,6 +867,8 @@ ConfigInfo extractDFGPorts(std::string FName, DFGFile &DF, SpadInfo &SI) {
           Iss >> std::get<4>(SI.Buffet[X]);
           DSA_INFO << "Buffet Write Port: " << std::get<4>(SI.Buffet[X]);
         }
+      } else if (Token.find(L2DPrefix)) {
+        CHECK(false) << "Support this: " << Token;
       } else {
         CHECK(false) << "Unrecognized token: " << Token;
       }
@@ -898,6 +901,15 @@ void analyzeDFGLoops(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisResult 
           DLI.TripCount.emplace_back();
         } else {
           NSCEV = SE.getAddExpr(NSCEV, SE.getConstant(APInt(64, 1, true)));
+          if (const auto *MME = dyn_cast<SCEVMinMaxExpr>(NSCEV)) {
+            CHECK(isa<SCEVUMaxExpr>(MME) || isa<SCEVSMaxExpr>(MME));
+            if (const auto *SC = dyn_cast<SCEVConstant>(MME->getOperand(0))) {
+              if (SC->getAPInt().getSExtValue() == 1) {
+                NSCEV = MME->getOperand(1);
+              }
+            }
+          }
+          DSA_LOG(AFFINE) << *NSCEV;
           auto LoopSlice = std::vector<Loop*>(LoopNest.begin() + i + 1, LoopNest.end());
           DLI.TripCount.push_back(analysis::analyzeIndexExpr(&SE, NSCEV, LoopNest[i],
                                                              LoopSlice, DLI.TripCount));
@@ -1195,6 +1207,18 @@ void analyzeAccumulatorTags(DFGFile &DF, xform::CodeGenContext &CGC,
       for (auto *Acc : DD->EntryFilter<Accumulator>()) {
         auto V = analysis::bfsOperands(DD, Acc->Operation, nullptr).first;
         InputPort *Tag = nullptr;
+        auto F = [&Tag, &Acc] (InputPort *IP, LinearCombine *LC) {
+          if (LC->partialInvariant() == 0) {
+            if (!Tag) {
+              IP->Tagged.push_back(Acc);
+              Tag = IP;
+            } else if (IP->Tagged.size() >= Tag->Tagged.size()) {
+              CHECK(Acc == Tag->Tagged.back());
+              Tag->Tagged.pop_back();
+              IP->Tagged.push_back(Acc);
+            }
+          }
+        };
         for (auto &Elem : V) {
           auto *DE = Acc->Parent->InThisDFG(Elem);
           if (!DE) {
@@ -1204,15 +1228,21 @@ void analyzeAccumulatorTags(DFGFile &DF, xform::CodeGenContext &CGC,
             auto Iter = LI.find(IP);
             if (Iter != LI.end()) {
               if (auto *LC = dyn_cast<LinearCombine>(Iter->second)) {
-                if (LC->partialInvariant() == 0) {
-                  if (!Tag) {
-                    IP->Tagged.push_back(Acc);
-                    Tag = IP;
-                  } else if (IP->Tagged.size() >= Tag->Tagged.size()) {
-                    CHECK(Acc == Tag->Tagged.back());
-                    Tag->Tagged.pop_back();
-                    IP->Tagged.push_back(Acc);
-                  }
+                F(IP, LC);
+              } else if (auto *IMP = dyn_cast<IndMemPort>(IP)) {
+                auto *IdxLI = LI[IMP];
+                if (auto *SA = dyn_cast<analysis::SWBinary>(IdxLI)) {
+                  CHECK(SA && SA->Op == 0) << IdxLI->toString();
+                  auto *Idx = SA->A;
+                  // Strip the Coef
+                  auto *SM = dyn_cast<analysis::SWBinary>(Idx);
+                  CHECK(SM);
+                  Idx = SM->B;
+                  auto *IP = dyn_cast<IndirectPointer>(Idx);
+                  CHECK(IP) << Idx->toString();
+                  auto *LC = dyn_cast<LinearCombine>(IP->Pointer);
+                  CHECK(LC) << IdxLI->toString() << "\n" << Idx->toString();
+                  F(IMP, LC);
                 }
               }
             }
@@ -1245,13 +1275,14 @@ void analyzeAccumulatorTags(DFGFile &DF, xform::CodeGenContext &CGC,
         auto Iter = DAR.LI[i].find(IP);
         CHECK(Iter != DAR.LI[i].end());
         DSA_LOG(ACC) << Iter->second << " " << Iter->second->toString();
-        auto *LC = dyn_cast<LinearCombine>(Iter->second);
-        CHECK(LC);
+        // TODO(@were): Enable this redundancy later.
+        // auto *LC = dyn_cast<LinearCombine>(Iter->second);
+        // CHECK(LC);
         for (auto *Acc : IP->Tagged) {
           if (isa<SLPMemPort>(IP)) {
             ++Acc->ResetLevel;
           }
-          CHECK(Acc->ResetLevel < (int) LC->Coef.size());
+          // CHECK(Acc->ResetLevel < (int) LC->Coef.size());
           DSA_LOG(ACC) << Acc->dump() << ", Reset@" << Acc->ResetLevel;
         }
         DSA_LOG(ACC) << "Finalized reset: " << resetLevel(IP);
@@ -1322,6 +1353,88 @@ int resetLevel(InputPort *IP) {
   auto FRed = [](int X, Accumulator *A) { return std::min(X, A->ResetLevel); };
   return std::accumulate(IP->Tagged.begin(), IP->Tagged.end(), INT_MAX, FRed);
 }
+
+const SCEV *productTripCount(std::vector<analysis::SEWrapper*> &TC, ScalarEvolution *SE) {
+  const SCEV *Res = SE->getConstant(APInt(64, 1, true));
+  for (int i = 0, N = TC.size(); i < N; ++i) { // NOLINT
+    Res = SE->getMulExpr(Res, TC[i]->Raw);
+  }
+  return Res;
+}
+
+xform::DataStream *
+extractStreamIntrinsics(DFGEntry *DE, xform::CodeGenContext &CGC, DFGAnalysisResult &DAR) {
+  struct StreamExtractor : DFGEntryVisitor {
+    void Visit(AtomicPortMem *APM) override {
+      auto Iter = LI.find(APM);
+      CHECK(Iter != LI.end());
+      int DType = APM->Store->getValueOperand()->getType()->getScalarSizeInBits() / 8;
+      analyze(Iter->second, DType, APM);
+    }
+    void Visit(IndMemPort *IMP) override {
+      auto Iter = LI.find(IMP);
+      CHECK(Iter != LI.end());
+      int DType = IMP->Load->getType()->getScalarSizeInBits() / 8;
+      analyze(Iter->second, DType, IMP);
+    }
+    void analyze(SEWrapper *IdxLI, int DType, DFGEntry *DE) {
+      int IType = 8;
+      analysis::SEWrapper *Idx = nullptr;
+      xform::DataStream *IS = nullptr;
+      if (auto *SA = dyn_cast<analysis::SWBinary>(IdxLI)) {
+        CHECK(SA && SA->Op == 0) << IdxLI->toString();
+        Idx = SA->A;
+        const SCEV *SAR = SA->B->Raw;
+        // Strip the Coef
+        if (DType == 1) {
+          CHECK(false) << Idx->toString();
+        } else {
+          auto *SM = dyn_cast<analysis::SWBinary>(Idx);
+          CHECK(SM);
+          if (const auto *SC = dyn_cast<SCEVConstant>(SM->A->Raw)) {
+            CHECK(SC->getAPInt().getSExtValue() == DType);
+          } else {
+            CHECK(false);
+          }
+          Idx = SM->B;
+        }
+        if (const auto *SCE = dyn_cast<analysis::SWCast>(Idx)) {
+          IType = SCE->srcTy()->getScalarSizeInBits() / 8;
+          Idx = SCE->Stripped;
+        }
+        auto *IP = dyn_cast<IndirectPointer>(Idx);
+        CHECK(IP) << Idx->toString();
+        auto *LC = dyn_cast<LinearCombine>(IP->Pointer);
+        CHECK(LC) << IdxLI->toString() << "\n" << Idx->toString();
+        auto *L1D = productTripCount(LC->TripCount, &CGC.SE);
+        IS = new xform::Indirect1D(DType, IType, SAR, L1D, Idx);
+      } else if (auto *LC = dyn_cast<analysis::LinearCombine>(IdxLI)) {
+        auto *Add = dyn_cast<analysis::SWBinary>(LC->Base);
+        CHECK(Add) << LC->Base->toString();
+        auto *SAR = dyn_cast<analysis::LoopInvariant>(Add->B);
+        auto *Mul = dyn_cast<analysis::SWBinary>(Add->A);
+        CHECK(Mul) << Add->A->toString();
+        auto *IndPtr = dyn_cast<analysis::IndirectPointer>(Mul->B);
+        CHECK(IndPtr) << Mul->B->toString();
+        IS = new xform::Indirect2D(DType, IType, SAR, IndPtr->Pointer, LC->TripCount[0],
+                                   SAR->TripCount[0]->Raw);
+      }
+      DS = IS;
+    }
+
+    xform::DataStream *DS{nullptr};
+
+    xform::CodeGenContext &CGC;
+    std::unordered_map<DFGEntry*, SEWrapper*> &LI;
+    StreamExtractor(xform::CodeGenContext &CGC, std::unordered_map<DFGEntry*, SEWrapper*> &LI) :
+      CGC(CGC), LI(LI) {}
+  };
+  StreamExtractor SE(CGC, DAR.LI[DE->Parent->ID]);
+  DE->accept(&SE);
+  CHECK(SE.DS);
+  return SE.DS;
+}
+
 
 } // namespace analysis
 } // namespace dsa

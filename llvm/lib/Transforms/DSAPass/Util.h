@@ -58,6 +58,10 @@ struct ModuleFlags {
    * file instructions.
    */
   DEFINE_FLAG(FUSION, 0)
+  /*!
+   * \brief If we want a dummy mapping for DFGs.
+   */
+  DEFINE_FLAG(DUMMY, 0)
 #undef DEFINE_FLAG
 
   ModuleFlags() {
@@ -68,6 +72,7 @@ struct ModuleFlags {
     getFlagTRIGGER();
     getFlagEXTRACT();
     getFlagFUSION();
+    getFlagDUMMY();
   }
 };
 
