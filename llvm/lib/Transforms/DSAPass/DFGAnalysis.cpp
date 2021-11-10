@@ -1001,6 +1001,12 @@ SEWrapper *DFGAnalysisResult::affineMemoryAccess(DFGEntry *DE, ScalarEvolution &
     }
     void Visit(PortMem *PM) override {
       analyze(PM->Store->getPointerOperand(), PM);
+      CHECK(SW);
+      if (auto *LC = dyn_cast<LinearCombine>(SW)) {
+        auto PI = LC->partialInvariant();
+        LC->Coef.erase(LC->Coef.begin(), LC->Coef.begin() + PI);
+        LC->TripCount.erase(LC->TripCount.begin(), LC->TripCount.begin() + PI);
+      }
     }
     void Visit(IndMemPort *IMP) override {
       analyze(IMP->Load->getPointerOperand(), IMP);
@@ -1306,7 +1312,7 @@ void analyzeAccumulatorTags(DFGFile &DF, xform::CodeGenContext &CGC,
                   if (Loops[j]->contains(Acc->Operation) && !Loops[j]->contains(Inst)) {
                     DSA_LOG(ACC) << "User: " << *Inst;
                     DSA_LOG(ACC) << Acc->dump() << " Reset@" << j;
-                    Acc->ResetLevel = j;
+                    Acc->ResetLevel = std::max(j, Acc->ResetLevel);
                     break;
                   }
                 }
