@@ -121,13 +121,13 @@ struct Indirect1D : DataStream {
   /*!
    * \brief Stream of b[i].
    */
-  const analysis::SEWrapper *Idx;
+  analysis::SEWrapper *Idx;
   /*!
    * \brief Emit this stream to program intrinsic.
    */
   void emitIntrinsic(xform::CodeGenContext &CGC);
 
-  Indirect1D(int D, int I, const SCEV *S, const SCEV *L, const analysis::SEWrapper *Idx) :
+  Indirect1D(int D, int I, const SCEV *S, const SCEV *L, analysis::SEWrapper *Idx) :
     DataStream(D, I), SAR(S), L1D(L), Idx(Idx) {
     TyEnum = kIndirect1D;
   }
@@ -263,14 +263,33 @@ struct DFGAnalysisResult {
    */
   std::vector<DFGLoopInfo> DLI;
   /*!
+   * \brief Data structures for streams that are ready-codegen.
+   */
+  std::unordered_map<DFGEntry*, xform::DataStream*> Streams;
+
+ private:
+  /*!
    * \brief The linear memory access information of each affine stream.
    *        Filled by `analyzeDFGMemoryAccess`.
    */
-  std::vector<std::unordered_map<DFGEntry*, SEWrapper*>> LI;
+  std::unordered_map<DFGEntry*, SEWrapper*> AffineInfoCache;
+ public:
   /*!
-   * \brief Data structures for streams that are ready-codegen.
+   * \brief
    */
-  std::vector<std::unordered_map<DFGEntry*, xform::DataStream*>> Streams;
+  SEWrapper *affineMemoryAccess(DFGEntry *DE, ScalarEvolution &SE, bool AllowNull);
+  /*!
+   * \brief
+   */
+  void initAffineCache(DFGFile &DF, ScalarEvolution &SE);
+  /*!
+   * \brief
+   */
+  void overrideStream(DFGEntry *DE, SEWrapper *SW) { AffineInfoCache[DE] = SW; }
+  /*!
+   * \brief
+   */
+  void fuseAffineDimensions(ScalarEvolution &SE);
 };
 
 /*!
@@ -301,15 +320,6 @@ void extractSpadFromScope(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisRe
  * \param CGC The LLVM utilities passed.
  */
 void extractDFGFromScope(DFGFile &DF, dsa::xform::CodeGenContext &CGC);
-
-/*!
- * \brief Analyze the linear combination of affined memory access.
- * \param DF The DFG scope to be analyzed.
- * \param CGC The LLVM utilities passed.
- * \param DAR The result of DFG analysis from previous pass.
- */
-void analyzeAffineMemoryAccess(DFGFile &DF, dsa::xform::CodeGenContext &CGC,
-                               DFGAnalysisResult &DAR);
 
 /*!
  * \brief Extract the port number from the generated schedule.
@@ -350,14 +360,6 @@ std::pair<std::set<Instruction *>, std::set<Instruction *>>
 bfsOperands(DFGBase *DB, Instruction *From, DominatorTree *DT);
 
 /*!
- * \brief Fuse the inner dimensions of the given analyzed stream access pattern.
- * \param DF The DFG file to be analyzed.
- * \param CGC The context required for the analysis.
- * \param DAR The result to be written to.
- */
-void fuseAffineDimensions(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisResult &DAR);
-
-/*!
  * \brief Extract analyzed streams to ready-codegen format.
  * \param DF The DFG file to be analyzed.
  * \param CGC The context required for the analysis.
@@ -378,6 +380,9 @@ int resetLevel(InputPort *IP);
  * \brief TODO(@were): doc this!
  */
 const SCEV *productTripCount(std::vector<analysis::SEWrapper*> &TC, ScalarEvolution *SE);
+
+xform::DataStream *
+extractStreamIntrinsics(DFGEntry *DE, xform::CodeGenContext &CGC, DFGAnalysisResult &DAR);
 
 } // namespace analysis
 } // namespace dsa

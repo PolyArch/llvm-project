@@ -120,7 +120,9 @@ Instruction *DFGBase::DefaultIP() { assert(false && "Not supported yet!"); }
 
 Instruction *TemporalDFG::DefaultIP() { return IP; }
 
-Instruction *DedicatedDFG::DefaultIP() { return &Preheader->back(); }
+Instruction *DedicatedDFG::DefaultIP() { 
+  return Preheader ? &Preheader->back() : nullptr;
+}
 
 Accumulator *DedicatedDFG::ConsumedByAccumulator(MemPort *MP) {
   std::set<Value *> Visited{MP->underlyingInst()};

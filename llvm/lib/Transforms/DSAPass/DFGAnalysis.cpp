@@ -608,7 +608,7 @@ void extractSpadFromScope(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisRe
       void Visit(AtomicPortMem *) override {}
 
       void Visit(MemPort *MP) override {
-        auto *IdxLI = LI[MP];
+        auto *IdxLI = DAR.affineMemoryAccess(MP, CGC.SE, false);
         std::vector<const SCEV*> N;
         std::vector<const SCEV*> Stride;
         if (auto *LC = dyn_cast<LinearCombine>(IdxLI)) {
@@ -648,17 +648,17 @@ void extractSpadFromScope(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisRe
 
       int SLPMul{1};
       int Unroll;
+      DFGAnalysisResult &DAR;
       SpadInfo &SI;
       DFGLoopInfo &DLI;
-      std::unordered_map<DFGEntry*, SEWrapper*> &LI;
       IRBuilder<> *IB;
+      xform::CodeGenContext &CGC;
       ScalarEvolution &SE;
-      Analyzer(int U, SpadInfo &SI, DFGLoopInfo &DLI,
-               std::unordered_map<DFGEntry*, SEWrapper*> &LI,
+      Analyzer(int U, DFGAnalysisResult &DAR, SpadInfo &SI, DFGLoopInfo &DLI,
                xform::CodeGenContext &CGC) :
-        Unroll(U), SI(SI), DLI(DLI), LI(LI), IB(CGC.IB), SE(CGC.SE) {}
+        Unroll(U), DAR(DAR), SI(SI), DLI(DLI), IB(CGC.IB), CGC(CGC), SE(CGC.SE) {}
     };
-    Analyzer A(DFG->getUnroll(), DAR.SI, DAR.DLI[i], DAR.LI[i], CGC);
+    Analyzer A(DFG->getUnroll(), DAR, DAR.SI, DAR.DLI[i], CGC);
     for (auto &Elem : DFG->Entries) {
       Elem->accept(&A);
     }
@@ -985,8 +985,15 @@ int64_t indexPairOffset(SEWrapper *ASW, SEWrapper *BSW, ScalarEvolution &SE, boo
   return -1;
 }
 
-void analyzeAffineMemoryAccess(DFGFile &DF, dsa::xform::CodeGenContext &CGC,
-                               DFGAnalysisResult &DAR) {
+void DFGAnalysisResult::initAffineCache(DFGFile &DF, ScalarEvolution &SE) {
+  for (auto *DFG : DF.DFGs) {
+    for (auto *Elem : DFG->Entries) {
+      affineMemoryAccess(Elem, SE, true);
+    }
+  }
+}
+
+SEWrapper *DFGAnalysisResult::affineMemoryAccess(DFGEntry *DE, ScalarEvolution &SE, bool AllowNull) {
 
   struct AffineExtractor : DFGEntryVisitor {
     void Visit(MemPort *MP) override {
@@ -1002,33 +1009,40 @@ void analyzeAffineMemoryAccess(DFGFile &DF, dsa::xform::CodeGenContext &CGC,
       analyze(APM->Store->getPointerOperand(), APM);
     }
     void analyze(Value *Ptr, DFGEntry *DE) {
-      auto &LI = DAR.LI[DE->Parent->ID];
+      CHECK(DE->Parent->ID >= 0 && DE->Parent->ID < (int) DAR.DLI.size())
+        << DAR.DLI.size() << " " << DE->Parent->ID;
       auto &DLI = DAR.DLI[DE->Parent->ID];
       auto *SCEV = SE.getSCEV(Ptr);
       auto *Res = analyzeIndexExpr(&SE, SCEV, DE, DLI.LoopNest, DLI.TripCount);
-      LI[DE] = Res;
+      SW = Res;
       DSA_LOG(AFFINE) << DE->dump() << ": " << Res->toString();
       DSA_LOG(AFFINE) << *Ptr << " " << *SCEV;
     }
+    SEWrapper *SW{nullptr};
     DFGAnalysisResult &DAR;
     ScalarEvolution &SE;
     AffineExtractor(DFGAnalysisResult &DAR, ScalarEvolution &SE) : DAR(DAR), SE(SE) {}
   };
 
-  auto DFGs = DF.DFGFilter<DFGBase>();
-  DAR.LI.resize(DFGs.size());
-  AffineExtractor AE(DAR, CGC.SE);
-  for (int i = 0; i < (int) DFGs.size(); ++i) { // NOLINT
-    for (auto *Elem : DFGs[i]->Entries) {
-      Elem->accept(&AE);
-    }
+  auto &AI = AffineInfoCache;
+  auto Iter = AI.find(DE);
+  if (Iter != AI.end()) {
+    return Iter->second;
   }
+  AffineExtractor AE(*this, SE);
+  DE->accept(&AE);
+  if (!AllowNull) {
+    CHECK(AE.SW) << DE->dump();
+  }
+  if (AE.SW) {
+    AI[DE] = AE.SW;
+  }
+  return AE.SW;
 }
 
 template<typename T>
 void gatherMemoryCoalescingImpl(std::vector<DFGEntry*> &Entries, ScalarEvolution &SE,
-                                std::vector<int> &DSU,
-                                std::unordered_map<DFGEntry*, SEWrapper*> &LI) {
+                                std::vector<int> &DSU, DFGAnalysisResult &DAR) {
   bool Iterative = true;
   while (Iterative) {
     Iterative = false;
@@ -1041,7 +1055,8 @@ void gatherMemoryCoalescingImpl(std::vector<DFGEntry*> &Entries, ScalarEvolution
             if (PtrA->getType() != PtrB->getType()) {
               continue;
             }
-            auto Offset = indexPairOffset(LI[Entries[i]], LI[Entries[j]], SE, false);
+            auto Offset = indexPairOffset(DAR.affineMemoryAccess(Entries[i], SE, false),
+                                          DAR.affineMemoryAccess(Entries[j], SE, false), SE, false);
             if (Offset == -1) {
               continue;
             }
@@ -1065,7 +1080,7 @@ void gatherMemoryCoalescingImpl(std::vector<DFGEntry*> &Entries, ScalarEvolution
 template<typename TSLP, typename TEntry>
 void constructCoalescedMemory(DFGBase *DB, std::vector<DFGEntry*> &Entries,
                               std::vector<int> &DSU, std::vector<int> &DSize,
-                              ScalarEvolution &SE, std::unordered_map<DFGEntry*, SEWrapper*> &LI,
+                              ScalarEvolution &SE, DFGAnalysisResult &DAR,
                               std::vector<int> &Remove) {
   for (int j = 0; j < (int) Entries.size(); ++j) { // NOLINT
     if (auto *Entry = dyn_cast<TEntry>(Entries[j])) {
@@ -1092,16 +1107,17 @@ void constructCoalescedMemory(DFGBase *DB, std::vector<DFGEntry*> &Entries,
   for (int i = 0; i < (int) Entries.size(); ++i) { // NOLINT
     if (auto *Entry = dyn_cast<TSLP>(Entries[i])) {
       auto &V = Entry->Coal;
-      auto FCmp = [&V, &SE, &LI](TEntry *A, TEntry *B) {
-        auto KeyA = indexPairOffset(LI[V[0]], LI[A], SE, true);
-        auto KeyB = indexPairOffset(LI[V[0]], LI[B], SE, true);
+      auto FCmp = [&V, &SE, &DAR](TEntry *A, TEntry *B) {
+        auto *SW0 = DAR.affineMemoryAccess(V[0], SE, false);
+        auto KeyA = indexPairOffset(SW0, DAR.affineMemoryAccess(A, SE, false), SE, true);
+        auto KeyB = indexPairOffset(SW0, DAR.affineMemoryAccess(B, SE, false), SE, true);
         return KeyA < KeyB;
       };
       std::sort(V.begin(), V.end(), FCmp);
       for (int j = 0; j < (int) V.size(); ++j) { // NOLINT
         V[j]->ID = j;
       }
-      auto *Raw = LI[Entry->Coal[0]];
+      auto *Raw = DAR.affineMemoryAccess(Entry->Coal[0], SE, false);
       LinearCombine *L = nullptr;
       if (isa<LinearCombine>(Raw)) {
         L = dyn_cast<LinearCombine>(Raw);
@@ -1127,7 +1143,7 @@ void constructCoalescedMemory(DFGBase *DB, std::vector<DFGEntry*> &Entries,
           Coef.push_back(ZeroCoef);
         }
       }
-      LI[Entry] = L;
+      DAR.overrideStream(Entry, L);
     }
   }
 }
@@ -1142,16 +1158,16 @@ void gatherMemoryCoalescing(DFGFile &DF, ScalarEvolution &SE, DFGAnalysisResult 
     for (int j = 0; j < (int) Entries.size(); ++j) { // NOLINT
       DSU[j] = j;
     }
-    gatherMemoryCoalescingImpl<MemPort>(Entries, SE, DSU, DAR.LI[i]);
-    gatherMemoryCoalescingImpl<PortMem>(Entries, SE, DSU, DAR.LI[i]);
+    gatherMemoryCoalescingImpl<MemPort>(Entries, SE, DSU, DAR);
+    gatherMemoryCoalescingImpl<PortMem>(Entries, SE, DSU, DAR);
     // TODO(@were): Make too wide port splitted later.
     std::vector<int> DSize(Entries.size(), 0);
     for (int j = 0; j < (int) Entries.size(); ++j) { // NOLINT
       ++DSize[utils::DSUGetSet(j, DSU)];
     }
     std::vector<int> Remove;
-    constructCoalescedMemory<SLPMemPort, MemPort>(DFGs[i], Entries, DSU, DSize, SE, DAR.LI[i], Remove);
-    constructCoalescedMemory<SLPPortMem, PortMem>(DFGs[i], Entries, DSU, DSize, SE, DAR.LI[i], Remove);
+    constructCoalescedMemory<SLPMemPort, MemPort>(DFGs[i], Entries, DSU, DSize, SE, DAR, Remove);
+    constructCoalescedMemory<SLPPortMem, PortMem>(DFGs[i], Entries, DSU, DSize, SE, DAR, Remove);
     std::sort(Remove.begin(), Remove.end());
     for (int j = 0; j < (int) Remove.size(); ++j) { // NOLINT
       Entries.erase(Entries.begin() + Remove[j] - j);
@@ -1200,23 +1216,20 @@ void analyzeAccumulatorTags(DFGFile &DF, xform::CodeGenContext &CGC,
                             DFGAnalysisResult &DAR) {
   auto Graphs = DF.DFGFilter<DFGBase>();
   for (int i = 0; i < (int) Graphs.size(); ++i) { // NOLINT
-    auto &LI = DAR.LI[i];
     auto &Loops = DAR.DLI[i].LoopNest;
     std::unordered_map<DFGEntry*, int> Cnt;
     if (auto *DD = dyn_cast<DedicatedDFG>(Graphs[i])) {
       for (auto *Acc : DD->EntryFilter<Accumulator>()) {
         auto V = analysis::bfsOperands(DD, Acc->Operation, nullptr).first;
         InputPort *Tag = nullptr;
-        auto F = [&Tag, &Acc] (InputPort *IP, LinearCombine *LC) {
-          if (LC->partialInvariant() == 0) {
-            if (!Tag) {
-              IP->Tagged.push_back(Acc);
-              Tag = IP;
-            } else if (IP->Tagged.size() >= Tag->Tagged.size()) {
-              CHECK(Acc == Tag->Tagged.back());
-              Tag->Tagged.pop_back();
-              IP->Tagged.push_back(Acc);
-            }
+        auto F = [&Tag, &Acc] (InputPort *IP) {
+          if (!Tag) {
+            IP->Tagged.push_back(Acc);
+            Tag = IP;
+          } else if (IP->Tagged.size() >= Tag->Tagged.size()) {
+            CHECK(Acc == Tag->Tagged.back());
+            Tag->Tagged.pop_back();
+            IP->Tagged.push_back(Acc);
           }
         };
         for (auto &Elem : V) {
@@ -1225,43 +1238,77 @@ void analyzeAccumulatorTags(DFGFile &DF, xform::CodeGenContext &CGC,
             continue;
           }
           if (auto *IP = dyn_cast<InputPort>(DE)) {
-            auto Iter = LI.find(IP);
-            if (Iter != LI.end()) {
-              if (auto *LC = dyn_cast<LinearCombine>(Iter->second)) {
-                F(IP, LC);
-              } else if (auto *IMP = dyn_cast<IndMemPort>(IP)) {
-                auto *IdxLI = LI[IMP];
-                if (auto *SA = dyn_cast<analysis::SWBinary>(IdxLI)) {
-                  CHECK(SA && SA->Op == 0) << IdxLI->toString();
-                  auto *Idx = SA->A;
-                  // Strip the Coef
-                  auto *SM = dyn_cast<analysis::SWBinary>(Idx);
-                  CHECK(SM);
-                  Idx = SM->B;
-                  auto *IP = dyn_cast<IndirectPointer>(Idx);
-                  CHECK(IP) << Idx->toString();
+            auto *SW = DAR.affineMemoryAccess(IP, CGC.SE, true);
+            if (SW) {
+              if (auto *IMP = dyn_cast<IndMemPort>(IP)) {
+                auto *DS = extractStreamIntrinsics(IMP, CGC, DAR);
+                if (auto *Ind1D = dyn_cast<xform::Indirect1D>(DS)) {
+                  auto *IP = dyn_cast<IndirectPointer>(Ind1D->Idx);
+                  CHECK(IP) << IP->toString();
                   auto *LC = dyn_cast<LinearCombine>(IP->Pointer);
-                  CHECK(LC) << IdxLI->toString() << "\n" << Idx->toString();
-                  F(IMP, LC);
+                  CHECK(LC) << Ind1D->Idx->toString();
+                  if (LC->partialInvariant() == 0) {
+                    F(IMP);
+                  }
+                } else if (isa<xform::Indirect2D>(DS)) {
+                  F(IMP);
+                }
+              } else if (auto *LC = dyn_cast<LinearCombine>(SW)) {
+                if (LC->partialInvariant() == 0) {
+                  F(IP);
                 }
               }
             }
           }
         }
         if (Tag) {
+          // for (auto *OP : Acc->Parent->EntryFilter<OutputPort>()) {
+          //   auto Visited = bfsOperands(Acc->Parent, OP->underlyingInsts()[0], nullptr).first;
+          //   auto Iter = Visited.find(Acc->underlyingInst());
+          //   auto *Inst = OP->underlyingInsts()[0];
+          //   if (Iter != Visited.end()) {
+          //     DSA_INFO << OP->dump();
+          //     DSA_INFO << *Inst;
+          //     for (int j = (int) Loops.size() - 1; j >= 0; --j) { // NOLINT
+          //       DSA_INFO << j;
+          //       if (Loops[j]->contains(Acc->Operation) && !Loops[j]->contains(Inst)) {
+          //         DSA_LOG(ACC) << "Finalized by: " << OP->dump();
+          //         DSA_LOG(ACC) << Acc->dump() << " Reset@" << j;
+          //         Acc->ResetLevel = j;
+          //         break;
+          //       }
+          //     }
+          //   }
+          //   if (Acc->ResetLevel != -1) {
+          //     break;
+          //   }
+          // }
           for (auto *User : Acc->Operation->users()) {
             if (auto *Inst = dyn_cast<Instruction>(User)) {
-              if (!Graphs[i]->InThisDFG(Inst)) {
-                if (!Graphs[i]->BelongOtherDFG(Inst)) {
-                  continue;
+              // Explain this!
+              // if (!Graphs[i]->InThisDFG(Inst)) {
+              //   if (!Graphs[i]->BelongOtherDFG(Inst)) {
+              //     DSA_LOG(ACC) << "Skip: " << *Inst;
+              //     continue;
+              //   }
+              // }
+              bool Skip = false;
+              for (int j = 0; j < (int) Acc->Operation->getNumOperands(); ++j) { // NOLINT
+                if (auto *OpInst = dyn_cast<Instruction>(Acc->Operation->getOperand(j))) {
+                  if (OpInst == Inst) {
+                    Skip = true;
+                    break;
+                  }
                 }
               }
-              for (int j = (int) Loops.size() - 1; j >= 0; --j) { // NOLINT
-                if (Loops[j]->contains(Acc->Operation) && !Loops[j]->contains(Inst)) {
-                  DSA_LOG(ACC) << "User: " << *Inst;
-                  DSA_LOG(ACC) << Acc->dump() << " Reset@" << j;
-                  Acc->ResetLevel = j;
-                  break;
+              if (!Skip) {
+                for (int j = (int) Loops.size() - 1; j >= 0; --j) { // NOLINT
+                  if (Loops[j]->contains(Acc->Operation) && !Loops[j]->contains(Inst)) {
+                    DSA_LOG(ACC) << "User: " << *Inst;
+                    DSA_LOG(ACC) << Acc->dump() << " Reset@" << j;
+                    Acc->ResetLevel = j;
+                    break;
+                  }
                 }
               }
             }
@@ -1272,9 +1319,8 @@ void analyzeAccumulatorTags(DFGFile &DF, xform::CodeGenContext &CGC,
     for (auto *IP : Graphs[i]->EntryFilter<InputPort>()) {
       if (!IP->Tagged.empty()) {
         DSA_LOG(ACC) << IP->dump(); 
-        auto Iter = DAR.LI[i].find(IP);
-        CHECK(Iter != DAR.LI[i].end());
-        DSA_LOG(ACC) << Iter->second << " " << Iter->second->toString();
+        auto *SW = DAR.affineMemoryAccess(IP, CGC.SE, false);
+        DSA_LOG(ACC) << SW << " " << SW->toString();
         // TODO(@were): Enable this redundancy later.
         // auto *LC = dyn_cast<LinearCombine>(Iter->second);
         // CHECK(LC);
@@ -1291,7 +1337,7 @@ void analyzeAccumulatorTags(DFGFile &DF, xform::CodeGenContext &CGC,
   }
 }
 
-void fuseAffineDimensions(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisResult &DAR) {
+void DFGAnalysisResult::fuseAffineDimensions(ScalarEvolution &SE) {
   struct FuseInfoExtractor : DFGEntryVisitor {
     void Visit(MemPort *MP) override {
       DBits = MP->Load->getType()->getScalarSizeInBits();
@@ -1314,32 +1360,27 @@ void fuseAffineDimensions(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisRe
     int Padding{0};
     int CutOff{-1};
   };
-  auto Graphs = DF.DFGFilter<DFGBase>();
-  for (int i = 0; i < (int) Graphs.size(); ++i) { // NOLINT
-    auto *DFG = Graphs[i];
-    auto &LI = DAR.LI[i];
-    for (auto &Elem : LI) {
-      if (auto *Pattern = dyn_cast<LinearCombine>(Elem.second)) {
-        FuseInfoExtractor FIE;
-        Elem.first->accept(&FIE);
-        if (FIE.CutOff == -1) {
-          FIE.CutOff = Pattern->TripCount.size() - 1;
-        }
-        CHECK(FIE.DBits != -1);
-        DSA_LOG(FUSE) << Pattern << " " << Elem.first->dump();
-        DSA_LOG(FUSE) << "Before: " << Pattern->toString() << ", CutOff: " << FIE.CutOff;
-        int Before = Pattern->Coef.size();
-        fuseInnerDimensions(*Pattern, FIE.DBits / 8, DFG->getUnroll(), CGC.SE,
-                            Pattern->TripCount.size() - FIE.CutOff);
-        DSA_LOG(FUSE) << "After: " << Pattern->toString();
-        if (auto *IP = dyn_cast<InputPort>(Elem.first)) {
-          int Delta = Before - Pattern->Coef.size();
-          DSA_LOG(FUSE) << "Fuse Delta: " << Delta;
-          DSA_LOG(FUSE) << IP->dump();
-          for (auto *Acc : IP->Tagged) {
-            Acc->ResetLevel -= Delta;
-            DSA_LOG(FUSE) << Acc->dump() << ": " << Acc->ResetLevel;
-          }
+  for (auto &Elem : AffineInfoCache) {
+    if (auto *Pattern = dyn_cast<LinearCombine>(Elem.second)) {
+      FuseInfoExtractor FIE;
+      Elem.first->accept(&FIE);
+      if (FIE.CutOff == -1) {
+        FIE.CutOff = Pattern->TripCount.size() - 1;
+      }
+      CHECK(FIE.DBits != -1);
+      DSA_LOG(FUSE) << Pattern << " " << Elem.first->dump();
+      DSA_LOG(FUSE) << "Before: " << Pattern->toString() << ", CutOff: " << FIE.CutOff;
+      int Before = Pattern->Coef.size();
+      fuseInnerDimensions(*Pattern, FIE.DBits / 8, Elem.first->Parent->getUnroll(), SE,
+                          Pattern->TripCount.size() - FIE.CutOff);
+      DSA_LOG(FUSE) << "After: " << Pattern->toString();
+      if (auto *IP = dyn_cast<InputPort>(Elem.first)) {
+        int Delta = Before - Pattern->Coef.size();
+        DSA_LOG(FUSE) << "Fuse Delta: " << Delta;
+        DSA_LOG(FUSE) << IP->dump();
+        for (auto *Acc : IP->Tagged) {
+          Acc->ResetLevel -= Delta;
+          DSA_LOG(FUSE) << Acc->dump() << ": " << Acc->ResetLevel;
         }
       }
     }
@@ -1366,24 +1407,22 @@ xform::DataStream *
 extractStreamIntrinsics(DFGEntry *DE, xform::CodeGenContext &CGC, DFGAnalysisResult &DAR) {
   struct StreamExtractor : DFGEntryVisitor {
     void Visit(AtomicPortMem *APM) override {
-      auto Iter = LI.find(APM);
-      CHECK(Iter != LI.end());
+      auto *SW = DAR.affineMemoryAccess(APM, CGC.SE, false);
       int DType = APM->Store->getValueOperand()->getType()->getScalarSizeInBits() / 8;
-      analyze(Iter->second, DType, APM);
+      analyze(SW, DType, APM);
     }
     void Visit(IndMemPort *IMP) override {
-      auto Iter = LI.find(IMP);
-      CHECK(Iter != LI.end());
+      auto *SW = DAR.affineMemoryAccess(IMP, CGC.SE, false);
       int DType = IMP->Load->getType()->getScalarSizeInBits() / 8;
-      analyze(Iter->second, DType, IMP);
+      analyze(SW, DType, IMP);
     }
     void analyze(SEWrapper *IdxLI, int DType, DFGEntry *DE) {
       int IType = 8;
       analysis::SEWrapper *Idx = nullptr;
-      xform::DataStream *IS = nullptr;
       if (auto *SA = dyn_cast<analysis::SWBinary>(IdxLI)) {
         CHECK(SA && SA->Op == 0) << IdxLI->toString();
         Idx = SA->A;
+        CHECK(isa<LoopInvariant>(SA->B));
         const SCEV *SAR = SA->B->Raw;
         // Strip the Coef
         if (DType == 1) {
@@ -1407,7 +1446,7 @@ extractStreamIntrinsics(DFGEntry *DE, xform::CodeGenContext &CGC, DFGAnalysisRes
         auto *LC = dyn_cast<LinearCombine>(IP->Pointer);
         CHECK(LC) << IdxLI->toString() << "\n" << Idx->toString();
         auto *L1D = productTripCount(LC->TripCount, &CGC.SE);
-        IS = new xform::Indirect1D(DType, IType, SAR, L1D, Idx);
+        DS = new xform::Indirect1D(DType, IType, SAR, L1D, Idx);
       } else if (auto *LC = dyn_cast<analysis::LinearCombine>(IdxLI)) {
         auto *Add = dyn_cast<analysis::SWBinary>(LC->Base);
         CHECK(Add) << LC->Base->toString();
@@ -1416,22 +1455,26 @@ extractStreamIntrinsics(DFGEntry *DE, xform::CodeGenContext &CGC, DFGAnalysisRes
         CHECK(Mul) << Add->A->toString();
         auto *IndPtr = dyn_cast<analysis::IndirectPointer>(Mul->B);
         CHECK(IndPtr) << Mul->B->toString();
-        IS = new xform::Indirect2D(DType, IType, SAR, IndPtr->Pointer, LC->TripCount[0],
+        DS = new xform::Indirect2D(DType, IType, SAR, IndPtr->Pointer, LC->TripCount[0],
                                    SAR->TripCount[0]->Raw);
       }
-      DS = IS;
     }
 
     xform::DataStream *DS{nullptr};
 
     xform::CodeGenContext &CGC;
-    std::unordered_map<DFGEntry*, SEWrapper*> &LI;
-    StreamExtractor(xform::CodeGenContext &CGC, std::unordered_map<DFGEntry*, SEWrapper*> &LI) :
-      CGC(CGC), LI(LI) {}
+    DFGAnalysisResult &DAR;
+    StreamExtractor(xform::CodeGenContext &CGC, DFGAnalysisResult &DAR) :
+      CGC(CGC), DAR(DAR) {}
   };
-  StreamExtractor SE(CGC, DAR.LI[DE->Parent->ID]);
+  auto Iter = DAR.Streams.find(DE);
+  if (Iter != DAR.Streams.end()) {
+    return Iter->second;
+  }
+  StreamExtractor SE(CGC, DAR);
   DE->accept(&SE);
-  CHECK(SE.DS);
+  // CHECK(SE.DS);
+  DAR.Streams[DE] = SE.DS;
   return SE.DS;
 }
 

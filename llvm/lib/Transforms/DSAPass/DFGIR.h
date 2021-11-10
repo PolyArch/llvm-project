@@ -270,7 +270,7 @@ public:
   /// Blocks in this path of loop nest
   std::set<BasicBlock *> Blocks;
   /// The insert point of the instructions
-  BasicBlock *Preheader;
+  BasicBlock *Preheader{nullptr};
   /// Prologue IP
   Instruction *PrologueIP;
 
