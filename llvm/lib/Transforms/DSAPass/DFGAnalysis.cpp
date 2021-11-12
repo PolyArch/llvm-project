@@ -423,8 +423,8 @@ struct DFGEntryAnalyzer : DFGVisitor {
         DSA_LOG(DFG) << "Plain Inst: " << *Inst;
       }
     } else {
-      assert(Inst->getOpcode() == BinaryOperator::Add ||
-             Inst->getOpcode() == BinaryOperator::FAdd);
+      // assert(Inst->getOpcode() == BinaryOperator::Add ||
+      //        Inst->getOpcode() == BinaryOperator::FAdd);
       auto *Acc = new Accumulator(&DB, Inst);
       DB.Entries.push_back(Acc);
       Entry = Acc;

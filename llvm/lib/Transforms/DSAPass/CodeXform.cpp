@@ -120,10 +120,13 @@ std::string getOperationStr(Instruction *Inst, bool Acc, bool Predicated) {
 
   if (auto *Cmp = dyn_cast<CmpInst>(Inst)) {
     // TODO: Support floating point
-    OpStr = "compare";
+    OpStr = (Cmp->getPredicate() >= 32) ? "compare" : "fcompare";
     BitWidth = Cmp->getOperand(0)->getType()->getScalarSizeInBits();
   } else if (auto *Call = dyn_cast<CallInst>(Inst)) {
     OpStr = Call->getCalledFunction()->getName().str();
+    while (isdigit(OpStr.back())) {
+      OpStr.pop_back();
+    }
   } else {
     OpStr = Inst->getOpcodeName();
     if (Acc) {
@@ -431,7 +434,27 @@ struct DFGPrinter : dsa::DFGVisitor {
         }
 
         if (auto *CI = dyn_cast<CmpInst>(CB->Operation)) {
-          OS << ", " << CI->getPredicate();
+          int Pred = 0;
+          switch (CI->getPredicate()) {
+          // <
+          case llvm::CmpInst::Predicate::FCMP_OLT:
+          case llvm::CmpInst::Predicate::ICMP_SLT:
+            Pred |= 1;
+            break;
+          // ==
+          case llvm::CmpInst::Predicate::FCMP_OEQ:
+          case llvm::CmpInst::Predicate::ICMP_EQ:
+            Pred |= 2;
+            break;
+          // >
+          case llvm::CmpInst::Predicate::FCMP_OGT:
+          case llvm::CmpInst::Predicate::ICMP_SGT:
+            Pred |= 4;
+            break;
+          default:
+            CHECK(false) << CI->getPredicate();
+          }
+          OS << ", " << Pred;
         }
 
         OS << ")\n";
@@ -776,7 +799,7 @@ void injectConfiguration(CodeGenContext &CGC, analysis::ConfigInfo &CI,
   auto *IB = CGC.IB;
   IB->SetInsertPoint(Start);
   auto *GV = IB->CreateGlobalString(CI.Bitstream, CI.Name + "_bitstream",
-                                   GlobalValue::ExternalLinkage);
+                                    GlobalValue::ExternalLinkage);
   CGC.SS_CONFIG(GV, IB->getInt64(CI.Size));
   IB->SetInsertPoint(End);
   CGC.SS_WAIT_ALL();

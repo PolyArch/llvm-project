@@ -59,7 +59,8 @@ bool CanBeAEntry(Value *Val) {
     return false;
   }
   if (auto *Call = dyn_cast<CallInst>(Inst)) {
-    return Call->getCalledFunction()->getName() == "sqrt";
+    auto Name = Call->getCalledFunction()->getName();
+    return Name == "sqrt" || Name == "max64";
   }
   if (isa<CmpInst>(Inst)) {
     for (auto *User : Inst->users()) {
