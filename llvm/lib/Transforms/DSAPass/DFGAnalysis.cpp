@@ -759,7 +759,8 @@ ConfigInfo extractDFGPorts(std::string FName, DFGFile &DF, SpadInfo &SI) {
   if (dsa::utils::ModuleContext().DUMMY) {
     ExtraFlag += " --dummy";
   }
-  if (dsa::utils::ModuleContext().BITSTREAM) {
+  bool BitStream = dsa::utils::ModuleContext().BITSTREAM;
+  if (BitStream) {
     ExtraFlag += " -b";
   }
   if (dsa::utils::ModuleContext().COMPAT_ADG) {
@@ -769,7 +770,7 @@ ConfigInfo extractDFGPorts(std::string FName, DFGFile &DF, SpadInfo &SI) {
   DSA_LOG(CONFIG) << Cmd;
   CHECK(system(Cmd.c_str()) == 0) << "Not successfully scheduled! Try another DFG!";
 
-  std::ifstream Ifs(FName + ".h");
+  std::ifstream Ifs(FName + (BitStream ? ".bits" : "") + ".h");
   auto DFGs = DF.DFGFilter<DFGBase>();
 
   std::string Stripped(FName);
@@ -893,14 +894,40 @@ ConfigInfo extractDFGPorts(std::string FName, DFGFile &DF, SpadInfo &SI) {
       }
       // char dfgx_config[size] = "filename:dfgx.sched";
     } else if (Token == "char") {
-      // dfgx_config[size]
-      Iss >> Token;
-      // =
-      Iss >> Token;
-      // "filename:dfgx.sched";
-      Iss >> Token;
-      ConfigString = Token.substr(1, Token.size() - 3);
-      ConfigString += std::string(ConfigSize - ConfigString.size() - 1, '\0');
+      if (!BitStream) {
+        // dfgx_config[size]
+        Iss >> Token;
+        // =
+        Iss >> Token;
+        // "filename:dfgx.sched";
+        Iss >> Token;
+        ConfigString = Token.substr(1, Token.size() - 3);
+        if ((int) ConfigString.size() > ConfigSize) {
+          ConfigString += std::string(ConfigSize - ConfigString.size() - 1, '\0');
+        } else {
+          ConfigSize = ConfigString.size() + 1;
+        }
+      } else {
+        std::string Raw;
+        for (int i = 0; i < ConfigSize; ++i) { // NOLINT
+          CHECK(std::getline(Ifs, Raw));
+          while (isspace(Raw[0])) {
+            Raw.erase(Raw.begin());
+          }
+          while (Raw.back() != ',') {
+            Raw.pop_back();
+          }
+          Raw.pop_back();
+          int Chr = 0;
+          if (Raw[0] == '0' && Raw[1] == 'b') {
+            for (int j = 0; j < (int) Raw.size(); ++j) { // NOLINT
+              Chr = (Chr << 1) | (Raw[j] - '0');
+            }
+          }
+          ConfigString.push_back(Chr);
+        }
+        CHECK(std::getline(Ifs, Raw));
+      }
     }
   }
 
