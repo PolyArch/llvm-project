@@ -755,8 +755,17 @@ void extractDFGFromScope(DFGFile &DF, dsa::xform::CodeGenContext &CGC) {
 ConfigInfo extractDFGPorts(std::string FName, DFGFile &DF, SpadInfo &SI) {
   auto *SBCONFIG = getenv("SBCONFIG");
   CHECK(SBCONFIG);
-  std::string DummyFlag = dsa::utils::ModuleContext().DUMMY ? "--dummy" : "-v";
-  auto Cmd = formatv("ss_sched {0} {1} {2} -e 0 > /dev/null", DummyFlag, SBCONFIG, FName).str();
+  std::string ExtraFlag = "";
+  if (dsa::utils::ModuleContext().DUMMY) {
+    ExtraFlag += " --dummy";
+  }
+  if (dsa::utils::ModuleContext().BITSTREAM) {
+    ExtraFlag += " -b";
+  }
+  if (dsa::utils::ModuleContext().COMPAT_ADG) {
+    ExtraFlag += " -a";
+  }
+  auto Cmd = formatv("ss_sched {0} {1} {2} -e 0 > /dev/null", ExtraFlag, SBCONFIG, FName).str();
   DSA_LOG(CONFIG) << Cmd;
   CHECK(system(Cmd.c_str()) == 0) << "Not successfully scheduled! Try another DFG!";
 
@@ -801,7 +810,7 @@ ConfigInfo extractDFGPorts(std::string FName, DFGFile &DF, SpadInfo &SI) {
         if (auto *PB = dyn_cast<PortBase>(Entry)) {
           PB->SoftPortNum = Port;
         } else if (auto *CB = dyn_cast<ComputeBody>(Entry)) {
-          CHECK(false) << "This should be deprecated!";
+          CHECK(false) << Token << ": " << X << " " << Y << " This should be deprecated!";
           if (!CB->isImmediateAtomic()) {
             DSA_LOG(CONFIG) << "OutputPorts:\n";
             auto OutPorts = CB->getOutPorts();
@@ -998,7 +1007,6 @@ int64_t indexPairOffset(SEWrapper *ASW, SEWrapper *BSW, ScalarEvolution &SE, boo
 void DFGAnalysisResult::initAffineCache(DFGFile &DF, ScalarEvolution &SE) {
   for (auto *DFG : DF.DFGs) {
     for (auto *Elem : DFG->Entries) {
-      DSA_INFO << Elem->dump();
       affineMemoryAccess(Elem, SE, true);
     }
   }
@@ -1237,6 +1245,34 @@ void analyzeAccumulatorTags(DFGFile &DF, xform::CodeGenContext &CGC,
     std::unordered_map<DFGEntry*, int> Cnt;
     if (auto *DD = dyn_cast<DedicatedDFG>(Graphs[i])) {
       for (auto *Acc : DD->EntryFilter<Accumulator>()) {
+        {
+          auto *Inst = Acc->Operation;
+          for (int i = 0; i < (int) Inst->getNumOperands(); ++i) { // NOLINT
+            if (auto *Phi = dyn_cast<PHINode>(Inst->getOperand(i))) {
+              for (int j = 0; j < (int) Phi->getNumOperands(); ++j) { // NOLINT
+                auto *Val = dyn_cast<Value>(Phi->getOperand(j));
+                if (Val != Inst) {
+                  CHECK(Acc->ResetLevel == -1);
+                  auto *BB = Phi->getIncomingBlock(j);
+                  DSA_LOG(ACC)
+                    << Acc->dump() << " reset by block " << BB->getName() << ", " << *Val;
+                  for (int k = 0; k < (int) Loops.size(); ++k) { // NOLINT
+                    if (Loops[k]->contains(BB)) {
+                      CHECK(k);
+                      Acc->ResetLevel = k - 1;
+                      DSA_LOG(ACC) << " reset by " << *Loops[k];
+                      break;
+                    }
+                  }
+                }
+              }
+            }
+          }
+          if (Acc->ResetLevel == -1) {
+            Acc->ResetLevel = Loops.size() - 1;
+            DSA_LOG(ACC) << Loops.size() << " reset when exiting!";
+          }
+        }
         auto V = analysis::bfsOperands(DD, Acc->Operation, nullptr).first;
         InputPort *Tag = nullptr;
         auto F = [&Tag, &Acc] (InputPort *IP) {
@@ -1279,36 +1315,8 @@ void analyzeAccumulatorTags(DFGFile &DF, xform::CodeGenContext &CGC,
           }
         }
         if (Tag) {
-          // for (auto *OP : Acc->Parent->EntryFilter<OutputPort>()) {
-          //   auto Visited = bfsOperands(Acc->Parent, OP->underlyingInsts()[0], nullptr).first;
-          //   auto Iter = Visited.find(Acc->underlyingInst());
-          //   auto *Inst = OP->underlyingInsts()[0];
-          //   if (Iter != Visited.end()) {
-          //     DSA_INFO << OP->dump();
-          //     DSA_INFO << *Inst;
-          //     for (int j = (int) Loops.size() - 1; j >= 0; --j) { // NOLINT
-          //       DSA_INFO << j;
-          //       if (Loops[j]->contains(Acc->Operation) && !Loops[j]->contains(Inst)) {
-          //         DSA_LOG(ACC) << "Finalized by: " << OP->dump();
-          //         DSA_LOG(ACC) << Acc->dump() << " Reset@" << j;
-          //         Acc->ResetLevel = j;
-          //         break;
-          //       }
-          //     }
-          //   }
-          //   if (Acc->ResetLevel != -1) {
-          //     break;
-          //   }
-          // }
           for (auto *User : Acc->Operation->users()) {
             if (auto *Inst = dyn_cast<Instruction>(User)) {
-              // Explain this!
-              // if (!Graphs[i]->InThisDFG(Inst)) {
-              //   if (!Graphs[i]->BelongOtherDFG(Inst)) {
-              //     DSA_LOG(ACC) << "Skip: " << *Inst;
-              //     continue;
-              //   }
-              // }
               bool Skip = false;
               for (int j = 0; j < (int) Acc->Operation->getNumOperands(); ++j) { // NOLINT
                 if (auto *OpInst = dyn_cast<Instruction>(Acc->Operation->getOperand(j))) {
@@ -1319,16 +1327,27 @@ void analyzeAccumulatorTags(DFGFile &DF, xform::CodeGenContext &CGC,
                 }
               }
               if (!Skip) {
-                for (int j = (int) Loops.size() - 1; j >= 0; --j) { // NOLINT
-                  if (Loops[j]->contains(Acc->Operation) && !Loops[j]->contains(Inst)) {
-                    DSA_LOG(ACC) << "User: " << *Inst;
-                    DSA_LOG(ACC) << Acc->dump() << " Reset@" << j;
-                    Acc->ResetLevel = std::max(j, Acc->ResetLevel);
+                DSA_LOG(ACC) << "Used by: " << *Inst;
+                for (int j = 0; j < (int) Loops.size(); ++j) { // NOLINT
+                  if (Loops[j]->contains(Inst)) {
+                    DSA_LOG(ACC) << Acc->dump() << " Produce@" << j;
+                    if (Acc->ProduceLevel == INT_MAX) {
+                      Acc->ProduceLevel = j - 1;
+                    } else {
+                      CHECK(Acc->ProduceLevel == j - 1) <<
+                        Acc->ProduceLevel << " != " << (j - 1);
+                    }
                     break;
                   }
                 }
+              } else {
+                DSA_LOG(ACC) << "Skip: " << *Inst;
               }
             }
+          }
+          if (Acc->ProduceLevel == INT_MAX) {
+            Acc->ProduceLevel = Loops.size() - 1;
+            DSA_LOG(ACC) << Loops.size() << " produce when exiting!";
           }
         }
       }
@@ -1336,8 +1355,6 @@ void analyzeAccumulatorTags(DFGFile &DF, xform::CodeGenContext &CGC,
     for (auto *IP : Graphs[i]->EntryFilter<InputPort>()) {
       if (!IP->Tagged.empty()) {
         DSA_LOG(ACC) << IP->dump(); 
-        auto *SW = DAR.affineMemoryAccess(IP, CGC.SE, false);
-        DSA_LOG(ACC) << SW << " " << SW->toString();
         // TODO(@were): Enable this redundancy later.
         // auto *LC = dyn_cast<LinearCombine>(Iter->second);
         // CHECK(LC);
@@ -1346,7 +1363,9 @@ void analyzeAccumulatorTags(DFGFile &DF, xform::CodeGenContext &CGC,
             ++Acc->ResetLevel;
           }
           // CHECK(Acc->ResetLevel < (int) LC->Coef.size());
-          DSA_LOG(ACC) << Acc->dump() << ", Reset@" << Acc->ResetLevel;
+          DSA_LOG(ACC)
+            << Acc->dump() << ", Reset@" << Acc->ResetLevel
+            << ", Produce@" << Acc->ProduceLevel;
         }
         DSA_LOG(ACC) << "Finalized reset: " << resetLevel(IP);
       }

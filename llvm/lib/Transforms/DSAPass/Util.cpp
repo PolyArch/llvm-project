@@ -60,7 +60,7 @@ bool CanBeAEntry(Value *Val) {
   }
   if (auto *Call = dyn_cast<CallInst>(Inst)) {
     auto Name = Call->getCalledFunction()->getName();
-    return Name == "sqrt" || Name == "max64";
+    return Name == "sqrt" || Name == "max64" || Name == "fsqrt";
   }
   if (isa<CmpInst>(Inst)) {
     for (auto *User : Inst->users()) {

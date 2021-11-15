@@ -46,6 +46,12 @@ void EliminateInstructions(const std::vector<Instruction *> &Insts) { // NOLINT
 }
 
 int tagBitmask(int ResetLevel) {
+  // L2D End      5
+  // L2D Start    4
+  // L1D End      3
+  // L1D Start    2
+  // Stream End   1
+  // Stream Start 0
   int X = (ResetLevel + 1) % 3 * 2 + 1;
   return 1 << X;
 }
@@ -117,6 +123,15 @@ std::string ValueToOperandText(Value *Val) { // NOLINT
 std::string getOperationStr(Instruction *Inst, bool Acc, bool Predicated) {
   std::string OpStr;
   int BitWidth = Inst->getType()->getScalarSizeInBits();
+  auto *Ty = Inst->getType();
+  std::string TyStr;
+  if (Ty->isFloatTy()) {
+    TyStr = "F";
+  } else if (Ty->isDoubleTy()) {
+    TyStr = "D";
+  } else if (Ty->isIntegerTy()) {
+    TyStr = "I";
+  }
 
   if (auto *Cmp = dyn_cast<CmpInst>(Inst)) {
     // TODO: Support floating point
@@ -143,7 +158,7 @@ std::string getOperationStr(Instruction *Inst, bool Acc, bool Predicated) {
     OpStr[i] += 'A';
   }
 
-  return formatv("{0}{1}", OpStr, BitWidth);
+  return formatv("{0}_{1}{2}", OpStr, TyStr, BitWidth);
 }
 
 /*!
@@ -319,12 +334,6 @@ struct DFGPrinter : dsa::DFGVisitor {
             }
           }
           CHECK(!TN.Name.empty()) << Acc->dump() << " not tagged!";
-          // L2D End      5
-          // L2D Start    4
-          // L1D End      3
-          // L1D Start    2
-          // Stream End   1
-          // Stream Start 0
           OS << "0: d, " << tagBitmask(Acc->ResetLevel) << ": r}";
           DSA_LOG(CODEGEN) << Acc->dump() << ", ResetLevel: " << Acc->ResetLevel;
           DSA_LOG(CODEGEN) << "BMSS: " << tagBitmask(Acc->ResetLevel);
@@ -1464,7 +1473,7 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
             }
           }
         }
-        CHECK(false);
+        CHECK(false) << SIP->dump() << " stream out not found!";
         return nullptr;
       };
       StreamOutPort *SOP = F();
