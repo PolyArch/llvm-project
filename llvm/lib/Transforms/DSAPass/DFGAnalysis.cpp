@@ -928,7 +928,6 @@ ConfigInfo extractDFGPorts(std::string FName, DFGFile &DF, SpadInfo &SI) {
           ConfigString.insert(ConfigString.end(), WordByte.begin(), WordByte.end());
         }
         DSA_INFO << ConfigString.size();
-        ConfigSize *= sizeof(int64_t);
         CHECK(std::getline(Ifs, Raw));
       }
     }

@@ -807,9 +807,22 @@ void injectConfiguration(CodeGenContext &CGC, analysis::ConfigInfo &CI,
                          Instruction *Start, Instruction *End) {
   auto *IB = CGC.IB;
   IB->SetInsertPoint(Start);
-  auto *GV = IB->CreateGlobalString(CI.Bitstream, CI.Name + "_bitstream",
-                                    GlobalValue::ExternalLinkage);
-  GV->setAlignment(Align(8));
+
+  GlobalVariable *GV;
+  if (utils::ModuleContext().BITSTREAM) {
+    ArrayRef<int64_t> A((int64_t*)CI.Bitstream.data(), (int64_t*)CI.Bitstream.data() + CI.Size);
+    Constant *AConst = ConstantDataArray::get(IB->getContext(), A);
+    auto *M = Start->getParent()->getParent()->getParent();
+     GV = new GlobalVariable(
+        *M, AConst->getType(), true, GlobalValue::PrivateLinkage,
+        AConst, CI.Name, nullptr, GlobalVariable::NotThreadLocal, GlobalValue::ExternalLinkage);
+    GV->setUnnamedAddr(GlobalValue::UnnamedAddr::Global);
+    GV->setAlignment(Align(16));
+  } else {
+    GV = IB->CreateGlobalString(CI.Bitstream, CI.Name + "_bitstream",
+                                      GlobalValue::ExternalLinkage);
+    GV->setAlignment(Align(8));
+  }
   CGC.SS_CONFIG(GV, IB->getInt64(CI.Size));
   IB->SetInsertPoint(End);
   CGC.SS_WAIT_ALL();
