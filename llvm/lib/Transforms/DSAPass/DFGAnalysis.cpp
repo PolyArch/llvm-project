@@ -6,6 +6,7 @@
 #include "./StreamAnalysis.h"
 
 #include "llvm/ADT/iterator_range.h"
+#include "llvm/IR/Instruction.h"
 #include <string>
 
 #define DEBUG_TYPE "dfg-analysis"
@@ -923,7 +924,6 @@ ConfigInfo extractDFGPorts(std::string FName, DFGFile &DF, SpadInfo &SI) {
           uint64_t Word = 0;
           std::istringstream Iss(Raw);
           CHECK(Iss >> Word);
-          DSA_INFO << Word;
           std::string WordByte((char*)&Word, (char*)&Word + 8);
           ConfigString.insert(ConfigString.end(), WordByte.begin(), WordByte.end());
         }
@@ -1275,12 +1275,13 @@ void analyzeAccumulatorTags(DFGFile &DF, xform::CodeGenContext &CGC,
     if (auto *DD = dyn_cast<DedicatedDFG>(Graphs[i])) {
       for (auto *Acc : DD->EntryFilter<Accumulator>()) {
         {
-          auto *Inst = Acc->Operation;
-          for (int i = 0; i < (int) Inst->getNumOperands(); ++i) { // NOLINT
-            if (auto *Phi = dyn_cast<PHINode>(Inst->getOperand(i))) {
+          std::set<Instruction*> Insts;
+          FindEquivPHIs(Acc->Operation, Insts);
+          for (auto *Elem : Insts) { // NOLINT
+            if (auto *Phi = dyn_cast<PHINode>(Elem)) {
               for (int j = 0; j < (int) Phi->getNumOperands(); ++j) { // NOLINT
                 auto *Val = dyn_cast<Value>(Phi->getOperand(j));
-                if (Val != Inst) {
+                if (isa<ConstantInt>(Val)) {
                   CHECK(Acc->ResetLevel == -1);
                   auto *BB = Phi->getIncomingBlock(j);
                   DSA_LOG(ACC)
@@ -1346,12 +1347,11 @@ void analyzeAccumulatorTags(DFGFile &DF, xform::CodeGenContext &CGC,
         if (Tag) {
           for (auto *User : Acc->Operation->users()) {
             if (auto *Inst = dyn_cast<Instruction>(User)) {
-              bool Skip = false;
-              for (int j = 0; j < (int) Acc->Operation->getNumOperands(); ++j) { // NOLINT
+              bool Skip = isa<PHINode>(Inst);
+              for (int j = 0; j < (int) Acc->Operation->getNumOperands() && !Skip; ++j) { // NOLINT
                 if (auto *OpInst = dyn_cast<Instruction>(Acc->Operation->getOperand(j))) {
                   if (OpInst == Inst) {
                     Skip = true;
-                    break;
                   }
                 }
               }
