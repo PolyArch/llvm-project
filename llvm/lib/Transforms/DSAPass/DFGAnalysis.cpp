@@ -6,6 +6,7 @@
 #include "./StreamAnalysis.h"
 
 #include "llvm/ADT/iterator_range.h"
+#include <string>
 
 #define DEBUG_TYPE "dfg-analysis"
 
@@ -893,7 +894,7 @@ ConfigInfo extractDFGPorts(std::string FName, DFGFile &DF, SpadInfo &SI) {
         CHECK(false) << "Unrecognized token: " << Token;
       }
       // char dfgx_config[size] = "filename:dfgx.sched";
-    } else if (Token == "char") {
+    } else if (Token == "char" || Token == "uint64_t") {
       if (!BitStream) {
         // dfgx_config[size]
         Iss >> Token;
@@ -909,6 +910,7 @@ ConfigInfo extractDFGPorts(std::string FName, DFGFile &DF, SpadInfo &SI) {
         }
       } else {
         std::string Raw;
+        DSA_INFO << ConfigSize;
         for (int i = 0; i < ConfigSize; ++i) { // NOLINT
           CHECK(std::getline(Ifs, Raw));
           while (isspace(Raw[0])) {
@@ -918,14 +920,15 @@ ConfigInfo extractDFGPorts(std::string FName, DFGFile &DF, SpadInfo &SI) {
             Raw.pop_back();
           }
           Raw.pop_back();
-          int Chr = 0;
-          if (Raw[0] == '0' && Raw[1] == 'b') {
-            for (int j = 0; j < (int) Raw.size(); ++j) { // NOLINT
-              Chr = (Chr << 1) | (Raw[j] - '0');
-            }
-          }
-          ConfigString.push_back(Chr);
+          uint64_t Word = 0;
+          std::istringstream Iss(Raw);
+          CHECK(Iss >> Word);
+          DSA_INFO << Word;
+          std::string WordByte((char*)&Word, (char*)&Word + 8);
+          ConfigString.insert(ConfigString.end(), WordByte.begin(), WordByte.end());
         }
+        DSA_INFO << ConfigString.size();
+        ConfigSize *= sizeof(int64_t);
         CHECK(std::getline(Ifs, Raw));
       }
     }

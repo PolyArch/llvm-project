@@ -809,6 +809,7 @@ void injectConfiguration(CodeGenContext &CGC, analysis::ConfigInfo &CI,
   IB->SetInsertPoint(Start);
   auto *GV = IB->CreateGlobalString(CI.Bitstream, CI.Name + "_bitstream",
                                     GlobalValue::ExternalLinkage);
+  GV->setAlignment(Align(8));
   CGC.SS_CONFIG(GV, IB->getInt64(CI.Size));
   IB->SetInsertPoint(End);
   CGC.SS_WAIT_ALL();
