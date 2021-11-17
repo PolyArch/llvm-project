@@ -110,7 +110,7 @@ std::vector<utils::StickyRegister> injectDSARegisterFile(Function &F) {
 std::string ValueToOperandText(Value *Val) { // NOLINT
 
   if (auto *CI = dyn_cast<ConstantInt>(Val)) {
-    return formatv("{0}", CI->getValue().getSExtValue());
+    return formatv("{0}", (uint64_t) CI->getValue().getSExtValue());
   }
   auto *CFP = dyn_cast<ConstantFP>(Val);
   CHECK(CFP) << "Cannot dump " << *Val;
@@ -334,7 +334,12 @@ struct DFGPrinter : dsa::DFGVisitor {
             }
           }
           CHECK(!TN.Name.empty()) << Acc->dump() << " not tagged!";
-          OS << "0: d, " << tagBitmask(Acc->ResetLevel) << ": r}";
+          if (Acc->ResetLevel == Acc->ProduceLevel) {
+            OS << "0: d, " << tagBitmask(Acc->ResetLevel) << ": r}";
+          } else {
+            CHECK(Acc->ProduceLevel == -1);
+            OS << tagBitmask(Acc->ResetLevel) << ": r}";
+          }
           DSA_LOG(CODEGEN) << Acc->dump() << ", ResetLevel: " << Acc->ResetLevel;
           DSA_LOG(CODEGEN) << "BMSS: " << tagBitmask(Acc->ResetLevel);
         }

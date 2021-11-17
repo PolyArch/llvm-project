@@ -922,8 +922,14 @@ ConfigInfo extractDFGPorts(std::string FName, DFGFile &DF, SpadInfo &SI) {
           }
           Raw.pop_back();
           uint64_t Word = 0;
-          std::istringstream Iss(Raw);
-          CHECK(Iss >> Word);
+          if (Raw[0] == '0' && Raw[1] == 'b') {
+            for (int j = 2; j < (int) Raw.size(); ++j) {  // NOLINT
+              Word = (Word << 1) | (Raw[j] - '0');
+            }
+          } else {
+            std::istringstream Iss(Raw);
+            CHECK(Iss >> Word);
+          }
           std::string WordByte((char*)&Word, (char*)&Word + 8);
           ConfigString.insert(ConfigString.end(), WordByte.begin(), WordByte.end());
         }
@@ -1281,16 +1287,19 @@ void analyzeAccumulatorTags(DFGFile &DF, xform::CodeGenContext &CGC,
             if (auto *Phi = dyn_cast<PHINode>(Elem)) {
               for (int j = 0; j < (int) Phi->getNumOperands(); ++j) { // NOLINT
                 auto *Val = dyn_cast<Value>(Phi->getOperand(j));
-                if (isa<ConstantInt>(Val)) {
-                  CHECK(Acc->ResetLevel == -1);
+                if (isa<ConstantData>(Val)) {
+                  // CHECK(Acc->ResetLevel == -1) << Acc->ResetLevel;
                   auto *BB = Phi->getIncomingBlock(j);
                   DSA_LOG(ACC)
                     << Acc->dump() << " reset by block " << BB->getName() << ", " << *Val;
                   for (int k = 0; k < (int) Loops.size(); ++k) { // NOLINT
                     if (Loops[k]->contains(BB)) {
                       CHECK(k);
-                      Acc->ResetLevel = k - 1;
-                      DSA_LOG(ACC) << " reset by " << *Loops[k];
+                      if (Acc->ResetLevel == -1) {
+                        Acc->ResetLevel = k - 1;
+                      } else {
+                        CHECK(Acc->ResetLevel == k - 1) << *Loops[k];
+                      }
                       break;
                     }
                   }
@@ -1507,7 +1516,7 @@ extractStreamIntrinsics(DFGEntry *DE, xform::CodeGenContext &CGC, DFGAnalysisRes
           Idx = SCE->Stripped;
         }
         auto *IP = dyn_cast<IndirectPointer>(Idx);
-        CHECK(IP) << Idx->toString();
+        CHECK(IP) << Idx->toString() << "\n" << SA->toString();
         auto *LC = dyn_cast<LinearCombine>(IP->Pointer);
         CHECK(LC) << IdxLI->toString() << "\n" << Idx->toString();
         auto *L1D = productTripCount(LC->TripCount, &CGC.SE);
