@@ -14,8 +14,8 @@
 namespace dsa {
 namespace analysis {
 
-void gatherConfigScope(Function &F, DFGAnalysisResult &DAR) {
-  auto &Res = DAR.Scope;
+std::vector<std::pair<IntrinsicInst *, IntrinsicInst *>> gatherConfigScope(Function &F) {
+  std::vector<std::pair<IntrinsicInst *, IntrinsicInst *>> Res;
   for (auto &BB : F) {
     for (auto &I : BB) {
       if (auto *End = dyn_cast<IntrinsicInst>(&I)) {
@@ -27,6 +27,7 @@ void gatherConfigScope(Function &F, DFGAnalysisResult &DAR) {
       }
     }
   }
+  return Res;
 }
 
 std::pair<std::set<Instruction *>, std::set<Instruction *>>
@@ -1354,35 +1355,63 @@ void analyzeAccumulatorTags(DFGFile &DF, xform::CodeGenContext &CGC,
           }
         }
         if (Tag) {
-          for (auto *User : Acc->Operation->users()) {
-            if (auto *Inst = dyn_cast<Instruction>(User)) {
-              bool Skip = isa<PHINode>(Inst);
-              for (int j = 0; j < (int) Acc->Operation->getNumOperands() && !Skip; ++j) { // NOLINT
-                if (auto *OpInst = dyn_cast<Instruction>(Acc->Operation->getOperand(j))) {
-                  if (OpInst == Inst) {
-                    Skip = true;
+          for (auto *OP : Acc->Parent->EntryFilter<OutputPort>()) {
+            auto Upstream = bfsOperands(OP->Parent, OP->Output, CGC.DT).first;
+            for (auto *Elem : Upstream) {
+              if (auto *DE = OP->Parent->InThisDFG(Elem)) {
+                if (DE == Acc) {
+                  DSA_INFO << DE->dump() << " consumed by ";
+                  auto *Consumer = OP->underlyingInsts()[0];
+                  DSA_INFO << *Consumer;
+                  // ...
+                  if (Consumer == Acc->Operation) {
+                    continue;
                   }
-                }
-              }
-              if (!Skip) {
-                DSA_LOG(ACC) << "Used by: " << *Inst;
-                for (int j = 0; j < (int) Loops.size(); ++j) { // NOLINT
-                  if (Loops[j]->contains(Inst)) {
-                    DSA_LOG(ACC) << Acc->dump() << " Produce@" << j;
-                    if (Acc->ProduceLevel == INT_MAX) {
-                      Acc->ProduceLevel = j - 1;
-                    } else {
-                      CHECK(Acc->ProduceLevel == j - 1) <<
-                        Acc->ProduceLevel << " != " << (j - 1);
+                  for (int j = 0; j < (int) Loops.size(); ++j) { // NOLINT
+                    if (Loops[j]->contains(Consumer)) {
+                      DSA_LOG(ACC) << Acc->dump() << " Produce@" << (j - 1);
+                      if (Acc->ProduceLevel == INT_MAX) {
+                        Acc->ProduceLevel = j - 1;
+                      } else {
+                        CHECK(Acc->ProduceLevel == j - 1)
+                          << Acc->ProduceLevel << " != " << (j - 1);
+                      }
+                      break;
                     }
-                    break;
                   }
                 }
-              } else {
-                DSA_LOG(ACC) << "Skip: " << *Inst;
               }
             }
           }
+          // for (auto *User : Acc->Operation->users()) {
+          //   if (auto *Inst = dyn_cast<Instruction>(User)) {
+          //     bool Skip = isa<PHINode>(Inst);
+          //     for (int j = 0; j < (int) Acc->Operation->getNumOperands() && !Skip; ++j) { // NOLINT
+          //       if (auto *OpInst = dyn_cast<Instruction>(Acc->Operation->getOperand(j))) {
+          //         if (OpInst == Inst) {
+          //           Skip = true;
+          //         }
+          //       }
+          //     }
+          //     if (!Skip) {
+          //       DSA_LOG(ACC) << "Used by: " << *Inst;
+          //       for (int j = 0; j < (int) Loops.size(); ++j) { // NOLINT
+          //         if (Loops[j]->contains(Inst)) {
+          //           DSA_LOG(ACC) << Acc->dump() << " Produce@" << j - 1;
+          //           if (Acc->ProduceLevel == INT_MAX) {
+          //             Acc->ProduceLevel = j - 1;
+          //           } else {
+          //             CHECK(Acc->ProduceLevel == j - 1) <<
+          //               Acc->ProduceLevel << " != " << (j - 1);
+          //           }
+          //           break;
+          //         }
+          //       }
+          //     } else {
+          //       DSA_LOG(ACC) << "Skip: " << *Inst;
+          //     }
+          //   }
+          // }
           if (Acc->ProduceLevel == INT_MAX) {
             Acc->ProduceLevel = Loops.size() - 1;
             DSA_LOG(ACC) << Loops.size() << " produce when exiting!";
@@ -1399,6 +1428,7 @@ void analyzeAccumulatorTags(DFGFile &DF, xform::CodeGenContext &CGC,
         for (auto *Acc : IP->Tagged) {
           if (isa<SLPMemPort>(IP)) {
             ++Acc->ResetLevel;
+            ++Acc->ProduceLevel;
           }
           // CHECK(Acc->ResetLevel < (int) LC->Coef.size());
           DSA_LOG(ACC)
@@ -1411,12 +1441,20 @@ void analyzeAccumulatorTags(DFGFile &DF, xform::CodeGenContext &CGC,
   }
 }
 
+int cutoffLevel(InputPort *IP) {
+  if (IP->Tagged.empty()) {
+    return -1;
+  }
+  auto FRed = [](int X, Accumulator *A) { return std::min(X, std::min(A->ResetLevel, A->ProduceLevel)); };
+  return std::accumulate(IP->Tagged.begin(), IP->Tagged.end(), INT_MAX, FRed);
+}
+
 void DFGAnalysisResult::fuseAffineDimensions(ScalarEvolution &SE) {
   struct FuseInfoExtractor : DFGEntryVisitor {
     void Visit(MemPort *MP) override {
       DBits = MP->Load->getType()->getScalarSizeInBits();
       Padding = MP->fillMode();
-      CutOff = resetLevel(MP);
+      CutOff = cutoffLevel(MP);
     }
     void Visit(PortMem *PM) override {
       DBits = PM->Store->getValueOperand()->getType()->getScalarSizeInBits();
@@ -1424,7 +1462,7 @@ void DFGAnalysisResult::fuseAffineDimensions(ScalarEvolution &SE) {
     void Visit(SLPMemPort *SMP) override {
       auto *MP = SMP->Coal[0];
       DBits = MP->Load->getType()->getScalarSizeInBits();
-      CutOff = resetLevel(SMP);
+      CutOff = cutoffLevel(SMP);
     }
     void Visit(SLPPortMem *SPM) override {
       auto *PM = SPM->Coal[0];
@@ -1454,6 +1492,7 @@ void DFGAnalysisResult::fuseAffineDimensions(ScalarEvolution &SE) {
         DSA_LOG(FUSE) << IP->dump();
         for (auto *Acc : IP->Tagged) {
           Acc->ResetLevel -= Delta;
+          Acc->ProduceLevel -= Delta;
           DSA_LOG(FUSE) << Acc->dump() << ": " << Acc->ResetLevel;
         }
       }

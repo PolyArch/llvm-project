@@ -330,14 +330,14 @@ struct DFGPrinter : dsa::DFGVisitor {
             auto Iter = std::find(IP->Tagged.begin(), IP->Tagged.end(), Acc);
             if (Iter != IP->Tagged.end()) {
               IP->accept(&TN);
-              OS << ", ctrl=$" << TN.Name << "State" << "{";
+              OS << ", ctrl=$" << TN.Name << "State & " << tagBitmask(Acc->ResetLevel) << "{";
             }
           }
           CHECK(!TN.Name.empty()) << Acc->dump() << " not tagged!";
           if (Acc->ResetLevel == Acc->ProduceLevel) {
             OS << "0: d, " << tagBitmask(Acc->ResetLevel) << ": r}";
           } else {
-            CHECK(Acc->ProduceLevel == -1);
+            CHECK(Acc->ProduceLevel == -1) << Acc->ProduceLevel << " " << Acc->ResetLevel;
             OS << tagBitmask(Acc->ResetLevel) << ": r}";
           }
           DSA_LOG(CODEGEN) << Acc->dump() << ", ResetLevel: " << Acc->ResetLevel;
@@ -815,7 +815,8 @@ void injectConfiguration(CodeGenContext &CGC, analysis::ConfigInfo &CI,
 
   GlobalVariable *GV;
   if (utils::ModuleContext().BITSTREAM) {
-    ArrayRef<int64_t> A((int64_t*)CI.Bitstream.data(), (int64_t*)CI.Bitstream.data() + CI.Size);
+    int64_t *DPtr = (int64_t*)(const_cast<char*>(CI.Bitstream.data()));
+    ArrayRef<int64_t> A(DPtr, DPtr + CI.Size);
     Constant *AConst = ConstantDataArray::get(IB->getContext(), A);
     auto *M = Start->getParent()->getParent()->getParent();
      GV = new GlobalVariable(
@@ -1259,12 +1260,6 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
         if (!N2D) {
           N2D = CGC.SEE.expandCodeFor(LC->TripCount[0]->Raw);
         }
-        if (!IMP->Tagged.empty()) {
-          DSA_INFO << IMP->Tagged.size();
-          int ResetLevel = analysis::resetLevel(IMP);
-          DSA_LOG(CODEGEN) << "Config BMSS: " << ResetLevel << ", " << tagBitmask(ResetLevel);
-          CGC.CONFIG_PARAM(DSARF::BMSS, tagBitmask(ResetLevel), false);
-        }
         DSA_LOG(CODEGEN)
           << "[Indirect 2D] Port: " << IMP->SoftPortNum << ", DType: " << DType
           << ", SARPort: " << IMP->IndexOutPort << ", SAR: " << *SAR->Raw
@@ -1280,12 +1275,6 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
 
       auto *IndPtr = dyn_cast<analysis::IndirectPointer>(Idx);
       bool Pene = false;
-      if (!IMP->Tagged.empty()) {
-        int ResetLevel = analysis::resetLevel(IMP);
-        DSA_LOG(CODEGEN) << "Config BMSS: " << ResetLevel << ", " << tagBitmask(ResetLevel);
-        CGC.CONFIG_PARAM(DSARF::BMSS, tagBitmask(ResetLevel), true);
-        Pene = true;
-      }
       injectLinearStreamImpl(CGC, IndPtr->Pointer, IMP->Index->SoftPortNum,
                              IMP->Parent->getUnroll(), IType,
                              DMO_Read, DP_NoPadding, SI, -1);
@@ -1327,17 +1316,8 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
       auto Cond = [MP] (analysis::SpadInfo::BuffetEntry &BE) { return std::get<0>(BE) == MP; };
       auto BIter = std::find_if(SI.Buffet.begin(), SI.Buffet.end(), Cond);
       auto *IdxLI = DAR.affineMemoryAccess(MP, CGC.SE, false);
-      if (!MP->Tagged.empty()) {
-        int ResetLevel = analysis::resetLevel(MP);
-        DSA_LOG(CODEGEN) << "Config BMSS: " << tagBitmask(ResetLevel);
-        CGC.CONFIG_PARAM(DSARF::BMSS, tagBitmask(ResetLevel), true);
-      }
       injectLinearStreamImpl(CGC, IdxLI, Port, DFG->getUnroll(), DType, DMO_Read,
                              (Padding) MP->fillMode(), SI, BIter - SI.Buffet.begin());
-
-      if (!MP->Tagged.empty()) {
-        CGC.CONFIG_PARAM(DSARF::BMSS, (int) 0, false);
-      }
 
       MP->IntrinInjected = true;
     }
@@ -1363,17 +1343,8 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
       if (!LC) {
         LC = dyn_cast<analysis::LoopInvariant>(IdxLI)->toLinearCombine(nullptr);
       }
-      if (!SMP->Tagged.empty()) {
-        int ResetLevel = analysis::resetLevel(SMP);
-        DSA_LOG(CODEGEN) << "Reset @" << ResetLevel << ", BMSS: " << tagBitmask(ResetLevel);
-        CGC.CONFIG_PARAM(DSARF::BMSS, tagBitmask(ResetLevel), true);
-        CHECK(ResetLevel < (int) LC->Coef.size()) << ResetLevel << ", " << LC->Coef.size();
-      }
       injectLinearStreamImpl(CGC, LC, Port, DFG->getUnroll(), DType, DMO_Read,
                              (Padding) MP->fillMode(), SI, BIter - SI.Buffet.begin());
-      if (!SMP->Tagged.empty()) {
-        CGC.CONFIG_PARAM(DSARF::BMSS, (int) 0, false);
-      }
 
       SMP->IntrinInjected = true;
     }
@@ -1745,7 +1716,7 @@ void eraseOffloadedInstructions(DFGFile &DF, CodeGenContext &CGC) {
     Inst->eraseFromParent();
   }
 
-  DSA_LOG(ERASE) << "Rip out all original instrucitons";
+  DSA_LOG(ERASE) << DF.Func;
 }
 
 } // namespace xform
