@@ -1275,6 +1275,9 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
 
       auto *IndPtr = dyn_cast<analysis::IndirectPointer>(Idx);
       bool Pene = false;
+      if (!IMP->Tagged.empty()) {
+        Pene = true;
+      }
       injectLinearStreamImpl(CGC, IndPtr->Pointer, IMP->Index->SoftPortNum,
                              IMP->Parent->getUnroll(), IType,
                              DMO_Read, DP_NoPadding, SI, -1);
