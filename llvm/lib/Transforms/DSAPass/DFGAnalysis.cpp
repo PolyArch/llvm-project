@@ -1360,9 +1360,7 @@ void analyzeAccumulatorTags(DFGFile &DF, xform::CodeGenContext &CGC,
             for (auto *Elem : Upstream) {
               if (auto *DE = OP->Parent->InThisDFG(Elem)) {
                 if (DE == Acc) {
-                  DSA_INFO << DE->dump() << " consumed by ";
                   auto *Consumer = OP->underlyingInsts()[0];
-                  DSA_INFO << *Consumer;
                   // ...
                   if (Consumer == Acc->Operation) {
                     continue;
@@ -1393,8 +1391,7 @@ void analyzeAccumulatorTags(DFGFile &DF, xform::CodeGenContext &CGC,
           //         }
           //       }
           //     }
-          //     if (!Skip) {
-          //       DSA_LOG(ACC) << "Used by: " << *Inst;
+          //     if (!Skip) { DSA_LOG(ACC) << "Used by: " << *Inst;
           //       for (int j = 0; j < (int) Loops.size(); ++j) { // NOLINT
           //         if (Loops[j]->contains(Inst)) {
           //           DSA_LOG(ACC) << Acc->dump() << " Produce@" << j - 1;
