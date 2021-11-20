@@ -286,7 +286,7 @@ struct SLPIO : TBase {
   inline void accept(dsa::DFGEntryVisitor *DEV) override;
 
   Instruction *underlyingInst() override {
-    CHECK(false) << "This node for sure has multiple instructions!";
+    DSA_CHECK(false) << "This node for sure has multiple instructions!";
     return nullptr;
   }
 
@@ -317,7 +317,7 @@ struct SLPIO : TBase {
 
   Predicate *getPredicate(int *) override {
     for (auto Elem : Coal) {
-      CHECK(!Elem->getPredicate(nullptr));
+      DSA_CHECK(!Elem->getPredicate(nullptr));
     }
     return nullptr;
   }
@@ -420,7 +420,7 @@ template<>
 inline bool SLPPortMem::shouldUnroll() {
   bool Res = Coal[0]->shouldUnroll();
   for (int i = 1; i < (int) Coal.size(); ++i) { // NOLINT
-    CHECK(Coal[i]->shouldUnroll() == Res);
+    DSA_CHECK(Coal[i]->shouldUnroll() == Res);
   }
   return Res;
 }
