@@ -1,4 +1,6 @@
 #include "Util.h"
+#include "dsa/arch/model.h"
+#include "dsa/core/singleton.h"
 #include "dsa/debug.h"
 
 #include "./CodeXform.h"
@@ -711,6 +713,9 @@ void extractDFGFromScope(DFGFile &DF, dsa::xform::CodeGenContext &CGC) {
         auto *MDFactor = dyn_cast<ConstantAsMetadata>(MD->getOperand(1));
         DSA_CHECK(MDFactor);
         int Factor = (int)MDFactor->getValue()->getUniqueInteger().getSExtValue();
+        if (Factor == 0) {
+          Factor = 1;
+        }
         auto *DD = new DedicatedDFG(&DF, SubLoop, Factor);
         DF.addDFG(DD);
       }
@@ -755,7 +760,7 @@ void extractDFGFromScope(DFGFile &DF, dsa::xform::CodeGenContext &CGC) {
   }
 }
 
-ConfigInfo extractDFGPorts(std::string FName, DFGFile &DF, SpadInfo &SI) {
+ConfigInfo extractDFGPorts(DFGFile &DF, SpadInfo &SI) {
   auto *SBCONFIG = getenv("SBCONFIG");
   DSA_CHECK(SBCONFIG);
   std::string ExtraFlag = "";
@@ -769,9 +774,14 @@ ConfigInfo extractDFGPorts(std::string FName, DFGFile &DF, SpadInfo &SI) {
   if (dsa::utils::ModuleContext().COMPAT_ADG) {
     ExtraFlag += " -a";
   }
-  auto Cmd = formatv("ss_sched {0} {1} {2} -e 0 > /dev/null", ExtraFlag, SBCONFIG, FName).str();
+  auto FName = DF.FileName;
+  auto Cmd = formatv("ss_sched --max-iters=1024 {0} {1} {2} -e 0 > /dev/null",
+                     ExtraFlag, SBCONFIG, FName).str();
   DSA_LOG(CONFIG) << Cmd;
-  DSA_CHECK(system(Cmd.c_str()) == 0) << "Not successfully scheduled! Try another DFG!";
+
+  if (system(Cmd.c_str()) != 0) {
+    return ConfigInfo("", "", 0);
+  }
 
   std::ifstream Ifs(FName + (BitStream ? ".bits" : "") + ".h");
   auto DFGs = DF.DFGFilter<DFGBase>();
@@ -807,7 +817,7 @@ ConfigInfo extractDFGPorts(std::string FName, DFGFile &DF, SpadInfo &SI) {
         DSA_CHECK(sscanf(Stripped.c_str(), "%d_v%d", &X, &Y) == 2);
         int Port;
         Iss >> Port;
-        DSA_LOG(CONFIG) << "sub" << X << "v" << Y << " -> " << Port << "\n";
+        DSA_LOG(CONFIG) << "sub" << X << "v" << Y << " -> " << Port;
         DSA_CHECK(X >= 0 && X < (int) DFGs.size()) << Token << ": " << X << ", " << DFGs.size();
         DSA_CHECK(Y >= 0 && Y < (int) DFGs[X]->Entries.size());
         auto *Entry = DFGs[X]->Entries[Y];
@@ -816,7 +826,7 @@ ConfigInfo extractDFGPorts(std::string FName, DFGFile &DF, SpadInfo &SI) {
         } else if (auto *CB = dyn_cast<ComputeBody>(Entry)) {
           DSA_CHECK(false) << Token << ": " << X << " " << Y << " This should be deprecated!";
           if (!CB->isImmediateAtomic()) {
-            DSA_LOG(CONFIG) << "OutputPorts:\n";
+            DSA_LOG(CONFIG) << "OutputPorts:";
             auto OutPorts = CB->getOutPorts();
             for (auto *Port : CB->getOutPorts()) {
               (void) Port;
@@ -1586,6 +1596,60 @@ extractStreamIntrinsics(DFGEntry *DE, xform::CodeGenContext &CGC, DFGAnalysisRes
   // DSA_CHECK(SE.DS);
   DAR.Streams[DE] = SE.DS;
   return SE.DS;
+}
+
+DFGUnroll::DFGUnroll(DFGFile &DF) : DF(DF) {
+  if (dsa::utils::ModuleContext().COMPAT_ADG) {
+    dsa::ContextFlags::Global().adg_compat = true;
+  }
+  auto *SBCONFIG = getenv("SBCONFIG");
+  DSA_CHECK(SBCONFIG);
+  SSModel Model(SBCONFIG);
+  for (auto *Elem : DF.DFGs) {
+    Idx.push_back(0);
+    DSA_INFO << Elem->getUnroll();
+    if (Elem->getUnroll() == -1) {
+      Degrees.push_back({8, 4, 2, 1});
+    } else {
+      Degrees.push_back({Elem->getUnroll()});
+    }
+  }
+}
+
+bool DFGUnroll::hasNext() {
+  return Idx.back() < (int) Degrees.back().size();
+}
+
+std::string DFGUnroll::toString() {
+  std::ostringstream OSS;
+  for (int i = 0; i < (int) Idx.size(); ++i) { // NOLINT
+    DSA_INFO << i << ": " << Idx[i] << " " << Degrees[i].size() << " " << Degrees[i][Idx[i]];
+    OSS << "_" << Degrees[i][Idx[i]];
+  }
+  return OSS.str();
+}
+
+void DFGUnroll::applyNext() {
+  DSA_CHECK(hasNext());
+  bool Carry = true;
+  DF.FileName = DF.Func.getName().str() + "_" + std::to_string(DF.ID) + toString() + ".dfg";
+  for (int i = 0; i < (int) DF.DFGs.size(); ++i) { // NOLINT
+    auto *DFG = DF.DFGs[i];
+    if (auto *DD = dyn_cast<DedicatedDFG>(DFG)) {
+      DD->UnrollFactor = Degrees[i][Idx[i]];
+      if (Carry) {
+        ++Idx[i];
+        Carry = false;
+      }
+      if (Idx[i] == (int) Degrees[i].size()) {
+        Idx[i] = 0;
+        Carry = true;
+      }
+    }
+  }
+  if (Carry) {
+    Idx.back() = Degrees.back().size();
+  }
 }
 
 

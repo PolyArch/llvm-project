@@ -23,6 +23,7 @@ enum DataStreamKind {
   kIndirect2D
 };
 
+
 /*!
  * \brief The base class of indirect stream emission.
  */
@@ -186,14 +187,61 @@ struct Indirect2D : DataStream {
 namespace analysis {
 
 /*!
+ * \brief Enumerate the unrolling degree.
+ */
+struct DFGUnroll {
+
+  DFGUnroll(DFGFile &DF);
+
+  /*!
+   */
+  bool hasNext();
+
+  /*!
+   */
+  void applyNext();
+
+  DFGFile &DF;
+
+  /*!
+   * \brief
+   */
+  std::vector<int> Idx;
+
+  /*!
+   * \brief
+   */
+  std::vector<std::vector<int>> Degrees;
+
+  /*!
+   */
+  std::string toString();
+};
+
+/*!
  * \brief Information of the bitstream.
  */
 struct ConfigInfo {
+  /*!
+   * \brief The name of the bitstream array.
+   */
   std::string Name;
+  /*!
+   * \brief The content of the bitstream.
+   */
   std::string Bitstream;
+  /*!
+   * \brief The size of the bitstream array.
+   */
   int Size;
+  /*!
+   * \brief If this is an empty configuration.
+   */
+  bool empty() { return Bitstream.empty(); }
+
   ConfigInfo(const std::string &N, const std::string &B, int S)
       : Name(N), Bitstream(B), Size(S) {}
+
   ConfigInfo() : Name(""), Bitstream(""), Size(0) {}
 };
 
@@ -319,11 +367,10 @@ void extractDFGFromScope(DFGFile &DF, dsa::xform::CodeGenContext &CGC);
 
 /*!
  * \brief Extract the port number from the generated schedule.
- * \param FName The emitted file to be analyzed.
  * \param Ports Write the result in the allocated vector buffer.
  * \param CMIs The coalesced memory.
  */
-ConfigInfo extractDFGPorts(std::string FName, DFGFile &DF, SpadInfo &SI);
+ConfigInfo extractDFGPorts(DFGFile &DF, SpadInfo &SI);
 
 /*!
  * \brief Analyze the information of accumulator.

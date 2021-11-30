@@ -163,6 +163,7 @@ public:
 class DFGFile {
 
 public:
+  int ID;
   std::string FileName;
   Function &Func;
   Instruction *Config, *Fence;
@@ -191,8 +192,7 @@ public:
   friend struct AtomicPortMem;
 
   /// The constructor
-  DFGFile(StringRef Name, IntrinsicInst *Start, IntrinsicInst *End,
-          StreamSpecialize *Query);
+  DFGFile(IntrinsicInst *Start, IntrinsicInst *End, StreamSpecialize *Query);
 
   /*!
    * \brief Get the name of the DFG.
