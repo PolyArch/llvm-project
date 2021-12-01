@@ -325,23 +325,24 @@ struct DFGPrinter : dsa::DFGVisitor {
             std::string Name;
           };
           TagNamer TN;
+          auto &Entry = Parent->DAR.AI[Acc];
           // TODO(@were): Confirm this is correct.
           for (auto *IP : Acc->Parent->EntryFilter<InputPort>()) {
             auto Iter = std::find(IP->Tagged.begin(), IP->Tagged.end(), Acc);
             if (Iter != IP->Tagged.end()) {
               IP->accept(&TN);
-              OS << ", ctrl=$" << TN.Name << "State & " << tagBitmask(Acc->ResetLevel) << "{";
+              OS << ", ctrl=$" << TN.Name << "State & " << tagBitmask(Entry.ResetLevel) << "{";
             }
           }
           DSA_CHECK(!TN.Name.empty()) << Acc->dump() << " not tagged!";
-          if (Acc->ResetLevel == Acc->ProduceLevel) {
-            OS << "0: d, " << tagBitmask(Acc->ResetLevel) << ": r}";
+          if (Entry.ResetLevel == Entry.ProduceLevel) {
+            OS << "0: d, " << tagBitmask(Entry.ResetLevel) << ": r}";
           } else {
-            DSA_CHECK(Acc->ProduceLevel == -1) << Acc->ProduceLevel << " " << Acc->ResetLevel;
-            OS << tagBitmask(Acc->ResetLevel) << ": r}";
+            DSA_CHECK(Entry.ProduceLevel == -1) << Entry.ProduceLevel << " " << Entry.ResetLevel;
+            OS << tagBitmask(Entry.ResetLevel) << ": r}";
           }
-          DSA_LOG(CODEGEN) << Acc->dump() << ", ResetLevel: " << Acc->ResetLevel;
-          DSA_LOG(CODEGEN) << "BMSS: " << tagBitmask(Acc->ResetLevel);
+          DSA_LOG(CODEGEN) << Acc->dump() << ", ResetLevel: " << Entry.ResetLevel;
+          DSA_LOG(CODEGEN) << "BMSS: " << tagBitmask(Entry.ResetLevel);
         }
       }
 
@@ -611,7 +612,7 @@ struct DFGPrinter : dsa::DFGVisitor {
   };
 
   void Visit(DedicatedDFG *DD) override {
-    if (utils::ModuleContext().TRIGGER) {
+    if (utils::ModuleContext().TRIGGER || DD->GoTemporal) {
       DSA_CHECK(utils::ModuleContext().TEMPORAL)
           << "Trigger cannot be enabled without temporal";
       OS << "#pragma group temporal\n";

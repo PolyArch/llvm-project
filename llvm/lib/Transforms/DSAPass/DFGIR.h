@@ -246,6 +246,8 @@ public:
   static bool classof(const DFGBase *DB) { return DB->getKind() == Temporal; }
 };
 
+struct Accumulator;
+
 /// The class of the dedicated DFG
 class DedicatedDFG : public DFGBase {
 
@@ -273,6 +275,8 @@ public:
   BasicBlock *Preheader{nullptr};
   /// Prologue IP
   Instruction *PrologueIP;
+
+  bool GoTemporal{false};
 
   friend class DFGFile;
   friend class DFGBase;

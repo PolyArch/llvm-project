@@ -76,7 +76,7 @@ bool StreamSpecialize::runOnFunction(Function &F) {
   }
   DSA_LOG(PASS) << "Transforming " << F.getName();
   SCEVExpander SEE(*SE, F.getParent()->getDataLayout(), "");
-  dsa::xform::CodeGenContext CGC(&IB, DSARegs, *SE, SEE, DT, LI);
+  dsa::xform::CodeGenContext CGC(&IB, DSARegs, *SE, SEE, DT, LI, BFI);
   bool GlobalSuccessSchedule = true;
   for (int i = 0, N = ScopePairs.size(); i < N; ++i) { // NOLINT
     auto *Start = ScopePairs[i].first;
@@ -85,10 +85,10 @@ bool StreamSpecialize::runOnFunction(Function &F) {
     DF.ID = i;
     DSA_LOG(PASS) << i << ": Extracting DFG IR...";
     dsa::analysis::extractDFGFromScope(DF, CGC);
-    dsa::analysis::DFGUnroll DU(DF);
-    bool LocalSuccessSchedule = true;
+    dsa::analysis::DFGUnroll DU(DF, CGC);
+    bool LocalSuccessSchedule = false;
     while (DU.hasNext()) {
-      DU.applyNext();
+      DU.next(true);
       DSA_LOG(PASS) << "Exploring: " << DF.FileName;
       dsa::analysis::DFGAnalysisResult DAR;
       DSA_LOG(PASS) << i << ": Analyzing loop trip counts...";
@@ -127,6 +127,7 @@ bool StreamSpecialize::runOnFunction(Function &F) {
       dsa::xform::injectStreamIntrinsics(CGC, DF, DAR);
       DSA_LOG(PASS) << i << ": Erasing offloaded instructions...";
       eraseOffloadedInstructions(DF, CGC);
+      DSA_INFO << "Use DSE: " << DF.getName();
       break;
     }
     GlobalSuccessSchedule = GlobalSuccessSchedule && LocalSuccessSchedule;
@@ -134,6 +135,9 @@ bool StreamSpecialize::runOnFunction(Function &F) {
       DSA_LOG(PASS) << "DFG " << i << " failed to schedule";
       break;
     }
+    DU.commit();
+    while (DU.hasNext()) DU.next(false);
+    DSA_LOG(PASS) << "Best/Potential=" << DU.BestAt << "/" << DU.Cnt;
   }
 
   DSA_LOG(PASS) << "Done with transformation and rewriting!";
@@ -150,7 +154,7 @@ bool StreamSpecialize::runOnFunction(Function &F) {
 
   DSA_CHECK(GlobalSuccessSchedule);
 
-  DSA_LOG(PASS) << "Done!";
+  DSA_LOG(PASS) << "Done! " << GlobalSuccessSchedule;
 
   LLVM_DEBUG(llvm::errs() << "After transformation:\n"; F.dump());
 

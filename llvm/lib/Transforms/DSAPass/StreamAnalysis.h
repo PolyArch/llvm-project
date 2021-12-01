@@ -242,12 +242,12 @@ SWCast *analyzeCast(ScalarEvolution *SE, const SCEV *Raw, void *Parent,
  * \param LI The memory access pattern to be fused.
  * \param DType The data type of memory access.
  * \param Unroll The unrolling degree of this access.
- * \param P The padding strategy of the access.
  * \param SE The SCEV analysis.
  * \param CutOff The dimension to stop fusing. Sometimes we do not want every dimension to be fused.
+ * \param IsSLP If the LI is derived from SLP.
  */
 void fuseInnerDimensions(LinearCombine &LI, int DType, int Unroll,
-                         ScalarEvolution &SE, int CutOff);
+                         ScalarEvolution &SE, int CutOff, bool IsSLP);
 
 } // namespace analysis
 } // namespace dsa

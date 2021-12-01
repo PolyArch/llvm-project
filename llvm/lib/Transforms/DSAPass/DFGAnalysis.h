@@ -191,31 +191,57 @@ namespace analysis {
  */
 struct DFGUnroll {
 
-  DFGUnroll(DFGFile &DF);
+  DFGUnroll(DFGFile &DF, xform::CodeGenContext &CGC);
 
   /*!
+   * \brief If we have next points to enumerate.
    */
   bool hasNext();
 
   /*!
+   * \brief The next point of the DFG file.
+   * \param Apply If it is applied.
    */
-  void applyNext();
-
-  DFGFile &DF;
+  bool next(bool Apply);
 
   /*!
-   * \brief
+   * \brief The suffix of the file name.
+   */
+  std::string toString();
+
+  /*!
+   * \brief The DFG file to explore
+   */
+  DFGFile &DF;
+
+  /*
+   * \brief The total number of points to be explored.
+   */
+  int Cnt{0};
+
+  /*!
+   * \brief The total number skipped because of pruning.
+   */
+  int Skip{0};
+
+  int BestAt{-1};
+
+  /*!
+   * \brief The current enumeration.
    */
   std::vector<int> Idx;
 
   /*!
-   * \brief
+   * \brief The total degrees to enum.
    */
   std::vector<std::vector<int>> Degrees;
 
   /*!
+   * \brief Sumup the block freqency.
    */
-  std::string toString();
+  std::vector<int> Freq;
+
+  void commit() { BestAt = Cnt; }
 };
 
 /*!
@@ -290,6 +316,19 @@ struct DFGLoopInfo {
     LoopNest(L), TripCount(T) {}
 };
 
+struct AccInfo {
+  /*!
+   * \brief The loop level of accumulator register resetting.
+   */
+  int ResetLevel;
+  /*!
+   * \brief The loop level of finalizing the result.
+   */
+  int ProduceLevel;
+
+  AccInfo(int R = -1, int P = INT_MAX) : ResetLevel(R), ProduceLevel(P) {}
+};
+
 
 /*! \brief The result of DFG analysis. */
 struct DFGAnalysisResult {
@@ -306,6 +345,10 @@ struct DFGAnalysisResult {
    * \brief The loop information of each DFG. Filled by `analyzeDFGLoops`.
    */
   std::vector<DFGLoopInfo> DLI;
+  /*!
+   * \brief The information of an accumulator.
+   */
+  std::unordered_map<Accumulator*, AccInfo> AI;
   /*!
    * \brief Data structures for streams that are ready-codegen.
    */
@@ -417,7 +460,7 @@ analyzedWrapperToStream(DFGEntry *DE, xform::CodeGenContext &CGC, DFGAnalysisRes
  *        affine loop level of resetting the register.
  * \param IP The input port to inspect.
  */
-int resetLevel(InputPort *IP);
+int resetLevel(InputPort *IP, DFGAnalysisResult &DAR);
 
 /*!
  * \brief TODO(@were): doc this!

@@ -201,7 +201,8 @@ SEWrapper *analyzeIndexExpr(ScalarEvolution *SE, const SCEV *Raw, void *Parent,
   return Res;
 }
 
-void fuseInnerDimensions(LinearCombine &LI, int DType, int Unroll, ScalarEvolution &SE, int CutOff) {
+void fuseInnerDimensions(LinearCombine &LI, int DType, int Unroll, ScalarEvolution &SE, int CutOff,
+                         bool IsSLP) {
   if (LI.Coef.empty()) {
     return;
   }
@@ -214,15 +215,29 @@ void fuseInnerDimensions(LinearCombine &LI, int DType, int Unroll, ScalarEvoluti
 
   auto &Coef = LI.Coef;
   auto &Loop = LI.TripCount;
+  int Iteration = 0;
   while ((int) Coef.size() > CutOff) {
+    ++Iteration;
     if (const auto *S1D = constInt(Coef.front())) {
       if (((int) *S1D) == DType) {
         DSA_LOG(FUSE) << "S1D: " << *S1D << " , DType" << DType;
         if (const auto *N = constInt(Loop[0])) {
-          // Fuse it only when it is divisible.
           DSA_LOG(FUSE) << "InnerN: " << *N;
-          if ((*N + 1) % Unroll) {
-            break;
+          // If the first dimension is derived from SLP fusion.
+          if (Iteration == 1 && IsSLP) {
+            // The outer (2nd) dimension is the actual dimension to check.
+            if (const auto *M = constInt(Loop[1])) {
+              if (*M % Unroll) {
+                break;
+              }
+            } else {
+              break;
+            }
+          } else {
+            // Fuse it only when it is divisible for normal case.
+            if (*N % Unroll) {
+              break;
+            }
           }
           if (const auto *S2D = constInt(Coef[1])) {
             DSA_LOG(FUSE) << "Stride2D: " << *S2D;

@@ -922,7 +922,6 @@ ConfigInfo extractDFGPorts(DFGFile &DF, SpadInfo &SI) {
         }
       } else {
         std::string Raw;
-        DSA_INFO << ConfigSize;
         for (int i = 0; i < ConfigSize; ++i) { // NOLINT
           DSA_CHECK(std::getline(Ifs, Raw));
           while (isspace(Raw[0])) {
@@ -944,7 +943,6 @@ ConfigInfo extractDFGPorts(DFGFile &DF, SpadInfo &SI) {
           std::string WordByte((char*)&Word, (char*)&Word + 8);
           ConfigString.insert(ConfigString.end(), WordByte.begin(), WordByte.end());
         }
-        DSA_INFO << ConfigString.size();
         DSA_CHECK(std::getline(Ifs, Raw));
       }
     }
@@ -1291,6 +1289,8 @@ void analyzeAccumulatorTags(DFGFile &DF, xform::CodeGenContext &CGC,
     std::unordered_map<DFGEntry*, int> Cnt;
     if (auto *DD = dyn_cast<DedicatedDFG>(Graphs[i])) {
       for (auto *Acc : DD->EntryFilter<Accumulator>()) {
+        // Insert it into DAR.
+        DAR.AI.operator[](Acc);
         {
           std::set<Instruction*> Insts;
           FindEquivPHIs(Acc->Operation, Insts);
@@ -1299,17 +1299,16 @@ void analyzeAccumulatorTags(DFGFile &DF, xform::CodeGenContext &CGC,
               for (int j = 0; j < (int) Phi->getNumOperands(); ++j) { // NOLINT
                 auto *Val = dyn_cast<Value>(Phi->getOperand(j));
                 if (isa<ConstantData>(Val)) {
-                  // DSA_CHECK(Acc->ResetLevel == -1) << Acc->ResetLevel;
                   auto *BB = Phi->getIncomingBlock(j);
                   DSA_LOG(ACC)
                     << Acc->dump() << " reset by block " << BB->getName() << ", " << *Val;
                   for (int k = 0; k < (int) Loops.size(); ++k) { // NOLINT
                     if (Loops[k]->contains(BB)) {
                       DSA_CHECK(k);
-                      if (Acc->ResetLevel == -1) {
-                        Acc->ResetLevel = k - 1;
+                      if (DAR.AI[Acc].ResetLevel == -1) {
+                        DAR.AI[Acc].ResetLevel = k - 1;
                       } else {
-                        DSA_CHECK(Acc->ResetLevel == k - 1) << *Loops[k];
+                        DSA_CHECK(DAR.AI[Acc].ResetLevel == k - 1) << *Loops[k];
                       }
                       break;
                     }
@@ -1318,8 +1317,8 @@ void analyzeAccumulatorTags(DFGFile &DF, xform::CodeGenContext &CGC,
               }
             }
           }
-          if (Acc->ResetLevel == -1) {
-            Acc->ResetLevel = Loops.size() - 1;
+          if (DAR.AI[Acc].ResetLevel == -1) {
+            DAR.AI[Acc].ResetLevel = Loops.size() - 1;
             DSA_LOG(ACC) << Loops.size() << " reset when exiting!";
           }
         }
@@ -1378,11 +1377,11 @@ void analyzeAccumulatorTags(DFGFile &DF, xform::CodeGenContext &CGC,
                   for (int j = 0; j < (int) Loops.size(); ++j) { // NOLINT
                     if (Loops[j]->contains(Consumer)) {
                       DSA_LOG(ACC) << Acc->dump() << " Produce@" << (j - 1);
-                      if (Acc->ProduceLevel == INT_MAX) {
-                        Acc->ProduceLevel = j - 1;
+                      if (DAR.AI[Acc].ProduceLevel == INT_MAX) {
+                        DAR.AI[Acc].ProduceLevel = j - 1;
                       } else {
-                        DSA_CHECK(Acc->ProduceLevel == j - 1)
-                          << Acc->ProduceLevel << " != " << (j - 1);
+                        DSA_CHECK(DAR.AI[Acc].ProduceLevel == j - 1)
+                          << DAR.AI[Acc].ProduceLevel << " != " << (j - 1);
                       }
                       break;
                     }
@@ -1391,36 +1390,38 @@ void analyzeAccumulatorTags(DFGFile &DF, xform::CodeGenContext &CGC,
               }
             }
           }
-          // for (auto *User : Acc->Operation->users()) {
-          //   if (auto *Inst = dyn_cast<Instruction>(User)) {
-          //     bool Skip = isa<PHINode>(Inst);
-          //     for (int j = 0; j < (int) Acc->Operation->getNumOperands() && !Skip; ++j) { // NOLINT
-          //       if (auto *OpInst = dyn_cast<Instruction>(Acc->Operation->getOperand(j))) {
-          //         if (OpInst == Inst) {
-          //           Skip = true;
-          //         }
-          //       }
-          //     }
-          //     if (!Skip) { DSA_LOG(ACC) << "Used by: " << *Inst;
-          //       for (int j = 0; j < (int) Loops.size(); ++j) { // NOLINT
-          //         if (Loops[j]->contains(Inst)) {
-          //           DSA_LOG(ACC) << Acc->dump() << " Produce@" << j - 1;
-          //           if (Acc->ProduceLevel == INT_MAX) {
-          //             Acc->ProduceLevel = j - 1;
-          //           } else {
-          //             DSA_CHECK(Acc->ProduceLevel == j - 1) <<
-          //               Acc->ProduceLevel << " != " << (j - 1);
-          //           }
-          //           break;
-          //         }
-          //       }
-          //     } else {
-          //       DSA_LOG(ACC) << "Skip: " << *Inst;
-          //     }
-          //   }
+          // @{
+          for (auto *User : Acc->Operation->users()) {
+            if (auto *Inst = dyn_cast<Instruction>(User)) {
+              bool Skip = isa<PHINode>(Inst);
+              for (int j = 0; j < (int) Acc->Operation->getNumOperands() && !Skip; ++j) { // NOLINT
+                if (auto *OpInst = dyn_cast<Instruction>(Acc->Operation->getOperand(j))) {
+                  if (OpInst == Inst) {
+                    Skip = true;
+                  }
+                }
+              }
+              if (!Skip) { DSA_LOG(ACC) << "Used by: " << *Inst;
+                for (int j = 0; j < (int) Loops.size(); ++j) { // NOLINT
+                  if (Loops[j]->contains(Inst)) {
+                    DSA_LOG(ACC) << Acc->dump() << " Produce@" << j - 1;
+                    if (DAR.AI[Acc].ProduceLevel == INT_MAX) {
+                      DAR.AI[Acc].ProduceLevel = j - 1;
+                    } else {
+                      DSA_CHECK(DAR.AI[Acc].ProduceLevel == j - 1) <<
+                        DAR.AI[Acc].ProduceLevel << " != " << (j - 1);
+                    }
+                    break;
+                  }
+                }
+              } else {
+                DSA_LOG(ACC) << "Skip: " << *Inst;
+              }
+            }
+          }
           // }
-          if (Acc->ProduceLevel == INT_MAX) {
-            Acc->ProduceLevel = Loops.size() - 1;
+          if (DAR.AI[Acc].ProduceLevel == INT_MAX) {
+            DAR.AI[Acc].ProduceLevel = Loops.size() - 1;
             DSA_LOG(ACC) << Loops.size() << " produce when exiting!";
           }
         }
@@ -1433,35 +1434,39 @@ void analyzeAccumulatorTags(DFGFile &DF, xform::CodeGenContext &CGC,
         // auto *LC = dyn_cast<LinearCombine>(Iter->second);
         // DSA_CHECK(LC);
         for (auto *Acc : IP->Tagged) {
+          auto &Entry = DAR.AI[Acc];
           if (isa<SLPMemPort>(IP)) {
-            ++Acc->ResetLevel;
-            ++Acc->ProduceLevel;
+            ++Entry.ResetLevel;
+            ++Entry.ProduceLevel;
           }
           // DSA_CHECK(Acc->ResetLevel < (int) LC->Coef.size());
           DSA_LOG(ACC)
-            << Acc->dump() << ", Reset@" << Acc->ResetLevel
-            << ", Produce@" << Acc->ProduceLevel;
+            << Acc->dump() << ", Reset@" << Entry.ResetLevel
+            << ", Produce@" << Entry.ProduceLevel;
         }
-        DSA_LOG(ACC) << "Finalized reset: " << resetLevel(IP);
+        DSA_LOG(ACC) << "Finalized reset: " << resetLevel(IP, DAR);
       }
     }
   }
 }
 
-int cutoffLevel(InputPort *IP) {
+int cutoffLevel(InputPort *IP, DFGAnalysisResult &DAR) {
+  auto FRed = [&DAR](int X, Accumulator *A) {
+    return std::min(X, std::min(DAR.AI[A].ResetLevel, DAR.AI[A].ProduceLevel));
+  };
   if (IP->Tagged.empty()) {
     return -1;
   }
-  auto FRed = [](int X, Accumulator *A) { return std::min(X, std::min(A->ResetLevel, A->ProduceLevel)); };
   return std::accumulate(IP->Tagged.begin(), IP->Tagged.end(), INT_MAX, FRed);
 }
+
 
 void DFGAnalysisResult::fuseAffineDimensions(ScalarEvolution &SE) {
   struct FuseInfoExtractor : DFGEntryVisitor {
     void Visit(MemPort *MP) override {
       DBits = MP->Load->getType()->getScalarSizeInBits();
       Padding = MP->fillMode();
-      CutOff = cutoffLevel(MP);
+      CutOff = cutoffLevel(MP, DAR);
     }
     void Visit(PortMem *PM) override {
       DBits = PM->Store->getValueOperand()->getType()->getScalarSizeInBits();
@@ -1469,19 +1474,24 @@ void DFGAnalysisResult::fuseAffineDimensions(ScalarEvolution &SE) {
     void Visit(SLPMemPort *SMP) override {
       auto *MP = SMP->Coal[0];
       DBits = MP->Load->getType()->getScalarSizeInBits();
-      CutOff = cutoffLevel(SMP);
+      CutOff = cutoffLevel(SMP, DAR);
+      SLP = true;
     }
     void Visit(SLPPortMem *SPM) override {
       auto *PM = SPM->Coal[0];
       DBits = PM->Store->getValueOperand()->getType()->getScalarSizeInBits();
+      SLP = true;
     }
     int DBits{-1};
     int Padding{0};
     int CutOff{-1};
+    bool SLP{false};
+    DFGAnalysisResult &DAR;
+    FuseInfoExtractor(DFGAnalysisResult &DAR) : DAR(DAR) {}
   };
   for (auto &Elem : AffineInfoCache) {
     if (auto *Pattern = dyn_cast<LinearCombine>(Elem.second)) {
-      FuseInfoExtractor FIE;
+      FuseInfoExtractor FIE(*this);
       Elem.first->accept(&FIE);
       if (FIE.CutOff == -1) {
         FIE.CutOff = Pattern->TripCount.size() - 1;
@@ -1491,27 +1501,28 @@ void DFGAnalysisResult::fuseAffineDimensions(ScalarEvolution &SE) {
       DSA_LOG(FUSE) << "Before: " << Pattern->toString() << ", CutOff: " << FIE.CutOff;
       int Before = Pattern->Coef.size();
       fuseInnerDimensions(*Pattern, FIE.DBits / 8, Elem.first->Parent->getUnroll(), SE,
-                          Pattern->TripCount.size() - FIE.CutOff);
+                          Pattern->TripCount.size() - FIE.CutOff, FIE.SLP);
       DSA_LOG(FUSE) << "After: " << Pattern->toString();
       if (auto *IP = dyn_cast<InputPort>(Elem.first)) {
         int Delta = Before - Pattern->Coef.size();
         DSA_LOG(FUSE) << "Fuse Delta: " << Delta;
         DSA_LOG(FUSE) << IP->dump();
         for (auto *Acc : IP->Tagged) {
-          Acc->ResetLevel -= Delta;
-          Acc->ProduceLevel -= Delta;
-          DSA_LOG(FUSE) << Acc->dump() << ": " << Acc->ResetLevel;
+          auto &Entry = AI[Acc];
+          Entry.ResetLevel -= Delta;
+          Entry.ProduceLevel -= Delta;
+          DSA_LOG(FUSE) << Acc->dump() << ": " << Entry.ResetLevel;
         }
       }
     }
   }
 }
 
-int resetLevel(InputPort *IP) {
+int resetLevel(InputPort *IP, DFGAnalysisResult &DAR) {
   if (IP->Tagged.empty()) {
     return -1;
   }
-  auto FRed = [](int X, Accumulator *A) { return std::min(X, A->ResetLevel); };
+  auto FRed = [&DAR](int X, Accumulator *A) { return std::min(X, DAR.AI[A].ResetLevel); };
   return std::accumulate(IP->Tagged.begin(), IP->Tagged.end(), INT_MAX, FRed);
 }
 
@@ -1598,18 +1609,23 @@ extractStreamIntrinsics(DFGEntry *DE, xform::CodeGenContext &CGC, DFGAnalysisRes
   return SE.DS;
 }
 
-DFGUnroll::DFGUnroll(DFGFile &DF) : DF(DF) {
+DFGUnroll::DFGUnroll(DFGFile &DF, xform::CodeGenContext &CGC) : DF(DF) {
   if (dsa::utils::ModuleContext().COMPAT_ADG) {
     dsa::ContextFlags::Global().adg_compat = true;
   }
   auto *SBCONFIG = getenv("SBCONFIG");
   DSA_CHECK(SBCONFIG);
   SSModel Model(SBCONFIG);
+  auto *BFI = CGC.BFI;
   for (auto *Elem : DF.DFGs) {
     Idx.push_back(0);
-    DSA_INFO << Elem->getUnroll();
+    Freq.push_back(0);
     if (Elem->getUnroll() == -1) {
       Degrees.push_back({8, 4, 2, 1});
+      auto *DD = dyn_cast<DedicatedDFG>(Elem);
+      for (auto *BB : DD->InnerMost()->getBlocks()) {
+        Freq.back() += BFI->getBlockFreq(BB).getMaxFrequency();
+      }
     } else {
       Degrees.push_back({Elem->getUnroll()});
     }
@@ -1623,33 +1639,59 @@ bool DFGUnroll::hasNext() {
 std::string DFGUnroll::toString() {
   std::ostringstream OSS;
   for (int i = 0; i < (int) Idx.size(); ++i) { // NOLINT
-    DSA_INFO << i << ": " << Idx[i] << " " << Degrees[i].size() << " " << Degrees[i][Idx[i]];
     OSS << "_" << Degrees[i][Idx[i]];
   }
   return OSS.str();
 }
 
-void DFGUnroll::applyNext() {
+bool DFGUnroll::next(bool Apply) {
   DSA_CHECK(hasNext());
-  bool Carry = true;
-  DF.FileName = DF.Func.getName().str() + "_" + std::to_string(DF.ID) + toString() + ".dfg";
-  for (int i = 0; i < (int) DF.DFGs.size(); ++i) { // NOLINT
-    auto *DFG = DF.DFGs[i];
-    if (auto *DD = dyn_cast<DedicatedDFG>(DFG)) {
-      DD->UnrollFactor = Degrees[i][Idx[i]];
-      if (Carry) {
-        ++Idx[i];
-        Carry = false;
-      }
-      if (Idx[i] == (int) Degrees[i].size()) {
-        Idx[i] = 0;
-        Carry = true;
+  do {
+    ++Cnt;
+    auto &DFGs = DF.DFGs;
+    bool Carry = true;
+    DF.FileName = DF.Func.getName().str() + "_" + std::to_string(DF.ID) + toString() + ".dfg";
+    for (int i = 0; i < (int) DFGs.size(); ++i) { // NOLINT
+      auto *DFG = DF.DFGs[i];
+      if (auto *DD = dyn_cast<DedicatedDFG>(DFG)) {
+        if (Apply) {
+          DD->UnrollFactor = Degrees[i][Idx[i]];
+        }
+        if (Carry) {
+          ++Idx[i];
+          Carry = false;
+        }
+        if (Idx[i] == (int) Degrees[i].size()) {
+          Idx[i] = 0;
+          Carry = true;
+        }
       }
     }
-  }
-  if (Carry) {
-    Idx.back() = Degrees.back().size();
-  }
+    if (Carry) {
+      Idx.back() = Degrees.back().size();
+    }
+    bool Good = true;
+    for (int i = 0; i < (int) DFGs.size() && Good; ++i) { // NOLINT
+      if (auto *DDI = dyn_cast<DedicatedDFG>(DFGs[i])) {
+        for (int j = 0; j < (int) DFGs.size() && Good; ++j) { // NOLINT
+          if (i == j) {
+            continue;
+          }
+          if (auto *DDJ = dyn_cast<DedicatedDFG>(DFGs[j])) {
+            if (Freq[i] <= Freq[j] && DDI->UnrollFactor > DDJ->UnrollFactor) {
+              Good = false;
+            }
+          }
+        }
+      }
+    }
+    if (!Good) {
+      ++Skip;
+      continue;
+    }
+    return true;
+  } while (hasNext());
+  return false;
 }
 
 
