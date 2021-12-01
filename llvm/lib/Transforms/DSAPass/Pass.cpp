@@ -89,8 +89,7 @@ bool StreamSpecialize::runOnFunction(Function &F) {
     bool LocalSuccessSchedule = false;
     while (DU.hasNext()) {
       DU.next(true);
-      DSA_LOG(PASS) << "Exploring: " << DF.FileName;
-      dsa::analysis::DFGAnalysisResult DAR;
+      dsa::analysis::DFGAnalysisResult &DAR = DU.DAR.back();
       DSA_LOG(PASS) << i << ": Analyzing loop trip counts...";
       dsa::analysis::analyzeDFGLoops(DF, CGC, DAR);
       DSA_LOG(PASS) << i << ": Analyzing affine memory access...";
@@ -115,19 +114,40 @@ bool StreamSpecialize::runOnFunction(Function &F) {
         continue;
       }
       DSA_LOG(PASS) << i << ": Scheduling DFG, and extracting port information...";
-      auto CI = dsa::analysis::extractDFGPorts(DF, DAR.SI);
+      DAR.CI = dsa::analysis::extractDFGPorts(DF, DAR.SI, true);
+      auto &CI = DAR.CI;
+      DSA_LOG(DSE) << "Exploring: " << DF.FileName << ", " << CI.EstimatedILP;
       if (CI.empty()) {
         DSA_LOG(PASS) << DF.getName() << " failed to schedule!";
         continue;
       }
       LocalSuccessSchedule = true;
+    }
+    {
+      dsa::analysis::DFGAnalysisResult &DAR = DU.best();
+      auto &CI = DAR.CI;
+      DF.FileName = CI.Name + ".dfg";
+      {
+        std::string Raw = CI.Name;
+        int R = Raw.size(), L = Raw.size() - 1;
+        for (int i = DF.DFGs.size() - 1; i >= 0; --i) { // NOLINT
+          while (L >= 0 && Raw[L] != '_') --L;
+          int X = std::atoi(std::string(Raw.begin() + L + 1, Raw.begin() + R).c_str());
+          if (auto *DD = dyn_cast<DedicatedDFG>(DF.DFGs[i])) {
+            DD->UnrollFactor = X;
+          }
+          R = L--;
+        }
+      }
+      DSA_LOG(DSE) << "Use DSE: " << DF.getName();
+      DSA_LOG(PASS) << i << ": Injecting configuration...";
+      dsa::analysis::extractDFGPorts(DF, DAR.SI, false);
       DSA_LOG(PASS) << i << ": Injecting configuration...";
       dsa::xform::injectConfiguration(CGC, CI, Start, End);
       DSA_LOG(PASS) << i << ": Injecting control intrinsics...";
       dsa::xform::injectStreamIntrinsics(CGC, DF, DAR);
       DSA_LOG(PASS) << i << ": Erasing offloaded instructions...";
       eraseOffloadedInstructions(DF, CGC);
-      DSA_INFO << "Use DSE: " << DF.getName();
       break;
     }
     GlobalSuccessSchedule = GlobalSuccessSchedule && LocalSuccessSchedule;
@@ -135,9 +155,7 @@ bool StreamSpecialize::runOnFunction(Function &F) {
       DSA_LOG(PASS) << "DFG " << i << " failed to schedule";
       break;
     }
-    DU.commit();
-    while (DU.hasNext()) DU.next(false);
-    DSA_LOG(PASS) << "Best/Potential=" << DU.BestAt << "/" << DU.Cnt;
+    DSA_LOG(DSE) << "Best/Potential=" << DU.BestAt << "/" << DU.Cnt;
   }
 
   DSA_LOG(PASS) << "Done with transformation and rewriting!";

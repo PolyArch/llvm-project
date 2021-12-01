@@ -760,7 +760,7 @@ void extractDFGFromScope(DFGFile &DF, dsa::xform::CodeGenContext &CGC) {
   }
 }
 
-ConfigInfo extractDFGPorts(DFGFile &DF, SpadInfo &SI) {
+ConfigInfo extractDFGPorts(DFGFile &DF, SpadInfo &SI, bool Schedule) {
   auto *SBCONFIG = getenv("SBCONFIG");
   DSA_CHECK(SBCONFIG);
   std::string ExtraFlag = "";
@@ -775,21 +775,22 @@ ConfigInfo extractDFGPorts(DFGFile &DF, SpadInfo &SI) {
     ExtraFlag += " -a";
   }
   auto FName = DF.FileName;
-  auto Cmd = formatv("ss_sched --max-iters=1024 {0} {1} {2} -e 0 > /dev/null",
-                     ExtraFlag, SBCONFIG, FName).str();
-  DSA_LOG(CONFIG) << Cmd;
-
-  if (system(Cmd.c_str()) != 0) {
-    return ConfigInfo("", "", 0);
-  }
-
-  std::ifstream Ifs(FName + (BitStream ? ".bits" : "") + ".h");
-  auto DFGs = DF.DFGFilter<DFGBase>();
-
   std::string Stripped(FName);
   while (Stripped.back() != '.')
     Stripped.pop_back();
   Stripped.pop_back();
+
+  if (Schedule) {
+    auto Cmd = formatv("ss_sched --verbose --max-iters=1024 {0} {1} {2} -e 0 > {3}.log 2>&1",
+                       ExtraFlag, SBCONFIG, FName, Stripped).str();
+    DSA_LOG(CONFIG) << Cmd;
+    if (int RetCode = system(Cmd.c_str()) != 0) {
+      return ConfigInfo(Stripped, "", RetCode);
+    }
+  }
+
+  std::ifstream Ifs(FName + (BitStream ? ".bits" : "") + ".h");
+  auto DFGs = DF.DFGFilter<DFGBase>();
 
   int ConfigSize = 0;
   std::string ConfigString;
@@ -948,9 +949,18 @@ ConfigInfo extractDFGPorts(DFGFile &DF, SpadInfo &SI) {
     }
   }
 
+  ConfigInfo Res(Stripped, ConfigString, ConfigSize);
   DSA_LOG(DFG) << "[Config] " << ConfigSize << ": " << ConfigString << "\n";
-
-  return ConfigInfo(Stripped, ConfigString, ConfigSize);
+  {
+    std::ifstream Fin(Stripped + ".log");
+    std::string Raw;
+    while (Fin >> Raw) {
+      if (Raw == "Performance:") {
+        Fin >> Res.EstimatedILP;
+      }
+    }
+  }
+  return Res;
 }
 
 void analyzeDFGLoops(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisResult &DAR) {
@@ -1365,6 +1375,7 @@ void analyzeAccumulatorTags(DFGFile &DF, xform::CodeGenContext &CGC,
         }
         if (Tag) {
           for (auto *OP : Acc->Parent->EntryFilter<OutputPort>()) {
+            if (!OP->Output) continue;
             auto Upstream = bfsOperands(OP->Parent, OP->Output, CGC.DT).first;
             for (auto *Elem : Upstream) {
               if (auto *DE = OP->Parent->InThisDFG(Elem)) {
@@ -1622,11 +1633,13 @@ DFGUnroll::DFGUnroll(DFGFile &DF, xform::CodeGenContext &CGC) : DF(DF) {
     Freq.push_back(0);
     if (Elem->getUnroll() == -1) {
       Degrees.push_back({8, 4, 2, 1});
+      Explored.push_back(true);
       auto *DD = dyn_cast<DedicatedDFG>(Elem);
       for (auto *BB : DD->InnerMost()->getBlocks()) {
         Freq.back() += BFI->getBlockFreq(BB).getMaxFrequency();
       }
     } else {
+      Explored.push_back(false);
       Degrees.push_back({Elem->getUnroll()});
     }
   }
@@ -1673,7 +1686,13 @@ bool DFGUnroll::next(bool Apply) {
     bool Good = true;
     for (int i = 0; i < (int) DFGs.size() && Good; ++i) { // NOLINT
       if (auto *DDI = dyn_cast<DedicatedDFG>(DFGs[i])) {
+        if (!Explored[i]) {
+          continue;
+        }
         for (int j = 0; j < (int) DFGs.size() && Good; ++j) { // NOLINT
+          if (!Explored[j]) {
+            continue;
+          }
           if (i == j) {
             continue;
           }
@@ -1689,9 +1708,20 @@ bool DFGUnroll::next(bool Apply) {
       ++Skip;
       continue;
     }
+    DAR.emplace_back();
     return true;
   } while (hasNext());
   return false;
+}
+
+DFGAnalysisResult &DFGUnroll::best() {
+  int Best = 0;
+  for (int i = 1; i < (int) DAR.size(); ++i) { // NOLINT
+    if (DAR[Best].CI.EstimatedILP < DAR[i].CI.EstimatedILP) {
+      Best = i;
+    }
+  }
+  return DAR[Best];
 }
 
 

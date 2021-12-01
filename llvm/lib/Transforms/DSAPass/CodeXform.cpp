@@ -874,7 +874,8 @@ injectComputedRepeat(CodeGenContext &CGC, // NOLINT
       auto *Dim0 = SEE.expandCodeFor(LC->Base->Raw);
       if (Unroll == 1) {
         // (Dim0 + Dim0 + (Dim1 - 1) * Stretch) * Dim1 / 2
-        Stretch = SEE.expandCodeFor(LC->Coef[1]->Raw);
+        // TODO(@were): I am not sure...
+        Stretch = SEE.expandCodeFor(LC->Coef[0]->Raw);
         auto *Dim0x2 = IB->CreateAdd(Dim0, Dim0);
         auto *Delta = IB->CreateMul(Stretch, IB->CreateSub(Dim1, IB->getInt64(1)));
         auto *Last = IB->CreateAdd(Dim0x2, Delta);

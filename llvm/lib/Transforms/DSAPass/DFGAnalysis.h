@@ -186,63 +186,6 @@ struct Indirect2D : DataStream {
 
 namespace analysis {
 
-/*!
- * \brief Enumerate the unrolling degree.
- */
-struct DFGUnroll {
-
-  DFGUnroll(DFGFile &DF, xform::CodeGenContext &CGC);
-
-  /*!
-   * \brief If we have next points to enumerate.
-   */
-  bool hasNext();
-
-  /*!
-   * \brief The next point of the DFG file.
-   * \param Apply If it is applied.
-   */
-  bool next(bool Apply);
-
-  /*!
-   * \brief The suffix of the file name.
-   */
-  std::string toString();
-
-  /*!
-   * \brief The DFG file to explore
-   */
-  DFGFile &DF;
-
-  /*
-   * \brief The total number of points to be explored.
-   */
-  int Cnt{0};
-
-  /*!
-   * \brief The total number skipped because of pruning.
-   */
-  int Skip{0};
-
-  int BestAt{-1};
-
-  /*!
-   * \brief The current enumeration.
-   */
-  std::vector<int> Idx;
-
-  /*!
-   * \brief The total degrees to enum.
-   */
-  std::vector<std::vector<int>> Degrees;
-
-  /*!
-   * \brief Sumup the block freqency.
-   */
-  std::vector<int> Freq;
-
-  void commit() { BestAt = Cnt; }
-};
 
 /*!
  * \brief Information of the bitstream.
@@ -256,10 +199,20 @@ struct ConfigInfo {
    * \brief The content of the bitstream.
    */
   std::string Bitstream;
-  /*!
-   * \brief The size of the bitstream array.
+  union {
+    /*!
+     * \brief The size of the bitstream array.
+     */
+    int Size;
+    /*!
+     * \brief The code of scheduler return when failed.
+     */
+    int Code;
+  };
+  /*
+   * \brief The performance estimated for the DFG.
    */
-  int Size;
+  double EstimatedILP{0};
   /*!
    * \brief If this is an empty configuration.
    */
@@ -379,6 +332,75 @@ struct DFGAnalysisResult {
   void fuseAffineDimensions(ScalarEvolution &SE);
 };
 
+
+/*!
+ * \brief Enumerate the unrolling degree.
+ */
+struct DFGUnroll {
+
+  DFGUnroll(DFGFile &DF, xform::CodeGenContext &CGC);
+
+  /*!
+   * \brief If we have next points to enumerate.
+   */
+  bool hasNext();
+
+  /*!
+   * \brief The next point of the DFG file.
+   * \param Apply If it is applied.
+   */
+  bool next(bool Apply);
+
+  /*!
+   * \brief The suffix of the file name.
+   */
+  std::string toString();
+
+  /*!
+   * \brief The DFG file to explore
+   */
+  DFGFile &DF;
+
+  /*
+   * \brief The total number of points to be explored.
+   */
+  int Cnt{0};
+
+  /*!
+   * \brief The total number skipped because of pruning.
+   */
+  int Skip{0};
+
+  /*!
+   * \brief The results of scheduling.
+   */
+  int BestAt{-1};
+
+  /*!
+   * \brief The current enumeration.
+   */
+  std::vector<int> Idx;
+
+  std::vector<bool> Explored;
+
+  /*!
+   * \brief The total degrees to enum.
+   */
+  std::vector<std::vector<int>> Degrees;
+
+  /*!
+   * \brief Sumup the block freqency.
+   */
+  std::vector<int> Freq;
+
+  /*!
+   * \brief The result of DFG analysis.
+   */
+  std::vector<DFGAnalysisResult> DAR;
+
+  DFGAnalysisResult &best();
+};
+
 /*!
  * \brief Gather all the pairs of dsa.config.start/end
  * \param F The function to be analyzed.
@@ -413,7 +435,7 @@ void extractDFGFromScope(DFGFile &DF, dsa::xform::CodeGenContext &CGC);
  * \param Ports Write the result in the allocated vector buffer.
  * \param CMIs The coalesced memory.
  */
-ConfigInfo extractDFGPorts(DFGFile &DF, SpadInfo &SI);
+ConfigInfo extractDFGPorts(DFGFile &DF, SpadInfo &SI, bool Schedule);
 
 /*!
  * \brief Analyze the information of accumulator.
