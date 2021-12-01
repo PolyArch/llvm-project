@@ -123,7 +123,7 @@ bool StreamSpecialize::runOnFunction(Function &F) {
       }
       LocalSuccessSchedule = true;
     }
-    {
+    if (!dsa::utils::ModuleContext().EXTRACT) {
       dsa::analysis::DFGAnalysisResult &DAR = DU.best();
       auto &CI = DAR.CI;
       DF.FileName = CI.Name + ".dfg";
@@ -148,7 +148,6 @@ bool StreamSpecialize::runOnFunction(Function &F) {
       dsa::xform::injectStreamIntrinsics(CGC, DF, DAR);
       DSA_LOG(PASS) << i << ": Erasing offloaded instructions...";
       eraseOffloadedInstructions(DF, CGC);
-      break;
     }
     GlobalSuccessSchedule = GlobalSuccessSchedule && LocalSuccessSchedule;
     if (!GlobalSuccessSchedule) {
