@@ -315,6 +315,10 @@ struct DFGAnalysisResult {
   std::unordered_map<DFGEntry*, SEWrapper*> AffineInfoCache;
  public:
   /*!
+   * \brief Override linear stream analysis.
+   */
+  std::unordered_map<const SCEV*, const SCEV*> LinearOverride;
+  /*!
    * \brief
    */
   SEWrapper *affineMemoryAccess(DFGEntry *DE, ScalarEvolution &SE, bool AllowNull);
@@ -407,6 +411,12 @@ struct DFGUnroll {
  */
 std::vector<std::pair<IntrinsicInst *, IntrinsicInst *>>
 gatherConfigScope(Function &F);
+
+/*!
+ * \brief
+ */
+std::unordered_map<const SCEV*, const SCEV*>
+gatherLinearOverride(IntrinsicInst *, IntrinsicInst *, xform::CodeGenContext &CGC);
 
 /*!
  * \brief Gather the loop information of the loop nest that wraps the DFG.

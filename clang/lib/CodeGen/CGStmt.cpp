@@ -1074,13 +1074,13 @@ void CodeGenFunction::EmitForStmt(const ForStmt &S,
       std::vector<llvm::Value*> Args;
       std::vector<Expr*> Raw(SSD->value().begin(), SSD->value().end());
       if (Raw.size() == 2) {
-        auto Array = EmitLValue(Raw[0]);
+        auto *Array = EmitScalarExpr(Raw[0]);
         auto *Length = EmitScalarExpr(Raw[1]);
-        auto *Ptr = Builder.CreateBitCast(Array.getPointer(*this), Builder.getInt8PtrTy());
+        auto *Ptr = Builder.CreateBitCast(Array, Builder.getInt8PtrTy());
         Length = Builder.CreateIntCast(Length, Builder.getInt64Ty(), true);
         static auto *FI =
           llvm::Intrinsic::getDeclaration(&CGM.getModule(), llvm::Intrinsic::ss_fifo);
-        Builder.CreateCall(FI, {Ptr, Length});
+        auto *Call = Builder.CreateCall(FI, {Ptr, Length});
       } else {
         assert(Raw.empty());
       }

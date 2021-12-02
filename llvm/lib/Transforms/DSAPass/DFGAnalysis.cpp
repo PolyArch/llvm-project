@@ -137,7 +137,9 @@ struct DFGEntryAnalyzer : DFGVisitor {
         LoadInst *IdxLoad = nullptr;
         for (auto *Elem : BFSBack.first) {
           if (auto *ThisLoad = dyn_cast<LoadInst>(Elem)) {
-            DSA_CHECK(!IdxLoad) << "For now only one level indirect supported!";
+            DSA_CHECK(!IdxLoad)
+              << "For now only one level indirect supported!"
+              << *ThisLoad << "\n" << *IdxLoad << "\n" << *Load;
             IdxLoad = ThisLoad;
           }
         }
@@ -985,7 +987,7 @@ void analyzeDFGLoops(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisResult 
           DSA_LOG(AFFINE) << *NSCEV;
           auto LoopSlice = std::vector<Loop*>(LoopNest.begin() + i + 1, LoopNest.end());
           DLI.TripCount.push_back(analysis::analyzeIndexExpr(&SE, NSCEV, LoopNest[i],
-                                                             LoopSlice, DLI.TripCount));
+                                                             LoopSlice, DLI.TripCount, LinearOverride));
           DSA_LOG(AFFINE) << i << ": " << DLI.TripCount.back()->toString();
         }
       }
@@ -996,13 +998,15 @@ void analyzeDFGLoops(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisResult 
 
     ScalarEvolution &SE;
     DFGLoopInfo &DLI;
+    std::unordered_map<const SCEV*, const SCEV*> &LinearOverride;
 
-    DFGLoopAnalyzer(ScalarEvolution &SE, DFGLoopInfo &DLI) : SE(SE), DLI(DLI) {}
+    DFGLoopAnalyzer(ScalarEvolution &SE, DFGLoopInfo &DLI,
+                    std::unordered_map<const SCEV*, const SCEV*> &L) : SE(SE), DLI(DLI), LinearOverride(L) {}
   };
 
   for (auto *DB : DF.DFGFilter<DFGBase>()) {
     DAR.DLI.emplace_back();
-    DFGLoopAnalyzer DLA(CGC.SE, DAR.DLI.back());
+    DFGLoopAnalyzer DLA(CGC.SE, DAR.DLI.back(), DAR.LinearOverride);
     DB->accept(&DLA);
   }
 }
@@ -1088,14 +1092,14 @@ SEWrapper *DFGAnalysisResult::affineMemoryAccess(DFGEntry *DE, ScalarEvolution &
       analyze(APM->Store->getPointerOperand(), APM);
     }
     void analyze(Value *Ptr, DFGEntry *DE) {
+      auto *Raw = SE.getSCEV(Ptr);
+      auto &DLI = DAR.DLI[DE->Parent->ID];
       DSA_CHECK(DE->Parent->ID >= 0 && DE->Parent->ID < (int) DAR.DLI.size())
         << DAR.DLI.size() << " " << DE->Parent->ID;
-      auto &DLI = DAR.DLI[DE->Parent->ID];
-      auto *SCEV = SE.getSCEV(Ptr);
-      auto *Res = analyzeIndexExpr(&SE, SCEV, DE, DLI.LoopNest, DLI.TripCount);
+      DSA_LOG(AFFINE) << *Ptr << " " << *Raw;
+      auto *Res = analyzeIndexExpr(&SE, Raw, DE, DLI.LoopNest, DLI.TripCount, DAR.LinearOverride);
       SW = Res;
       DSA_LOG(AFFINE) << DE->dump() << ": " << Res->toString();
-      DSA_LOG(AFFINE) << *Ptr << " " << *SCEV;
     }
     SEWrapper *SW{nullptr};
     DFGAnalysisResult &DAR;
@@ -1724,6 +1728,30 @@ DFGAnalysisResult &DFGUnroll::best() {
   return DAR[Best];
 }
 
+std::unordered_map<const SCEV*, const SCEV*>
+gatherLinearOverride(IntrinsicInst *Start, IntrinsicInst *End, xform::CodeGenContext &CGC) {
+  std::unordered_map<const SCEV*, const SCEV*> Res;
+  std::vector<IntrinsicInst*> ToRemove;
+  auto F = [&Res, &ToRemove, &CGC](Instruction *I) {
+    auto &SE = CGC.SE;
+    if (auto *II = dyn_cast<IntrinsicInst>(I)) {
+      if (II->getIntrinsicID() == Intrinsic::ss_fifo) {
+        Value *Stripped = II->getOperand(0);
+        if (auto *BCI = dyn_cast<BitCastInst>(Stripped)) {
+          Stripped = BCI->getOperand(0);
+        }
+        Res[SE.getSCEV(Stripped)] = SE.getSCEV(II->getOperand(1));
+        ToRemove.push_back(II);
+      }
+    }
+  };
+  traverseAndApply(Start, End, CGC.DT, F);
+  for (auto *Elem : ToRemove) {
+    // Elem->replaceAllUsesWith(UndefValue::get(Elem->getType()));
+    Elem->eraseFromParent();
+  }
+  return Res;
+}
 
 } // namespace analysis
 } // namespace dsa

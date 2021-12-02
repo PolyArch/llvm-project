@@ -664,7 +664,8 @@ struct DFGPrinter : dsa::DFGVisitor {
       OS << "\n";
       if (auto *S2D = dyn_cast<Indirect2D>(DS)) {
         if (!isa<analysis::LoopInvariant>(S2D->L1D)) {
-          auto *DFG =  new DedicatedDFG(DB->Parent, S2D->L1D);
+          auto *DFG = new DedicatedDFG(DB->Parent, S2D->L1D);
+          DFG->UnrollFactor = 1;
           S2D->L1DDFG = DFG;
           auto *DD = dyn_cast<DedicatedDFG>(DB);
           DSA_CHECK(DD);
@@ -675,7 +676,7 @@ struct DFGPrinter : dsa::DFGVisitor {
           DAR.DLI.back().TripCount.erase(DAR.DLI.back().TripCount.begin());
           DAR.DLI.back().LoopNest.erase(DAR.DLI.back().LoopNest.begin());
           auto *SW = DAR.affineMemoryAccess(S2D->L1DDFG->Entries[0], CGC.SE, false);
-          DSA_INFO << SW->toString();
+          (void) SW;
         }
       }
     }
@@ -1196,7 +1197,7 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
           continue;
         if (IMP->Index->Load == IMP1->Index->Load) {
           Together.push_back(IMP1);
-          DSA_CHECK(IMP1->Index->SoftPortNum != -1);
+          DSA_CHECK(IMP1->Index->SoftPortNum != -1) << IMP1->dump();
           INDs.push_back(IMP1->Index->SoftPortNum);
         }
       }

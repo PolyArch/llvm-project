@@ -432,8 +432,6 @@ static Attr *ProcessStmtAttribute(Sema &S, Stmt *St, const ParsedAttr &A,
       Key = "fifo";
       Values.push_back(A.getArgAsExpr(0)->getExprStmt());
       Values.push_back(A.getArgAsExpr(1)->getExprStmt());
-      Values[0]->dump();
-      Values[1]->dump();
     } else {
       Key = A.getArgAsIdent(0)->Ident->getName().str();
     }

@@ -81,6 +81,8 @@ bool StreamSpecialize::runOnFunction(Function &F) {
   for (int i = 0, N = ScopePairs.size(); i < N; ++i) { // NOLINT
     auto *Start = ScopePairs[i].first;
     auto *End = ScopePairs[i].second;
+    auto LinearOverride = dsa::analysis::gatherLinearOverride(Start, End, CGC);
+
     DFGFile DF(Start, End, this);
     DF.ID = i;
     DSA_LOG(PASS) << i << ": Extracting DFG IR...";
@@ -90,6 +92,7 @@ bool StreamSpecialize::runOnFunction(Function &F) {
     while (DU.hasNext()) {
       DU.next(true);
       dsa::analysis::DFGAnalysisResult &DAR = DU.DAR.back();
+      DAR.LinearOverride = LinearOverride;
       DSA_LOG(PASS) << i << ": Analyzing loop trip counts...";
       dsa::analysis::analyzeDFGLoops(DF, CGC, DAR);
       DSA_LOG(PASS) << i << ": Analyzing affine memory access...";
@@ -173,7 +176,7 @@ bool StreamSpecialize::runOnFunction(Function &F) {
 
   DSA_LOG(PASS) << "Done! " << GlobalSuccessSchedule;
 
-  LLVM_DEBUG(llvm::errs() << "After transformation:\n"; F.dump());
+  DSA_LOG(RES) << F;
 
   return false;
 }
