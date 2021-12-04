@@ -449,8 +449,11 @@ struct DFGEntryAnalyzer : DFGVisitor {
     auto &Entries = DB.Entries;
     std::set<Instruction *> Equiv;
     findEquivPhIs(Inst, Equiv);
+    DSA_LOG(DFG) << "Inspect consumers of: " << *Inst;
     for (auto *Elem : Equiv) {
+      DSA_LOG(DFG) << "Phi Equiv: " << *Elem;
       for (auto *User : Elem->users()) {
+        DSA_LOG(DFG) << "User: " << *User;
         if (auto *Store = dyn_cast<StoreInst>(User)) {
           LoadInst *Load = nullptr;
 
@@ -494,23 +497,22 @@ struct DFGEntryAnalyzer : DFGVisitor {
             Entries.push_back(Out);
             DSA_LOG(DFG) << "PortMem: " << *Inst;
           }
-        } else if (CanBeAEntry(User)) {
+        } else if (CanBeAEntry(User) && DB.BelongOtherDFG(dyn_cast<Instruction>(User))) {
           // Understand this, why this cannot be an assertion?
           // Support downstream data consumption
           auto *Consume = dyn_cast<Instruction>(User);
-          if (DB.BelongOtherDFG(Consume)) {
-            auto *Out = new StreamOutPort(&DB, Inst);
-            Entries.push_back(Out);
-            DSA_LOG(DFG) << "Stream " << *Inst << " to " << *Consume;
-          }
-        } else {
-          if (auto *UserInst = dyn_cast<Instruction>(User)) {
-            if (isa<PHINode>(UserInst))
-              continue;
-            if (!DB.BelongOtherDFG(UserInst) && !DB.InThisDFG(UserInst)) {
-              Entries.push_back(new OutputPort(&DB, Inst));
-              DSA_LOG(DFG) << "Write to register: " << *Inst;
-            }
+          auto *Out = new StreamOutPort(&DB, Inst);
+          Entries.push_back(Out);
+          DSA_LOG(DFG) << "Stream " << *Inst << " to " << *Consume;
+        } else if (auto *UserInst = dyn_cast<Instruction>(User)) {
+          if (isa<PHINode>(UserInst))
+            continue;
+          // DSA_LOG(DFG) << DB.InThisDFG(UserInst);
+          // DSA_LOG(DFG) << DB.BelongOtherDFG(UserInst);
+          // DSA_LOG(DFG) << DB.Contains(UserInst);
+          if (!DB.BelongOtherDFG(UserInst) && !DB.InThisDFG(UserInst) && !DB.Contains(UserInst)) {
+            Entries.push_back(new OutputPort(&DB, Inst));
+            DSA_LOG(DFG) << "Write to register: " << *Inst;
           }
         }
       }
