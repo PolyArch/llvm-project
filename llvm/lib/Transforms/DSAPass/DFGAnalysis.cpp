@@ -783,12 +783,19 @@ ConfigInfo extractDFGPorts(DFGFile &DF, SpadInfo &SI, bool Schedule) {
   while (Stripped.back() != '.')
     Stripped.pop_back();
   Stripped.pop_back();
+  int Seed = 0;
+  if (dsa::utils::ModuleContext().SEED == -1) {
+    Seed = time(0);
+  }
 
   if (Schedule) {
-    auto Cmd = formatv("ss_sched --verbose --max-iters=1024 {0} {1} {2} -e 0 > {3}.log 2>&1",
-                       ExtraFlag, SBCONFIG, FName, Stripped).str();
+    utils::ModuleContext().TP.beginRoi();
+    auto Cmd = formatv("ss_sched --verbose --max-iters=1024 {0} {1} {2} {3} > {4}.log 2>&1",
+                       ExtraFlag, SBCONFIG, FName, "-e " + std::to_string(Seed), Stripped).str();
     DSA_LOG(CONFIG) << Cmd;
-    if (int RetCode = system(Cmd.c_str()) != 0) {
+    int RetCode = system(Cmd.c_str());
+    utils::ModuleContext().TP.endRoi();
+    if (RetCode != 0) {
       return ConfigInfo(Stripped, "", RetCode);
     }
   }
@@ -808,6 +815,7 @@ ConfigInfo extractDFGPorts(DFGFile &DF, SpadInfo &SI, bool Schedule) {
   std::string IBuffetPrefix = PortPrefix + "IBuffet";
   std::string OBuffetPrefix = PortPrefix + "OBuffet";
   std::string L2DPrefix = PortPrefix + "l2d_";
+  std::string SignalSuffix = "_signal";
   while (std::getline(Ifs, Line)) {
     std::istringstream Iss(Line);
     std::string Token;
@@ -819,6 +827,14 @@ ConfigInfo extractDFGPorts(DFGFile &DF, SpadInfo &SI, bool Schedule) {
       if (Token.find(IOPortPrefix) == 0) {
         int X, Y;
         auto Stripped = Token.substr(IOPortPrefix.size());
+        bool IsSignal = false;
+        auto Pos = Stripped.find(SignalSuffix);
+        if (Pos != std::string::npos) {
+          if (Pos + SignalSuffix.size() == Stripped.size()) {
+            Stripped = std::string(Stripped.begin(), Stripped.end() - SignalSuffix.size());
+            IsSignal = true;
+          }
+        }
         DSA_CHECK(sscanf(Stripped.c_str(), "%d_v%d", &X, &Y) == 2);
         int Port;
         Iss >> Port;
@@ -827,7 +843,11 @@ ConfigInfo extractDFGPorts(DFGFile &DF, SpadInfo &SI, bool Schedule) {
         DSA_CHECK(Y >= 0 && Y < (int) DFGs[X]->Entries.size());
         auto *Entry = DFGs[X]->Entries[Y];
         if (auto *PB = dyn_cast<PortBase>(Entry)) {
-          PB->SoftPortNum = Port;
+          if (!IsSignal) {
+            PB->SoftPortNum = Port;
+          } else if (auto *IMP = dyn_cast<IndMemPort>(PB)) {
+            IMP->SignalPort = Port;
+          }
         } else if (auto *CB = dyn_cast<ComputeBody>(Entry)) {
           DSA_CHECK(false) << Token << ": " << X << " " << Y << " This should be deprecated!";
           if (!CB->isImmediateAtomic()) {
@@ -869,19 +889,19 @@ ConfigInfo extractDFGPorts(DFGFile &DF, SpadInfo &SI, bool Schedule) {
         DSA_CHECK(sscanf(Token.c_str(), "_%d_%d_", &X, &Y) == 2);
         Iss >> Port;
         auto *SLP = dyn_cast<PortBase>(DFGs[X]->Entries[Y]);
-        DSA_CHECK(SLP);
+        DSA_CHECK(SLP) << DFGs[X]->Entries[Y]->dump();
         SLP->SoftPortNum = Port;
       } else if (Token.find(formatv("{0}_size", Stripped).str()) == 0) {
         Iss >> ConfigSize;
       } else if (Token.find(IndirectPrefix) == 0) {
         Token = Token.substr(IndirectPrefix.size());
         int X, Y;
-        if (sscanf(Token.c_str(), "in_%d_%d", &X, &Y) == 2) {
+        if (sscanf(Token.c_str(), "in_%d_%d_", &X, &Y) == 2) {
           auto *IMP = dyn_cast<IndMemPort>(DFGs[X]->Entries[Y]);
           DSA_CHECK(IMP);
           Iss >> IMP->Index->SoftPortNum;
         } else {
-          DSA_CHECK(sscanf(Token.c_str(), "out_%d_%d", &X, &Y) == 2);
+          DSA_CHECK(sscanf(Token.c_str(), "out_%d_%d_", &X, &Y) == 2);
           auto *IMP = dyn_cast<IndMemPort>(DFGs[X]->Entries[Y]);
           DSA_CHECK(IMP);
           Iss >> IMP->IndexOutPort;
@@ -1041,7 +1061,7 @@ int64_t indexPairOffset(SEWrapper *ASW, SEWrapper *BSW, ScalarEvolution &SE, boo
           SameDims = false;
         }
       }
-      if (SameDims && isa<LoopInvariant>(A->Base) && isa<LoopInvariant>(B->Base)) {
+      if (SameDims /* && isa<LoopInvariant>(A->Base) && isa<LoopInvariant>(B->Base) */) {
         ABase = A->Base->Raw;
         BBase = B->Base->Raw;
       }
@@ -1314,7 +1334,7 @@ void analyzeAccumulatorTags(DFGFile &DF, xform::CodeGenContext &CGC,
             if (auto *Phi = dyn_cast<PHINode>(Elem)) {
               for (int j = 0; j < (int) Phi->getNumOperands(); ++j) { // NOLINT
                 auto *Val = dyn_cast<Value>(Phi->getOperand(j));
-                if (isa<ConstantData>(Val)) {
+                if (Loops[0]->isLoopInvariant(Val) /*isa<ConstantData>(Val)*/) {
                   auto *BB = Phi->getIncomingBlock(j);
                   DSA_LOG(ACC)
                     << Acc->dump() << " reset by block " << BB->getName() << ", " << *Val;

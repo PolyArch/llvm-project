@@ -21,6 +21,8 @@ using namespace llvm;
 #define DEBUG_TYPE "stream-specialize"
 
 bool StreamSpecialize::runOnModule(Module &M) {
+  auto &TP = dsa::utils::ModuleContext().TP;
+  TP.beginRoi();
 
   for (auto &F : M) {
     if (F.isDeclaration()) {
@@ -37,7 +39,8 @@ bool StreamSpecialize::runOnModule(Module &M) {
   }
 
   // If we are not extracting DFG's, do not clean up the code with O3.
-  if (!dsa::utils::ModuleContext().EXTRACT) {
+  if (!dsa::utils::ModuleContext().EXTRACT &&
+      !dsa::utils::ModuleContext().RAW) {
     llvm::PassManagerBuilder PMB;
     PMB.OptLevel = 3;
     llvm::legacy::FunctionPassManager Fpass(&M);
@@ -52,6 +55,8 @@ bool StreamSpecialize::runOnModule(Module &M) {
     Mpass.run(M);
   }
 
+  TP.endRoi();
+  DSA_INFO << TP.toString();
   return false;
 }
 
@@ -68,7 +73,7 @@ bool StreamSpecialize::runOnFunction(Function &F) {
   auto ScopePairs = dsa::analysis::gatherConfigScope(F);
   if (!ScopePairs.empty()) {
     if (!dsa::utils::ModuleContext().EXTRACT) {
-      DSARegs = dsa::xform::injectDSARegisterFile(F);
+      // DSARegs = dsa::xform::injectDSARegisterFile(F);
     }
   } else {
     DSA_LOG(PASS) << "No need to transform " << F.getName();
@@ -79,6 +84,9 @@ bool StreamSpecialize::runOnFunction(Function &F) {
   dsa::xform::CodeGenContext CGC(&IB, DSARegs, *SE, SEE, DT, LI, BFI);
   bool GlobalSuccessSchedule = true;
   for (int i = 0, N = ScopePairs.size(); i < N; ++i) { // NOLINT
+    if (!dsa::utils::ModuleContext().EXTRACT) {
+      dsa::utils::ModuleContext().TP.beginRoi();
+    }
     auto *Start = ScopePairs[i].first;
     auto *End = ScopePairs[i].second;
     auto LinearOverride = dsa::analysis::gatherLinearOverride(Start, End, CGC);
@@ -158,6 +166,9 @@ bool StreamSpecialize::runOnFunction(Function &F) {
       break;
     }
     DSA_LOG(DSE) << "Best/Potential=" << DU.BestAt << "/" << DU.Cnt;
+    if (!dsa::utils::ModuleContext().EXTRACT) {
+      dsa::utils::ModuleContext().TP.endRoi();
+    }
   }
 
   DSA_LOG(PASS) << "Done with transformation and rewriting!";
