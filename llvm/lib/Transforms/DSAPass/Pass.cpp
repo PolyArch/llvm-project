@@ -105,12 +105,16 @@ bool StreamSpecialize::runOnFunction(Function &F) {
       dsa::analysis::analyzeDFGLoops(DF, CGC, DAR);
       DSA_LOG(PASS) << i << ": Analyzing affine memory access...";
       DAR.initAffineCache(DF, CGC.SE);
-      DSA_LOG(PASS) << i << ": Coalescing SLP memories...";
-      dsa::analysis::gatherMemoryCoalescing(DF, *SE, DAR);
+      if (dsa::utils::ModuleContext().SLP_STREAM) {
+        DSA_LOG(PASS) << i << ": Coalescing SLP memories...";
+        dsa::analysis::gatherMemoryCoalescing(DF, *SE, DAR);
+      }
       DSA_LOG(PASS) << i << ": Analyzing accumulators...";
       dsa::analysis::analyzeAccumulatorTags(DF, CGC, DAR);
-      DSA_LOG(PASS) << i << ": Fusing affined dimensions...";
-      DAR.fuseAffineDimensions(CGC.SE);
+      if (dsa::utils::ModuleContext().FUSE_STREAM) {
+        DSA_LOG(PASS) << i << ": Fusing affined dimensions...";
+        DAR.fuseAffineDimensions(CGC.SE);
+      }
       DSA_LOG(PASS) << i << ": Extracting SPAD...";
       dsa::analysis::extractSpadFromScope(DF, CGC, DAR);
       DSA_LOG(PASS) << i << ": Emitting DFG...";

@@ -126,6 +126,16 @@ struct ModuleFlags {
    * \brief Perform transformation without O3 cleanup.
    */
   DEFINE_FLAG(SEED, -1)
+  /*!
+   * \brief If we want to execute the peephole optimization over dsa register
+   * file instructions.
+   */
+  DEFINE_FLAG(FUSE_STREAM, 1)
+  /*!
+   * \brief If we want to execute the peephole optimization over dsa register
+   * file instructions.
+   */
+  DEFINE_FLAG(SLP_STREAM, 1)
 #undef DEFINE_FLAG
 
   TimeProfiler TP;
@@ -142,6 +152,8 @@ struct ModuleFlags {
     getFlagBITSTREAM();
     getFlagCOMPAT_ADG();
     getFlagRAW();
+    getFlagFUSE_STREAM();
+    getFlagSLP_STREAM();
   }
 };
 

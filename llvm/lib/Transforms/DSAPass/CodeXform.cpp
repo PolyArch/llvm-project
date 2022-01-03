@@ -1033,7 +1033,7 @@ void injectLinearStreamImpl(CodeGenContext &CGC, analysis::SEWrapper *SW,
       DSA_LOG(CODEGEN)
         << "[1-d Linear] Start: " << *Start << ", Stride: " << *Stride1D << ", N: " << *N1D
         << ", DType: " << DType << ", Port: " << Port << " -> " << (MT == DMT_DMA ? "DMA" : "SPAD")
-        << (MO == DMO_Read ? ", Read" : ", Write");
+        << (MO == DMO_Read ? ", Read" : ", Write") << " Padding: " << P;
       break;
     }
     case 2: {
@@ -1053,7 +1053,7 @@ void injectLinearStreamImpl(CodeGenContext &CGC, analysis::SEWrapper *SW,
         << "[2-d Linear] Start: " << *Start << ", S1D: " << *Stride1D << ", N: " << *N1D
         << ", S2D: " << *Stride2D << ", Stretch: " << *Stretch << ", M: " << *N2D
         << ", DType: " << DType << ", Port: " << Port << " -> " << (MT == DMT_DMA ? "DMA" : "SPAD")
-        << (MO == DMO_Read ? ", Read" : ", Write");
+        << (MO == DMO_Read ? ", Read" : ", Write") << " Padding: " << P;
       break;
     }
     case 3: {
@@ -1087,7 +1087,7 @@ void injectLinearStreamImpl(CodeGenContext &CGC, analysis::SEWrapper *SW,
           << "[3-d Linear] Start: " << StartSpad << ", S1D: " << *Stride1D << ", N1D: " << *N[0]
           << ", N2D: " << *N[1] << ", S2D: " << *Stride2D << ", N3D: " << *N[2]
           << ", Stride3D: " << *Stride3D << ", DType: " << DType
-          << ", Port: " << Port << " -> Read Buffet";
+          << ", Port: " << Port << " -> Read Buffet" << " Padding: " << P;
         CGC.SS_BUFFET_DEALLOC();
         DSA_LOG(CODEGEN) << "Deallocate Buffet!";
         break;
@@ -1100,7 +1100,7 @@ void injectLinearStreamImpl(CodeGenContext &CGC, analysis::SEWrapper *SW,
         << ", N2D: " << *N[1] << ", S2D: " << *Stride2D << ", N3D: " << *N[2]
         << ", Stride3D: " << *Stride3D << ", DType: " << DType
         << ", Port: " << Port << " -> " << (MT == DMT_DMA ? "DMA" : "SPAD")
-        << (MO == DMO_Read ? ", Read" : ", Write");
+        << (MO == DMO_Read ? ", Read" : ", Write") << " Padding: " << P;
       break;
     }
     default:
