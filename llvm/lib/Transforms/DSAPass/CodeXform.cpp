@@ -424,6 +424,7 @@ struct DFGPrinter : dsa::DFGVisitor {
 
       int Granularity = dsa::utils::ModuleContext().GRANULARITY;
       int DType = IP->underlyingInst()->getType()->getScalarSizeInBits();
+      Granularity = Granularity == -1 ? DType : Granularity;
       DSA_CHECK(Granularity % DType == 0);
       int Bits = std::max((int) DType, Granularity);
       int GranCoal = Bits / DType;
@@ -459,7 +460,7 @@ struct DFGPrinter : dsa::DFGVisitor {
 
       int Lanes = getLanes(CB->underlyingInst()->getType()->getScalarSizeInBits());
       int Degree = (CB->shouldUnroll() ? CB->Parent->getUnroll() : 1);
-      for (int vec = 0; vec < Degree; vec += Lanes) { // NOLINT
+      for (int vec = 0; vec * Lanes < Degree; ++vec) { // NOLINT
         OS << CB->name(vec) << " = "
            << getOperationStr(CB->Operation, false, false, Lanes) << "(";
         ControlBit CtrlBit;
@@ -629,6 +630,7 @@ struct DFGPrinter : dsa::DFGVisitor {
       int N = (Entry->shouldUnroll() ? OP->Parent->getUnroll() : 1);
       int Granularity = dsa::utils::ModuleContext().GRANULARITY;
       int DType = (int) OP->Output->getType()->getScalarSizeInBits();
+      Granularity = Granularity == -1 ? DType : Granularity;
       DSA_CHECK(Granularity % DType == 0);
       int Bits = std::max(DType, Granularity);
       int GranCoal = Granularity / DType;
