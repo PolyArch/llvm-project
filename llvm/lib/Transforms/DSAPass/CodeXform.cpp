@@ -71,7 +71,6 @@ void Indirect2D::emitIntrinsic(xform::CodeGenContext &CGC) {
 
 int getLanes(int DType) {
    int Lanes = 1;
-   DSA_INFO << dsa::utils::ModuleContext().GRANULARITY;
    if (dsa::utils::ModuleContext().GRANULARITY != -1) {
      Lanes = dsa::utils::ModuleContext().GRANULARITY / DType;
    }
