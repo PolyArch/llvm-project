@@ -251,6 +251,8 @@ std::vector<Desired *> TypeFilter(const Iteratable &List) {
   return Res;
 }
 
+const std::map<std::string, std::string> &spatialIntrinics();
+
 bool CanBeAEntry(Value *Inst);
 
 bool isOne(Value *Val);

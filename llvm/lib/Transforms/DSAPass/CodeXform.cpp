@@ -130,6 +130,7 @@ std::string ValueToOperandText(Value *Val) { // NOLINT
 
 std::string getOperationStr(Instruction *Inst, bool Acc, bool Predicated, int Lanes) {
   std::string OpStr;
+
   int BitWidth = Inst->getType()->getScalarSizeInBits();
   auto *Ty = Inst->getType();
   std::string TyStr;
@@ -147,11 +148,24 @@ std::string getOperationStr(Instruction *Inst, bool Acc, bool Predicated, int La
     BitWidth = Cmp->getOperand(0)->getType()->getScalarSizeInBits();
   } else if (auto *Call = dyn_cast<CallInst>(Inst)) {
     OpStr = Call->getCalledFunction()->getName().str();
+    auto Iter = spatialIntrinics().find(OpStr);
+    if (Iter != spatialIntrinics().end() && !Iter->second.empty()) {
+      return Iter->second;
+    }
     while (isdigit(OpStr.back())) {
       OpStr.pop_back();
     }
   } else {
     OpStr = Inst->getOpcodeName();
+    std::ostringstream OSS;
+    if (OpStr == "shl") {
+      OSS << "LShf_U" << Inst->getType()->getScalarSizeInBits();
+      return OSS.str();
+    }
+    if (OpStr == "ashr") {
+      OSS << "RShf_U" << Inst->getType()->getScalarSizeInBits();
+      return OSS.str();
+    }
     if (Acc) {
       if (!Predicated) {
         OpStr = OpStr[0] == 'f' ? "fadd" : "add";
