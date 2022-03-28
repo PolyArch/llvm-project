@@ -16,6 +16,24 @@
 
 #define DEBUG_TYPE "stream-specialize"
 
+
+std::string bitwiseRename(Instruction *Inst) {
+  std::string Res = Inst->getOpcodeName();
+  std::ostringstream OSS;
+  std::map<std::string, std::string> Kv = {
+    {"shl", "LShf"},
+    {"shr", "RShf"},
+    {"and", "And"},
+    {"or", "Or"}
+  };
+  auto Iter = Kv.find(Res);
+  if (Iter != Kv.end()) {
+    OSS << Iter->second << "_U" << Inst->getType()->getScalarSizeInBits();
+    return OSS.str();
+  }
+  return std::string();
+}
+
 CallInst *createAssembleCall(Type *Ty, StringRef OpStr, StringRef Operand,
                              ArrayRef<Value *> Args, Instruction *Before) {
   SmallVector<Type *, 0> ArgTypes;

@@ -156,16 +156,11 @@ std::string getOperationStr(Instruction *Inst, bool Acc, bool Predicated, int La
       OpStr.pop_back();
     }
   } else {
+    OpStr = bitwiseRename(Inst);
+    if (!OpStr.empty()) {
+      return OpStr;
+    }
     OpStr = Inst->getOpcodeName();
-    std::ostringstream OSS;
-    if (OpStr == "shl") {
-      OSS << "LShf_U" << Inst->getType()->getScalarSizeInBits();
-      return OSS.str();
-    }
-    if (OpStr == "ashr") {
-      OSS << "RShf_U" << Inst->getType()->getScalarSizeInBits();
-      return OSS.str();
-    }
     if (Acc) {
       if (!Predicated) {
         OpStr = OpStr[0] == 'f' ? "fadd" : "add";
