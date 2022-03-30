@@ -339,15 +339,15 @@ struct DFGPrinter : dsa::DFGVisitor {
             std::string wrap(const std::string &S) {
               return '$' + S + "State & " + ResetLevel;
             }
-            void Visit(SLPMemPort *SMP) {
+            void Visit(SLPMemPort *SMP) override {
               DSA_CHECK(Name.empty());
               Name = wrap(formatv("ICluster_{0}_{1}_", SMP->Parent->ID, SMP->ID));
             }
-            void Visit(MemPort *MP) {
+            void Visit(MemPort *MP) override {
               DSA_CHECK(Name.empty());
               Name = wrap(MP->name(-1));
             }
-            void Visit(IndMemPort *IMP) {
+            void Visit(IndMemPort *IMP) override {
               DSA_CHECK(Name.empty());
               Name = dsa::utils::ModuleContext().IND ? wrap(IMP->name(-1)) : IMP->TagString;
             }
