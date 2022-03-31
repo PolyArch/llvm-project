@@ -741,7 +741,6 @@ struct DFGPrinter : dsa::DFGVisitor {
         }
         OS << "\n";
         if (auto *S2D = dyn_cast<Indirect2D>(DS)) {
-          DSA_INFO << S2D->L1D;
           if (!isa<analysis::LoopInvariant>(S2D->L1D)) {
             auto *DFG = new DedicatedDFG(DB->Parent, S2D->L1D);
             DFG->UnrollFactor = 1;
