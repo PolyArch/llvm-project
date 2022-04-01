@@ -1102,7 +1102,6 @@ SEWrapper *DFGAnalysisResult::affineMemoryAccess(DFGEntry *DE, ScalarEvolution &
       if (auto *LC = dyn_cast<LinearCombine>(SW)) {
         for (int i = 0; i < (int) LoopNest.size(); ++i) { // NOLINT
           if (LoopNest[i]->contains(MP->Load)) {
-            DSA_INFO << "Contained by loop " << i;
             LC->Coef.erase(LC->Coef.begin(), LC->Coef.begin() + i);
             LC->TripCount.erase(LC->TripCount.begin(), LC->TripCount.begin() + i);
             break;
