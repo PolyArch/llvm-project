@@ -235,7 +235,9 @@ int consumerLevel(Value *Val, const std::vector<DFGEntry*> &Entries,
       }
     }
   }
-  std::vector<int> Res(-1, Consumers.size());
+  std::vector<int> Res;
+  Res.resize(Consumers.size(), -1);
+  DSA_CHECK(Consumers.size() == Res.size());
   for (int i = 0; i < Consumers.size(); ++i) { // NOLINT
     for (int j = 0; j < (int) Loops.size(); ++j) { // NOLINT
       if (Loops[j]->contains(Consumers[i])) {
@@ -243,6 +245,7 @@ int consumerLevel(Value *Val, const std::vector<DFGEntry*> &Entries,
         break;
       }
     }
+    DSA_CHECK(Res[i] != -1);
   }
   for (int i = 1; i < (int) Res.size(); ++i) { // NOLINT
     if (Res[i] != Res[0]) {

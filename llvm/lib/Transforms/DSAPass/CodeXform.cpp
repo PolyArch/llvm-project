@@ -1028,8 +1028,7 @@ injectComputedRepeat(CodeGenContext &CGC, // NOLINT
 
 void injectLinearStreamImpl(CodeGenContext &CGC, analysis::SEWrapper *SW,
                             int Port, int Unroll, int DType, MemoryOperation MO,
-                            Padding P, analysis::SpadInfo &SI, int BuffetIdx,
-                            Value *Val) {
+                            Padding P, analysis::SpadInfo &SI, int BuffetIdx) {
   analysis::LinearCombine *LCPtr = dyn_cast<analysis::LinearCombine>(SW);
   if (!LCPtr) {
     auto *LI = dyn_cast<analysis::LoopInvariant>(SW);
@@ -1038,9 +1037,8 @@ void injectLinearStreamImpl(CodeGenContext &CGC, analysis::SEWrapper *SW,
   }
   analysis::LinearCombine &LC = *LCPtr;
 
-  auto InjectRepeat = [&CGC, Val](analysis::LinearCombine &LI, int Port, int Unroll) {
+  auto InjectRepeat = [&CGC] (analysis::LinearCombine &LI, int Port, int Unroll) {
     auto &Loops = LI.TripCount;
-    utils::consumerLevel(Val, {}, {});
     DSA_CHECK(Loops.size() == LI.Coef.size() || LI.Coef.empty());
     int N = LI.Coef.empty() ? Loops.size() : LI.partialInvariant();
     DSA_LOG(CODEGEN) << "Inject repeat cutoff: " << N;
@@ -1258,7 +1256,7 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
 
           injectLinearStreamImpl(
             CGC, LC, MP->SoftPortNum, DFG->getUnroll(), DType, DMO_Read,
-            (Padding) MP->fillMode(), SI, -1, MP->underlyingInst());
+            (Padding) MP->fillMode(), SI, -1);
 
           if (LoopN.size() == 2) {
             // TODO(@were): Support stretch later.
@@ -1275,7 +1273,7 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
 
           injectLinearStreamImpl(
             CGC, LC, PM->SoftPortNum, DFG->getUnroll(), DType, DMO_Write,
-            DP_PostStridePredOff, SI, -1, PM->underlyingInst());
+            DP_PostStridePredOff, SI, -1);
 
           // Performance Model
           int II = 1;
@@ -1420,8 +1418,7 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
         auto *IndPtr = dyn_cast<analysis::IndirectPointer>(Mul->B);
         DSA_CHECK(IndPtr) << Mul->B->toString();
         injectLinearStreamImpl(CGC, IndPtr->Pointer, IMP->Index->SoftPortNum,
-                               IMP->Parent->getUnroll(), IType, DMO_Read, DP_NoPadding, SI, -1,
-                               IMP->Index->underlyingInst());
+                               IMP->Parent->getUnroll(), IType, DMO_Read, DP_NoPadding, SI, -1);
         int LengthPort = -1;
         int LDType = 0;
         Value *N2D = nullptr;
@@ -1474,7 +1471,7 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
       }
       injectLinearStreamImpl(CGC, IndPtr->Pointer, IMP->Index->SoftPortNum,
                              IMP->Parent->getUnroll(), IType,
-                             DMO_Read, DP_NoPadding, SI, -1, IMP->Index->underlyingInst());
+                             DMO_Read, DP_NoPadding, SI, -1);
 
       auto *ILC = dyn_cast<analysis::LinearCombine>(IndPtr->Pointer);
       Value *N = CGC.SEE.expandCodeFor(productTripCount(ILC->TripCount, &CGC.SE));
@@ -1514,8 +1511,7 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
       auto BIter = std::find_if(SI.Buffet.begin(), SI.Buffet.end(), Cond);
       auto *IdxLI = DAR.affineMemoryAccess(MP, CGC.SE, false);
       injectLinearStreamImpl(CGC, IdxLI, Port, DFG->getUnroll(), DType, DMO_Read,
-                             (Padding) MP->fillMode(), SI, BIter - SI.Buffet.begin(),
-                             MP->underlyingInst());
+                             (Padding) MP->fillMode(), SI, BIter - SI.Buffet.begin());
 
       MP->IntrinInjected = true;
     }
@@ -1542,7 +1538,7 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
         LC = dyn_cast<analysis::LoopInvariant>(IdxLI)->toLinearCombine(nullptr);
       }
       injectLinearStreamImpl(CGC, LC, Port, DFG->getUnroll(), DType, DMO_Read,
-                             (Padding) 0, SI, BIter - SI.Buffet.begin(), SMP->underlyingInsts()[0]);
+                             (Padding) 0, SI, BIter - SI.Buffet.begin());
 
       SMP->IntrinInjected = true;
     }
@@ -1557,7 +1553,7 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
       int DType = PM->Store->getValueOperand()->getType()->getScalarSizeInBits() / 8;
       auto *IdxLI = DAR.affineMemoryAccess(PM, CGC.SE, false);
       injectLinearStreamImpl(CGC, IdxLI, PM->SoftPortNum, DFG->getUnroll(), DType,
-                             DMO_Write, DP_PostStridePredOff, SI, -1, PM->underlyingInst());
+                             DMO_Write, DP_PostStridePredOff, SI, -1);
 
       PM->IntrinInjected = true;
     }
@@ -1572,7 +1568,7 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
       DSA_CHECK(SPM->Coal.size() >= 2) << SPM->Coal.size();
       auto *IdxLI = DAR.affineMemoryAccess(SPM, CGC.SE, false);
       injectLinearStreamImpl(CGC, IdxLI, SPM->SoftPortNum, DFG->getUnroll(), DType, DMO_Write,
-                             DP_NoPadding, SI, -1, SPM->underlyingInsts()[0]);
+                             DP_NoPadding, SI, -1);
 
       SPM->IntrinInjected = true;
     }
@@ -1749,7 +1745,7 @@ void injectStreamIntrinsics(CodeGenContext &CGC, DFGFile &DF, analysis::DFGAnaly
             auto *IdxLI = DAR.affineMemoryAccess(MP, CGC.SE, false);
             int DType = MP->Load->getType()->getScalarSizeInBits() / 8;
             injectLinearStreamImpl(CGC, IdxLI, MP->SoftPortNum, DFG->getUnroll(), DType, DMO_Read,
-                                   (Padding) MP->fillMode(), SI, -1, MP->underlyingInst());
+                                   (Padding) MP->fillMode(), SI, -1);
             IdxPort = IMP->IndexOutPort;
           }
         }
