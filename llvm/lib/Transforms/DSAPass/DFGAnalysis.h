@@ -306,6 +306,10 @@ struct DFGAnalysisResult {
    * \brief Data structures for streams that are ready-codegen.
    */
   std::unordered_map<DFGEntry*, xform::DataStream*> Streams;
+  /*!
+   * \brief The size of the given array pointer array.
+   */
+  std::unordered_map<Value *, int64_t> ArraySize;
 
  private:
   /*!
@@ -411,6 +415,14 @@ struct DFGUnroll {
  */
 std::vector<std::pair<IntrinsicInst *, IntrinsicInst *>>
 gatherConfigScope(Function &F);
+
+/*!
+ * \brief Gather the array size hint intrinsics.
+ * \param DF The DFG file to be analyzed.
+ * \param CGC The LLVM context.
+ * \param DAR The analyzed results to put in.
+ */
+void gatherArraySizeHints(DFGFile &DF, dsa::xform::CodeGenContext &CGC, DFGAnalysisResult &DAR);
 
 /*!
  * \brief

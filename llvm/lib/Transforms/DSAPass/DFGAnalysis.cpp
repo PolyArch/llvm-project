@@ -32,6 +32,45 @@ std::vector<std::pair<IntrinsicInst *, IntrinsicInst *>> gatherConfigScope(Funct
   return Res;
 }
 
+
+void gatherArraySizeHints(DFGFile &DF, dsa::xform::CodeGenContext &CGC, DFGAnalysisResult &DAR) {
+  auto *Start = DF.Config;
+  auto *End = DF.Fence;
+  auto *DT = CGC.DT;
+  std::set<BasicBlock *> OutOfBound;
+  for (auto *BBN : breadth_first(DT->getNode(End->getParent()))) {
+    if (BBN->getBlock() == End->getParent())
+      continue;
+    OutOfBound.insert(BBN->getBlock());
+  }
+  std::vector<Instruction*> ToRemove;
+  for (auto *BBN : breadth_first(DT->getNode(Start->getParent()))) {
+    auto *BB = BBN->getBlock();
+    auto Range = make_range(
+        BB != Start->getParent() ? BB->begin() : Start->getIterator(),
+        BB != End->getParent() ? BB->end() : End->getIterator());
+    for (auto &I : Range) {
+      auto *CI = dyn_cast<CallInst>(&I);
+      if (auto *CF = CI->getCalledFunction()) {
+        if (CF->getName() == "arraysize") {
+          auto *BCI = dyn_cast<BitCastInst>(CF->getOperand(0));
+          auto *Const = dyn_cast<ConstantInt>(CF->getOperand(1));
+          DSA_CHECK(Const);
+          DAR.ArraySize[BCI->getOperand(0)] = Const->getSExtValue();
+          ToRemove.push_back(&I);
+        }
+      }
+    }
+    if (BB == End->getParent()) {
+      break;
+    }
+  }
+  for (auto *I : ToRemove) {
+    I->eraseFromParent();
+  }
+}
+
+
 std::pair<std::set<Instruction *>, std::set<Instruction *>>
 bfsOperands(DFGBase *DB, Instruction *From, DominatorTree *DT) {
   std::set<Instruction *> Visited, OutBound;
