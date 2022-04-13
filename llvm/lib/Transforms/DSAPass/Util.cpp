@@ -228,7 +228,8 @@ std::string nameOfArray(Function &Func, Value *Val) {
   if (Val->hasName()) {
     return Val->getName().str();
   }
-  ModuleSlotTracker MST(Func.getParent(), false);
+  ModuleSlotTracker MST(Func.getParent());
+  MST.incorporateFunction(Func);
   std::ostringstream OSS;
   OSS << "Array_of_" << Func.getName().str() << "_" << MST.getLocalSlot(Val);
   return OSS.str();

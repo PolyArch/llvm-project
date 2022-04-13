@@ -840,7 +840,7 @@ void emitDFG(raw_ostream &OS, DFGFile *DFG, analysis::DFGAnalysisResult &DAR,
   // Dump the array declaration.
   if (!utils::ModuleContext().NOARRAY) {
     for (auto &Array : DAR.ArraySize) {
-      auto Name = utils::nameOfArray(DFG->Func, Array.second);
+      auto Name = utils::nameOfArray(DFG->Func, Array.first);
       auto *CI = dyn_cast<CallInst>(Array.second);
       DSA_CHECK(CI);
       auto *Const = dyn_cast<ConstantInt>(CI->getOperand(1));
