@@ -449,6 +449,9 @@ struct DFGPrinter : dsa::DFGVisitor {
       if (IP->shouldUnroll()) {
         OS << "[" << AdjustedLanes << "]";
       }
+      if (!ExtraSrcDestInfo.empty()) {
+        OS << " " << ExtraSrcDestInfo << " ";
+      }
       bool Signaled = false;
       if (!IP->Tagged.empty()) {
         if (isa<MemPort>(IP) || (isa<IndMemPort>(IP) && dsa::utils::ModuleContext().IND)) {
@@ -660,8 +663,42 @@ struct DFGPrinter : dsa::DFGVisitor {
       if (Entry->shouldUnroll()) {
         OS << "[" << AdjustedLanes << "]";
       }
+      if (!ExtraSrcDestInfo.empty()) {
+        OS << " " << ExtraSrcDestInfo;
+      }
       OS << "\n";
     }
+
+    void Visit(MemPort *MP) override {
+      if (!utils::ModuleContext().NOARRAY) {
+        if (auto *PtrInst = dyn_cast<Instruction>(MP->Load->getPointerOperand())) {
+          auto ArrayName = analysis::findArrayInvolved(PtrInst, Parent->DAR.ArraySize, Parent->DAR.SI);
+          if (!ArrayName.empty()) {
+            ExtraSrcDestInfo = "source=" + ArrayName;
+          }
+        }
+      }
+      Visit(static_cast<InputPort*>(MP));
+      ExtraSrcDestInfo = "";
+    }
+
+    void Visit(PortMem *PM) override {
+      if (!utils::ModuleContext().NOARRAY) {
+        if (auto *PtrInst = dyn_cast<Instruction>(PM->Store->getPointerOperand())) {
+          auto ArrayName = analysis::findArrayInvolved(PtrInst, Parent->DAR.ArraySize, Parent->DAR.SI);
+          if (!ArrayName.empty()) {
+            ExtraSrcDestInfo = "destination=" + ArrayName;
+          }
+        }
+      }
+      Visit(static_cast<OutputPort*>(PM));
+      ExtraSrcDestInfo = "";
+    }
+
+    /*!
+     * \brief Extra information for source or destination.
+     */
+    std::string ExtraSrcDestInfo;
 
     raw_ostream &OS;
     DFGPrinter *Parent;
@@ -800,12 +837,32 @@ void emitDFG(raw_ostream &OS, DFGFile *DFG, analysis::DFGAnalysisResult &DAR,
       DSA_LOG(DFG) << Elem->dump();
     }
   }
+  // Dump the array declaration.
+  if (!utils::ModuleContext().NOARRAY) {
+    for (auto &Array : DAR.ArraySize) {
+      auto Name = Array.first->getName();
+      DSA_CHECK(!Name.empty());
+      auto *CI = dyn_cast<CallInst>(Array.second);
+      DSA_CHECK(CI);
+      auto *Const = dyn_cast<ConstantInt>(CI->getOperand(1));
+      std::string Buffer;
+      llvm::raw_string_ostream OSS(Buffer);
+      OSS << *Array.first;
+      OS << "# " << OSS.str() << "\n";
+      OS << "Array: " << Name << " " << Const->getSExtValue() << " dma\n";
+    }
+    for (auto &Elem : DAR.SI.Offset) {
+      auto Name = Elem.first->getName();
+      DSA_CHECK(!Name.empty());
+      OS << "Array: " << Name << " ";
+      auto *AT = dyn_cast<ArrayType>(Elem.first->getType()->getArrayElementType());
+      OS << (AT->getNumElements() * AT->getElementType()->getScalarSizeInBits() / 8) << " spm\n";
+    }
+  }
   for (int i = 0; i < (int)Graphs.size(); ++i) { // NOLINT
     DFGPrinter DP(OS, CGC, DAR);
     auto *Elem = Graphs[i];
-    if (i) {
-      OS << "----\n";
-    }
+    OS << "----\n";
     Elem->accept(&DP);
     for (auto &CO : DP.DelayEmission) {
       OS << CO << "\n";

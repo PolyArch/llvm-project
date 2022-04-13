@@ -9,6 +9,7 @@
 
 #include "llvm/ADT/iterator_range.h"
 #include "llvm/IR/Instruction.h"
+#include "llvm/Support/Casting.h"
 #include <string>
 
 #define DEBUG_TYPE "dfg-analysis"
@@ -50,23 +51,22 @@ void gatherArraySizeHints(DFGFile &DF, dsa::xform::CodeGenContext &CGC, DFGAnaly
         BB != Start->getParent() ? BB->begin() : Start->getIterator(),
         BB != End->getParent() ? BB->end() : End->getIterator());
     for (auto &I : Range) {
-      auto *CI = dyn_cast<CallInst>(&I);
-      if (auto *CF = CI->getCalledFunction()) {
-        if (CF->getName() == "arraysize") {
-          auto *BCI = dyn_cast<BitCastInst>(CF->getOperand(0));
-          auto *Const = dyn_cast<ConstantInt>(CF->getOperand(1));
-          DSA_CHECK(Const);
-          DAR.ArraySize[BCI->getOperand(0)] = Const->getSExtValue();
-          ToRemove.push_back(&I);
+      if (auto *CI = dyn_cast<CallInst>(&I)) {
+        DSA_INFO << *CI;
+        if (auto *CF = CI->getCalledFunction()) {
+          if (CF->getName() == "arraysize") {
+            auto *BCI = dyn_cast<BitCastInst>(CI->getOperand(0));
+            DSA_CHECK(BCI) << *CI->getOperand(0);
+            auto *Const = dyn_cast<ConstantInt>(CI->getOperand(1));
+            DSA_CHECK(Const) << *CI->getOperand(1);
+            DAR.ArraySize[BCI->getOperand(0)] = CI;
+          }
         }
       }
     }
     if (BB == End->getParent()) {
       break;
     }
-  }
-  for (auto *I : ToRemove) {
-    I->eraseFromParent();
   }
 }
 
@@ -98,6 +98,56 @@ bfsOperands(DFGBase *DB, Instruction *From, DominatorTree *DT) {
   }
   return {Visited, OutBound};
 }
+
+std::string findArrayInvolved(Instruction *Ptr, std::unordered_map<Value*, CallInst*> &AS,
+                              SpadInfo &SI) {
+  std::set<Instruction *> Visited;
+  std::queue<Instruction *> Q;
+  Visited.insert(Ptr);
+  Q.push(Ptr);
+  DSA_INFO << "Analyzing: " << *Ptr;
+  auto F = [&AS, &SI](Value *Val) -> Value* {
+    DSA_INFO << *Val;
+    {
+      auto Iter = AS.find(Val);
+      if (Iter != AS.end()) {
+        return Val;
+      }
+    }
+    {
+      if (auto *AI = dyn_cast<AllocaInst>(Val)) {
+        auto Iter = SI.Offset.find(AI);
+        if (Iter != SI.Offset.end()) {
+          return AI;
+        }
+      }
+    }
+    return nullptr;
+  };
+  while (!Q.empty()) {
+    auto *Cur = Q.front();
+    Q.pop();
+    if (auto *Res = F(Cur)) {
+      DSA_INFO << Res->getName().str();
+      return Res->getName().str();
+    }
+    for (size_t I = 0; I < Cur->getNumOperands(); ++I) {
+      if (auto *Inst = dyn_cast<Instruction>(Cur->getOperand(I))) {
+        if (Visited.find(Inst) == Visited.end()) {
+          Q.push(Inst);
+          Visited.insert(Inst);
+        }
+      } else {
+        if (auto *Res = F(Cur->getOperand(I))) {
+          DSA_INFO << Res->getName().str();
+          return Res->getName().str();
+        }
+      }
+    }
+  }
+  return "";
+}
+
 
 /*!
  * \brief How DFG Entries are analyzed and extracted.
@@ -1610,18 +1660,13 @@ void DFGAnalysisResult::fuseAffineDimensions(ScalarEvolution &SE) {
         } else if (auto *SMP = dyn_cast<SLPMemPort>(IP)) {
           std::ostringstream OSS;
           SMP->dump(OSS);
-          DSA_INFO << OSS.str();
-          DSA_INFO << Pattern->toString();
           // An peephole optimization for codegen.
           if (Pattern->Coef.size() > 1 && SMP->Parent->getUnroll() == 1 /*Unroll not supported yet!*/) {
-            DSA_INFO << *Pattern->Coef[0]->Raw;
             // Inner most dimension is not fused.
             if (auto *CoefConst = dyn_cast<SCEVConstant>(Pattern->Coef[0]->Raw)) {
               int DBytes = SMP->underlyingInsts()[0]->getType()->getScalarSizeInBits() / 8;
-              DSA_INFO << DBytes;
               // The inner most dimension has the same stride as the data type.
               if (CoefConst->getAPInt().getSExtValue() == DBytes) {
-                DSA_INFO << *Pattern->TripCount[0]->Raw;
                 if (auto *TripConst = dyn_cast<SCEVConstant>(Pattern->TripCount[0]->Raw)) {
                   // The inner most dimension has the same lanes as the manual unrolling degree.
                   if (TripConst->getAPInt().getSExtValue() == (int64_t) SMP->Coal.size()) {

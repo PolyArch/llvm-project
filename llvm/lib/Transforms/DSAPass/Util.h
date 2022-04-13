@@ -153,6 +153,10 @@ struct ModuleFlags {
    * \brief If the computational fabric is backpressured.
    */
   DEFINE_FLAG(FAKE, 0)
+  /*!
+   * \brief If the computational fabric is backpressured.
+   */
+  DEFINE_FLAG(NOARRAY, 0)
 #undef DEFINE_FLAG
 
   TimeProfiler TP;
@@ -175,6 +179,7 @@ struct ModuleFlags {
     getFlagGRANULARITY();
     getFlagBACKCGRA();
     getFlagFAKE();
+    getFlagNOARRAY();
   }
 };
 

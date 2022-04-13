@@ -309,7 +309,7 @@ struct DFGAnalysisResult {
   /*!
    * \brief The size of the given array pointer array.
    */
-  std::unordered_map<Value *, int64_t> ArraySize;
+  std::unordered_map<Value *, llvm::CallInst*> ArraySize;
 
  private:
   /*!
@@ -488,6 +488,16 @@ void gatherMemoryCoalescing(DFGFile &DF, ScalarEvolution &SE, DFGAnalysisResult 
  */
 std::pair<std::set<Instruction *>, std::set<Instruction *>>
 bfsOperands(DFGBase *DB, Instruction *From, DominatorTree *DT);
+
+
+/*!
+ * \brief Find The name of the array involved.
+ * \param Ptr The pointer expression to be analyzed.
+ * \param AS The DMA arrays declared.
+ * \param SI The SPM arrays declared.
+ */
+std::string findArrayInvolved(Instruction *Ptr, std::unordered_map<Value*, CallInst*> &AS,
+                              SpadInfo &SI);
 
 /*!
  * \brief Extract analyzed streams to ready-codegen format.
