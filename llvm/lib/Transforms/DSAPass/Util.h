@@ -228,6 +228,12 @@ std::vector<std::vector<int>> DSU2Sets(std::vector<int> &DSU);
  */
 int consumerLevel(Value *Val, const std::vector<DFGEntry*> &Entries,
                   const std::vector<Loop*> &Loops);
+/*!
+ * \brief A wrapper for the array dumping.
+ * \param Func The function scope this array belongs to.
+ * \param Array The array to get the name.
+ */
+std::string nameOfArray(Function &Func, Value *Name);
 
 } // namespace utils
 

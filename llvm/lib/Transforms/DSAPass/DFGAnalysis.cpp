@@ -124,12 +124,12 @@ std::string findArrayInvolved(Instruction *Ptr, std::unordered_map<Value*, CallI
     }
     return nullptr;
   };
+  auto &Func = *Ptr->getParent()->getParent();
   while (!Q.empty()) {
     auto *Cur = Q.front();
     Q.pop();
     if (auto *Res = F(Cur)) {
-      DSA_INFO << Res->getName().str();
-      return Res->getName().str();
+      return utils::nameOfArray(Func, Res);
     }
     for (size_t I = 0; I < Cur->getNumOperands(); ++I) {
       if (auto *Inst = dyn_cast<Instruction>(Cur->getOperand(I))) {
@@ -140,7 +140,7 @@ std::string findArrayInvolved(Instruction *Ptr, std::unordered_map<Value*, CallI
       } else {
         if (auto *Res = F(Cur->getOperand(I))) {
           DSA_INFO << Res->getName().str();
-          return Res->getName().str();
+          return utils::nameOfArray(Func, Res);
         }
       }
     }
