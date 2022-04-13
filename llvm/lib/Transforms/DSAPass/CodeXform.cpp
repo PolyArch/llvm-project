@@ -862,7 +862,13 @@ void emitDFG(raw_ostream &OS, DFGFile *DFG, analysis::DFGAnalysisResult &DAR,
   for (int i = 0; i < (int)Graphs.size(); ++i) { // NOLINT
     DFGPrinter DP(OS, CGC, DAR);
     auto *Elem = Graphs[i];
-    OS << "----\n";
+    if (utils::ModuleContext().NOARRAY) {
+      if (i) {
+        OS << "----\n";
+      }
+    } else {
+      OS << "----\n";
+    }
     Elem->accept(&DP);
     for (auto &CO : DP.DelayEmission) {
       OS << CO << "\n";
