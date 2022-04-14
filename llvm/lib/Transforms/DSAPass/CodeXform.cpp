@@ -5,6 +5,7 @@
 #include "Util.h"
 
 #include "dsa-ext/rf.h"
+#include "llvm/ADT/APInt.h"
 #include "llvm/Analysis/ScalarEvolutionExpressions.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/ScopedPrinter.h"
@@ -363,6 +364,24 @@ WType* injectUpdate(RType *MP, analysis::DFGAnalysisResult &DAR,
 
 } // namespace unifier
 
+const SCEVConstant *constCalcRepeat(analysis::LinearCombine *LC, ScalarEvolution *SE, int Unroll) {
+  int N = LC->partialInvariant();
+  const auto *SEOne = SE->getConstant(APInt(64, 1, false));
+  const auto *Repeat = SEOne;
+  const auto *Div = SE->getConstant(APInt(64, Unroll, false));
+  const auto *MinusOne = SE->getNegativeSCEV(SEOne);
+  for (int i = 0; i < N; ++i) { // NOLINT
+    Repeat = SE->getMulExpr(Repeat, LC->TripCount[i]->base());
+    if (!i) {
+      Repeat = SE->getAddExpr(SE->getUDivExpr(SE->getAddExpr(Repeat, MinusOne), Div), SEOne);
+    }
+  }
+  if (const auto *Res = dyn_cast<SCEVConstant>(Repeat)) {
+    return Res;
+  }
+  return nullptr;
+}
+
 struct DFGPrinter : dsa::DFGVisitor {
 
   struct ControlBit {
@@ -566,7 +585,7 @@ struct DFGPrinter : dsa::DFGVisitor {
       Visit(cast<DFGEntry>(IP));
       {
         using dfg::MetaPort;
-        auto Meta = IP->Meta;
+        auto &Meta = IP->Meta;
         if (Meta.source != MetaPort::Data::Unknown) {
           OS << "#pragma src=" << dfg::MetaPort::DataText[(int)Meta.source]
              << "\n";
@@ -698,6 +717,13 @@ struct DFGPrinter : dsa::DFGVisitor {
       std::string Name = formatv("ICluster_{0}_{1}_", SMP->Parent->ID, SMP->ID);
       OS << "# Vector Port Width: " << Lanes << " * " << Degree << "\n";
       OS << "Input" << Bits << ": " << Name << "[" << Lanes * Degree << "]";
+      std::string Array;
+      if (auto *Inst = dyn_cast<Instruction>(SMP->Coal[0]->Load->getPointerOperand())) {
+        Array = analysis::findArrayInvolved(Inst, Parent->DAR.ArraySize, Parent->DAR.SI);
+      }
+      if (!Array.empty()) {
+        OS << " source=" << Array;
+      }
       if (!SMP->Tagged.empty()) {
         OS << " stated";
       }
@@ -730,7 +756,15 @@ struct DFGPrinter : dsa::DFGVisitor {
         }
       }
       OS << "# Vector Port Width: " << Lanes << " * " << Degree << "\n";
-      OS << "Output" << Bits << ":" << Name << "[" << Lanes * Degree << "]" << "\n";
+      OS << "Output" << Bits << ": " << Name << "[" << Lanes * Degree << "]";
+      std::string Array;
+      if (auto *Inst = dyn_cast<Instruction>(SPM->Coal[0]->Store->getPointerOperand())) {
+        Array = analysis::findArrayInvolved(Inst, Parent->DAR.ArraySize, Parent->DAR.SI);
+      }
+      if (!Array.empty()) {
+        OS << " destination=" << Array;
+      }
+      OS << "\n";
     }
 
     void Visit(AtomicPortMem *APM) override {
@@ -829,6 +863,15 @@ struct DFGPrinter : dsa::DFGVisitor {
           if (!ArrayName.empty()) {
             ExtraSrcDestInfo = "source=" + ArrayName;
           }
+        }
+      }
+      auto *SW = Parent->DAR.affineMemoryAccess(MP, Parent->CGC.SE, true);
+      if (auto *LC = dyn_cast<analysis::LinearCombine>(SW)) {
+        if (const auto *SC = constCalcRepeat(LC, &Parent->CGC.SE, MP->Parent->getUnroll())) {
+          MP->Meta.repeat = SC->getAPInt().getSExtValue();
+        } else if (LC->partialInvariant()) {
+          DSA_WARNING << LC->toString() << " is NOT a constant repeat, use 8 as emprical value.";
+          MP->Meta.repeat = 8;
         }
       }
       unifier::injectUpdate<MemPort, PortMem>(MP, Parent->DAR, Parent->CGC, Parent->DAR.SI, true);

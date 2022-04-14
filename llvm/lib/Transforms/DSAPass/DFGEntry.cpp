@@ -128,6 +128,7 @@ std::string OutputPort::name(int VecIdx) {
 PortBase::PortBase(DFGBase *Parent_) // NOLINT
     : DFGEntry(Parent_), SoftPortNum(-1), IntrinInjected(false) {
   Kind = kPortBase;
+  Meta.clear();
 }
 
 OutputPort::OutputPort(DFGBase *Parent_, Value *Value_) : PortBase(Parent_) { // NOLINT
