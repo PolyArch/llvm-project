@@ -364,6 +364,10 @@ WType* injectUpdate(RType *MP, analysis::DFGAnalysisResult &DAR,
 
 } // namespace unifier
 
+
+/*!
+ * \brief Calculate the inner-most dimension repeat.
+ */
 const SCEVConstant *constCalcRepeat(analysis::LinearCombine *LC, ScalarEvolution *SE, int Unroll) {
   int N = LC->partialInvariant();
   const auto *SEOne = SE->getConstant(APInt(64, 1, false));
@@ -380,6 +384,33 @@ const SCEVConstant *constCalcRepeat(analysis::LinearCombine *LC, ScalarEvolution
     return Res;
   }
   return nullptr;
+}
+
+/*!
+ * \brief Calculate the data reuse ratio.
+ */
+double constReuseRate(analysis::LinearCombine *LC, ScalarEvolution *SE) {
+  int Start = LC->partialInvariant();
+  int Dims = LC->TripCount.size() - Start;
+  DSA_INFO << LC->toString();
+  if (Dims == 1) {
+    return 0;
+  }
+  if (Dims == 2) {
+    if (const auto *C1Const = dyn_cast<SCEVConstant>(LC->Coef[1]->Raw)) {
+      if (const auto *C0Const = dyn_cast<SCEVConstant>(LC->Coef[0]->Raw)) {
+        if (const auto *L0Const = dyn_cast<SCEVConstant>(LC->TripCount[0]->Raw)) {
+          double Factor = C0Const->getAPInt().getSExtValue() * L0Const->getAPInt().getSExtValue();
+          DSA_INFO << Factor << " " << (Factor - C1Const->getAPInt().getSExtValue());
+          return (Factor - C1Const->getAPInt().getSExtValue()) / Factor;
+        }
+      }
+      DSA_INFO << "Const";
+      return 0.8;
+    }
+  }
+  DSA_INFO << "None";
+  return 0;
 }
 
 struct DFGPrinter : dsa::DFGVisitor {
@@ -607,6 +638,7 @@ struct DFGPrinter : dsa::DFGVisitor {
         }
         OS << "#pragma cmd=" << Meta.cmd << "\n";
         OS << "#pragma repeat=" << Meta.repeat << "\n";
+        OS << "#pragma reuse=" << Meta.reuse << "\n";
       }
 
       int Granularity = dsa::utils::ModuleContext().GRANULARITY;
@@ -873,6 +905,7 @@ struct DFGPrinter : dsa::DFGVisitor {
           DSA_WARNING << LC->toString() << " is NOT a constant repeat, use 8 as emprical value.";
           MP->Meta.repeat = 8;
         }
+        MP->Meta.reuse = constReuseRate(LC, &Parent->CGC.SE);
       }
       unifier::injectUpdate<MemPort, PortMem>(MP, Parent->DAR, Parent->CGC, Parent->DAR.SI, true);
       Visit(static_cast<InputPort*>(MP));
