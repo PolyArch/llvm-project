@@ -224,7 +224,7 @@ bool isOne(Value *Val) {
 namespace dsa {
 namespace utils {
 
-std::string nameOfArray(Function &Func, Value *Val) {
+std::string nameOfLLVMValue(Function &Func, Value *Val) {
   if (Val->hasName()) {
     return Val->getName().str();
   }

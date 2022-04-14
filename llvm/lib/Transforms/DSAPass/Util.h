@@ -233,7 +233,7 @@ int consumerLevel(Value *Val, const std::vector<DFGEntry*> &Entries,
  * \param Func The function scope this array belongs to.
  * \param Array The array to get the name.
  */
-std::string nameOfArray(Function &Func, Value *Name);
+std::string nameOfLLVMValue(Function &Func, Value *Name);
 
 } // namespace utils
 

@@ -52,7 +52,6 @@ void gatherArraySizeHints(DFGFile &DF, dsa::xform::CodeGenContext &CGC, DFGAnaly
         BB != End->getParent() ? BB->end() : End->getIterator());
     for (auto &I : Range) {
       if (auto *CI = dyn_cast<CallInst>(&I)) {
-        DSA_INFO << *CI;
         if (auto *CF = CI->getCalledFunction()) {
           if (CF->getName() == "arraysize") {
             auto *BCI = dyn_cast<BitCastInst>(CI->getOperand(0));
@@ -105,9 +104,7 @@ std::string findArrayInvolved(Instruction *Ptr, std::unordered_map<Value*, CallI
   std::queue<Instruction *> Q;
   Visited.insert(Ptr);
   Q.push(Ptr);
-  DSA_INFO << "Analyzing: " << *Ptr;
   auto F = [&AS, &SI](Value *Val) -> Value* {
-    DSA_INFO << *Val;
     {
       auto Iter = AS.find(Val);
       if (Iter != AS.end()) {
@@ -129,7 +126,7 @@ std::string findArrayInvolved(Instruction *Ptr, std::unordered_map<Value*, CallI
     auto *Cur = Q.front();
     Q.pop();
     if (auto *Res = F(Cur)) {
-      return utils::nameOfArray(Func, Res);
+      return utils::nameOfLLVMValue(Func, Res);
     }
     for (size_t I = 0; I < Cur->getNumOperands(); ++I) {
       if (auto *Inst = dyn_cast<Instruction>(Cur->getOperand(I))) {
@@ -139,8 +136,7 @@ std::string findArrayInvolved(Instruction *Ptr, std::unordered_map<Value*, CallI
         }
       } else {
         if (auto *Res = F(Cur->getOperand(I))) {
-          DSA_INFO << Res->getName().str();
-          return utils::nameOfArray(Func, Res);
+          return utils::nameOfLLVMValue(Func, Res);
         }
       }
     }

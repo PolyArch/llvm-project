@@ -384,6 +384,7 @@ void DFGEntry::dump(std::ostringstream &OS) {
 
 int MemPort::fillMode() {
   if (auto *DD = dyn_cast<DedicatedDFG>(Parent)) {
+    (void) DD;
     if (Parent->getUnroll() <= 1)
       return DP_NoPadding;
     return DP_PostStrideZero;
