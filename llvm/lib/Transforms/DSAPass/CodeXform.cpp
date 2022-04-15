@@ -365,6 +365,26 @@ WType* injectUpdate(RType *MP, analysis::DFGAnalysisResult &DAR,
 } // namespace unifier
 
 
+std::string useArrayHint(PortBase *PB, Value *Ptr, analysis::DFGAnalysisResult &DAR) {
+  if (utils::ModuleContext().NOARRAY) {
+    return "";
+  }
+  if (auto *Inst = dyn_cast<Instruction>(Ptr)) {
+    if (auto *Array = analysis::findArrayInvolved(Inst, DAR.ArraySize, DAR.SI)) {
+      std::string ArrayName = utils::nameOfLLVMValue(PB->Parent->Parent->Func, Array);
+      if (!isa<AllocaInst>(Array)) {
+        auto *Call = DAR.ArraySize[Array];
+        auto *CFP = dyn_cast<ConstantFP>(Call->getOperand(2));
+        DSA_CHECK(CFP) << *Call->getOperand(2);
+        PB->Meta.reuse = CFP->getValueAPF().convertToDouble();
+      }
+      return ArrayName;
+    }
+  }
+  return "";
+}
+
+
 /*!
  * \brief Calculate the inner-most dimension repeat.
  */
@@ -574,7 +594,12 @@ struct DFGPrinter : dsa::DFGVisitor {
       if (IMP->duplicated()) {
         return;
       }
+      auto AN = useArrayHint(IMP, IMP->Load->getPointerOperand(), Parent->DAR);
+      if (!AN.empty()) {
+        ExtraSrcDestInfo = "source=" + AN;
+      }
       Visit(static_cast<InputPort*>(IMP));
+      ExtraSrcDestInfo = "";
     }
 
     void Visit(InputPort *IP) override {
@@ -722,19 +747,10 @@ struct DFGPrinter : dsa::DFGVisitor {
       std::string Name = formatv("ICluster_{0}_{1}_", SMP->Parent->ID, SMP->ID);
       OS << "# Vector Port Width: " << Lanes << " * " << Degree << "\n";
       OS << "Input" << Bits << ": " << Name << "[" << Lanes * Degree << "]";
-      std::string ArrayName;
-      if (auto *Inst = dyn_cast<Instruction>(SMP->Coal[0]->Load->getPointerOperand())) {
-         auto *Array = analysis::findArrayInvolved(Inst, Parent->DAR.ArraySize, Parent->DAR.SI);
-         ArrayName = utils::nameOfLLVMValue(SMP->Parent->Parent->Func, Array);
-          if (!isa<AllocaInst>(Array)) {
-            auto *Call = Parent->DAR.ArraySize[Array];
-            auto *CFP = dyn_cast<ConstantFP>(Call->getOperand(2));
-            DSA_CHECK(CFP) << *Call->getOperand(2);
-            SMP->Meta.reuse = CFP->getValueAPF().convertToDouble();
-          }
-      }
-      if (!ArrayName.empty()) {
-        OS << " source=" << ArrayName;
+      auto AN = useArrayHint(SMP, SMP->Coal[0]->Load->getPointerOperand(), Parent->DAR);
+      if (!AN.empty()) {
+        OS << " source=" << ExtraSrcDestInfo << " ";
+        ExtraSrcDestInfo.clear();
       }
       if (!SMP->Tagged.empty()) {
         OS << " stated";
@@ -769,13 +785,10 @@ struct DFGPrinter : dsa::DFGVisitor {
       }
       OS << "# Vector Port Width: " << Lanes << " * " << Degree << "\n";
       OS << "Output" << Bits << ": " << Name << "[" << Lanes * Degree << "]";
-      std::string ArrayName;
-      if (auto *Inst = dyn_cast<Instruction>(SPM->Coal[0]->Store->getPointerOperand())) {
-        Value *Array = analysis::findArrayInvolved(Inst, Parent->DAR.ArraySize, Parent->DAR.SI);
-        ArrayName = utils::nameOfLLVMValue(SPM->Parent->Parent->Func, Array);
-      }
-      if (!ArrayName.empty()) {
-        OS << " destination=" << ArrayName;
+      auto AN = useArrayHint(SPM, SPM->Coal[0]->Store->getPointerOperand(), Parent->DAR);
+      if (!AN.empty()) {
+        OS << " destination=" << ExtraSrcDestInfo << " ";
+        ExtraSrcDestInfo.clear();
       }
       OS << "\n";
     }
@@ -870,20 +883,9 @@ struct DFGPrinter : dsa::DFGVisitor {
     }
 
     void Visit(MemPort *MP) override {
-      if (!utils::ModuleContext().NOARRAY) {
-        if (auto *PtrInst = dyn_cast<Instruction>(MP->Load->getPointerOperand())) {
-          auto *Array = analysis::findArrayInvolved(PtrInst, Parent->DAR.ArraySize, Parent->DAR.SI);
-          auto ArrayName = utils::nameOfLLVMValue(MP->Parent->Parent->Func, Array);
-          if (!ArrayName.empty()) {
-            ExtraSrcDestInfo = "source=" + ArrayName;
-          }
-          if (!isa<AllocaInst>(Array)) {
-            auto *Call = Parent->DAR.ArraySize[Array];
-            auto *CFP = dyn_cast<ConstantFP>(Call->getOperand(2));
-            DSA_CHECK(CFP) << *Call->getOperand(2);
-            MP->Meta.reuse = CFP->getValueAPF().convertToDouble();
-          }
-        }
+      auto AN = useArrayHint(MP, MP->Load->getPointerOperand(), Parent->DAR);
+      if (!AN.empty()) {
+        ExtraSrcDestInfo = "source=" + AN;
       }
       auto *SW = Parent->DAR.affineMemoryAccess(MP, Parent->CGC.SE, true);
       if (auto *LC = dyn_cast<analysis::LinearCombine>(SW)) {
@@ -900,14 +902,9 @@ struct DFGPrinter : dsa::DFGVisitor {
     }
 
     void Visit(PortMem *PM) override {
-      if (!utils::ModuleContext().NOARRAY) {
-        if (auto *PtrInst = dyn_cast<Instruction>(PM->Store->getPointerOperand())) {
-          auto *Array = analysis::findArrayInvolved(PtrInst, Parent->DAR.ArraySize, Parent->DAR.SI);
-          auto ArrayName = utils::nameOfLLVMValue(PM->Parent->Parent->Func, Array);
-          if (!ArrayName.empty()) {
-            ExtraSrcDestInfo = "destination=" + ArrayName;
-          }
-        }
+      auto AN = useArrayHint(PM, PM->Store->getPointerOperand(), Parent->DAR);
+      if (!AN.empty()) {
+        ExtraSrcDestInfo = "destination=" + AN;
       }
       Visit(static_cast<OutputPort*>(PM));
       ExtraSrcDestInfo = "";
@@ -986,12 +983,17 @@ struct DFGPrinter : dsa::DFGVisitor {
         auto *DS = analysis::extractStreamIntrinsics(Elem, CGC, DAR);
         bool Penetrate = !Elem->Tagged.empty() && isa<Indirect1D>(DS);
         OS << "\n\n----\n\n";
+        OS << "# " << *Elem->Index << "\n";
         OS << "Input" << Elem->Index->Load->getType()->getScalarSizeInBits()
            << ": indirect_in_" << DB->ID << "_" << Elem->ID << "_";
         bool Unrolled = false;
         if (Elem->shouldUnroll()) {
           Unrolled = true;
           OS << "[" << Elem->Parent->getUnroll() << "]";
+        }
+        auto AN = useArrayHint(Elem, Elem->Index->Load->getPointerOperand(), DAR);
+        if (!AN.empty()) {
+          OS << " source=" << AN;
         }
         if (Penetrate) {
           OS << " stated";
