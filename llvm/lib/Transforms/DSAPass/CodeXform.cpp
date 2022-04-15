@@ -386,33 +386,6 @@ const SCEVConstant *constCalcRepeat(analysis::LinearCombine *LC, ScalarEvolution
   return nullptr;
 }
 
-/*!
- * \brief Calculate the data reuse ratio.
- */
-double constReuseRate(analysis::LinearCombine *LC, ScalarEvolution *SE) {
-  int Start = LC->partialInvariant();
-  int Dims = LC->TripCount.size() - Start;
-  DSA_INFO << LC->toString();
-  if (Dims == 1) {
-    return 0;
-  }
-  if (Dims == 2) {
-    if (const auto *C1Const = dyn_cast<SCEVConstant>(LC->Coef[1]->Raw)) {
-      if (const auto *C0Const = dyn_cast<SCEVConstant>(LC->Coef[0]->Raw)) {
-        if (const auto *L0Const = dyn_cast<SCEVConstant>(LC->TripCount[0]->Raw)) {
-          double Factor = C0Const->getAPInt().getSExtValue() * L0Const->getAPInt().getSExtValue();
-          DSA_INFO << Factor << " " << (Factor - C1Const->getAPInt().getSExtValue());
-          return (Factor - C1Const->getAPInt().getSExtValue()) / Factor;
-        }
-      }
-      DSA_INFO << "Const";
-      return 0.8;
-    }
-  }
-  DSA_INFO << "None";
-  return 0;
-}
-
 struct DFGPrinter : dsa::DFGVisitor {
 
   struct ControlBit {
@@ -749,12 +722,19 @@ struct DFGPrinter : dsa::DFGVisitor {
       std::string Name = formatv("ICluster_{0}_{1}_", SMP->Parent->ID, SMP->ID);
       OS << "# Vector Port Width: " << Lanes << " * " << Degree << "\n";
       OS << "Input" << Bits << ": " << Name << "[" << Lanes * Degree << "]";
-      std::string Array;
+      std::string ArrayName;
       if (auto *Inst = dyn_cast<Instruction>(SMP->Coal[0]->Load->getPointerOperand())) {
-        Array = analysis::findArrayInvolved(Inst, Parent->DAR.ArraySize, Parent->DAR.SI);
+         auto *Array = analysis::findArrayInvolved(Inst, Parent->DAR.ArraySize, Parent->DAR.SI);
+         ArrayName = utils::nameOfLLVMValue(SMP->Parent->Parent->Func, Array);
+          if (!isa<AllocaInst>(Array)) {
+            auto *Call = Parent->DAR.ArraySize[Array];
+            auto *CFP = dyn_cast<ConstantFP>(Call->getOperand(2));
+            DSA_CHECK(CFP) << *Call->getOperand(2);
+            SMP->Meta.reuse = CFP->getValueAPF().convertToDouble();
+          }
       }
-      if (!Array.empty()) {
-        OS << " source=" << Array;
+      if (!ArrayName.empty()) {
+        OS << " source=" << ArrayName;
       }
       if (!SMP->Tagged.empty()) {
         OS << " stated";
@@ -789,12 +769,13 @@ struct DFGPrinter : dsa::DFGVisitor {
       }
       OS << "# Vector Port Width: " << Lanes << " * " << Degree << "\n";
       OS << "Output" << Bits << ": " << Name << "[" << Lanes * Degree << "]";
-      std::string Array;
+      std::string ArrayName;
       if (auto *Inst = dyn_cast<Instruction>(SPM->Coal[0]->Store->getPointerOperand())) {
-        Array = analysis::findArrayInvolved(Inst, Parent->DAR.ArraySize, Parent->DAR.SI);
+        Value *Array = analysis::findArrayInvolved(Inst, Parent->DAR.ArraySize, Parent->DAR.SI);
+        ArrayName = utils::nameOfLLVMValue(SPM->Parent->Parent->Func, Array);
       }
-      if (!Array.empty()) {
-        OS << " destination=" << Array;
+      if (!ArrayName.empty()) {
+        OS << " destination=" << ArrayName;
       }
       OS << "\n";
     }
@@ -891,9 +872,16 @@ struct DFGPrinter : dsa::DFGVisitor {
     void Visit(MemPort *MP) override {
       if (!utils::ModuleContext().NOARRAY) {
         if (auto *PtrInst = dyn_cast<Instruction>(MP->Load->getPointerOperand())) {
-          auto ArrayName = analysis::findArrayInvolved(PtrInst, Parent->DAR.ArraySize, Parent->DAR.SI);
+          auto *Array = analysis::findArrayInvolved(PtrInst, Parent->DAR.ArraySize, Parent->DAR.SI);
+          auto ArrayName = utils::nameOfLLVMValue(MP->Parent->Parent->Func, Array);
           if (!ArrayName.empty()) {
             ExtraSrcDestInfo = "source=" + ArrayName;
+          }
+          if (!isa<AllocaInst>(Array)) {
+            auto *Call = Parent->DAR.ArraySize[Array];
+            auto *CFP = dyn_cast<ConstantFP>(Call->getOperand(2));
+            DSA_CHECK(CFP) << *Call->getOperand(2);
+            MP->Meta.reuse = CFP->getValueAPF().convertToDouble();
           }
         }
       }
@@ -905,7 +893,6 @@ struct DFGPrinter : dsa::DFGVisitor {
           DSA_WARNING << LC->toString() << " is NOT a constant repeat, use 8 as emprical value.";
           MP->Meta.repeat = 8;
         }
-        MP->Meta.reuse = constReuseRate(LC, &Parent->CGC.SE);
       }
       unifier::injectUpdate<MemPort, PortMem>(MP, Parent->DAR, Parent->CGC, Parent->DAR.SI, true);
       Visit(static_cast<InputPort*>(MP));
@@ -915,7 +902,8 @@ struct DFGPrinter : dsa::DFGVisitor {
     void Visit(PortMem *PM) override {
       if (!utils::ModuleContext().NOARRAY) {
         if (auto *PtrInst = dyn_cast<Instruction>(PM->Store->getPointerOperand())) {
-          auto ArrayName = analysis::findArrayInvolved(PtrInst, Parent->DAR.ArraySize, Parent->DAR.SI);
+          auto *Array = analysis::findArrayInvolved(PtrInst, Parent->DAR.ArraySize, Parent->DAR.SI);
+          auto ArrayName = utils::nameOfLLVMValue(PM->Parent->Parent->Func, Array);
           if (!ArrayName.empty()) {
             ExtraSrcDestInfo = "destination=" + ArrayName;
           }
@@ -1109,11 +1097,11 @@ void emitDFG(raw_ostream &OS, DFGFile *DFG, analysis::DFGAnalysisResult &DAR,
     for (auto *Graph : Graphs) {
       for (auto *Elem : Graph->EntryFilter<InputConst>()) {
         OS << "# " << *Elem->underlyingValue() << "\n";
-        OS << "Array: " << utils::nameOfLLVMValue(DFG->Func, Elem->underlyingValue()) << " gen\n";
+        OS << "Array: " << utils::nameOfLLVMValue(DFG->Func, Elem->underlyingValue()) << " 0 gen\n";
       }
       for (auto *Elem : Graph->EntryFilter<StreamInPort>()) {
         OS << "# " << *Elem->underlyingValue() << "\n";
-        OS << "Array: " << utils::nameOfLLVMValue(DFG->Func, Elem->underlyingValue()) << " rec\n";
+        OS << "Array: " << utils::nameOfLLVMValue(DFG->Func, Elem->underlyingValue()) << " 0 rec\n";
       }
     }
   }

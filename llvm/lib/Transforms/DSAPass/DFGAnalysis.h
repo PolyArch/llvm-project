@@ -496,8 +496,8 @@ bfsOperands(DFGBase *DB, Instruction *From, DominatorTree *DT);
  * \param AS The DMA arrays declared.
  * \param SI The SPM arrays declared.
  */
-std::string findArrayInvolved(Instruction *Ptr, std::unordered_map<Value*, CallInst*> &AS,
-                              SpadInfo &SI);
+Value* findArrayInvolved(Instruction *Ptr, std::unordered_map<Value*, CallInst*> &AS,
+                         SpadInfo &SI);
 
 /*!
  * \brief Extract analyzed streams to ready-codegen format.

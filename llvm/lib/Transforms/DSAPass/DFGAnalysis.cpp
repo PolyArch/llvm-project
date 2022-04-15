@@ -53,11 +53,11 @@ void gatherArraySizeHints(DFGFile &DF, dsa::xform::CodeGenContext &CGC, DFGAnaly
     for (auto &I : Range) {
       if (auto *CI = dyn_cast<CallInst>(&I)) {
         if (auto *CF = CI->getCalledFunction()) {
-          if (CF->getName() == "arraysize") {
+          if (CF->getName() == "arrayhint") {
             auto *BCI = dyn_cast<BitCastInst>(CI->getOperand(0));
             DSA_CHECK(BCI) << *CI->getOperand(0);
-            auto *Const = dyn_cast<ConstantInt>(CI->getOperand(1));
-            DSA_CHECK(Const) << *CI->getOperand(1);
+            DSA_CHECK(isa<ConstantInt>(CI->getOperand(1))) << *CI->getOperand(1);
+            DSA_CHECK(isa<ConstantFP>(CI->getOperand(2))) << *CI->getOperand(2);
             DAR.ArraySize[BCI->getOperand(0)] = CI;
           }
         }
@@ -98,8 +98,8 @@ bfsOperands(DFGBase *DB, Instruction *From, DominatorTree *DT) {
   return {Visited, OutBound};
 }
 
-std::string findArrayInvolved(Instruction *Ptr, std::unordered_map<Value*, CallInst*> &AS,
-                              SpadInfo &SI) {
+Value* findArrayInvolved(Instruction *Ptr, std::unordered_map<Value*, CallInst*> &AS,
+                         SpadInfo &SI) {
   std::set<Instruction *> Visited;
   std::queue<Instruction *> Q;
   Visited.insert(Ptr);
@@ -121,12 +121,11 @@ std::string findArrayInvolved(Instruction *Ptr, std::unordered_map<Value*, CallI
     }
     return nullptr;
   };
-  auto &Func = *Ptr->getParent()->getParent();
   while (!Q.empty()) {
     auto *Cur = Q.front();
     Q.pop();
     if (auto *Res = F(Cur)) {
-      return utils::nameOfLLVMValue(Func, Res);
+      return Res;
     }
     for (size_t I = 0; I < Cur->getNumOperands(); ++I) {
       if (auto *Inst = dyn_cast<Instruction>(Cur->getOperand(I))) {
@@ -136,12 +135,12 @@ std::string findArrayInvolved(Instruction *Ptr, std::unordered_map<Value*, CallI
         }
       } else {
         if (auto *Res = F(Cur->getOperand(I))) {
-          return utils::nameOfLLVMValue(Func, Res);
+          return Res;
         }
       }
     }
   }
-  return "";
+  return nullptr;
 }
 
 
