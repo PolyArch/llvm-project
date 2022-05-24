@@ -1989,4 +1989,4 @@ int analyzePortUse(DFGEntry *DE, xform::CodeGenContext &CGC, DFGAnalysisResult &
 
 
 } // namespace analysis
-} // namespace dsia
+} // namespace dsa
