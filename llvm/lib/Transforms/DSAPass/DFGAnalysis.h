@@ -274,7 +274,7 @@ struct AccInfo {
    * \brief The loop level of accumulator register resetting.
    */
   int ResetLevel;
-  /*!
+  /*
    * \brief The loop level of finalizing the result.
    */
   int ProduceLevel;
@@ -524,5 +524,16 @@ const SCEV *productTripCount(std::vector<analysis::SEWrapper*> &TC, ScalarEvolut
 xform::DataStream *
 extractStreamIntrinsics(DFGEntry *DE, xform::CodeGenContext &CGC, DFGAnalysisResult &DAR);
 
+/*
+ * \brief Use DFG loop nest to get trip count
+ */
+int getLoopNestTripCount(DFGLoopInfo &DLI);
+
+/*
+ * \brief Analyze use of a given port
+ */
+int analyzePortUse(DFGEntry *DE, xform::CodeGenContext &CGC, DFGAnalysisResult &DAR);
+
+ 
 } // namespace analysis
 } // namespace dsa

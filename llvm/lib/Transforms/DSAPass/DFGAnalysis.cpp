@@ -1965,5 +1965,28 @@ gatherLinearOverride(IntrinsicInst *Start, IntrinsicInst *End, xform::CodeGenCon
   return Res;
 }
 
+
+int getLoopNestTripCount(DFGLoopInfo &DLI) {
+  int TripCount = 1;
+  for (auto *TCE : DLI.TripCount) 
+    // DSA_INFO << "Trip count of this level in loop nest: " << TCE->toString();
+    TripCount *= std::stoi(TCE->toString());  
+  return TripCount; 
+}
+
+
+int analyzePortUse(DFGEntry *DE, xform::CodeGenContext &CGC, DFGAnalysisResult &DAR) {
+  int Use = 1;
+  SEWrapper *SW = DAR.affineMemoryAccess(DE, CGC.SE, false);
+  if (auto *LC = dyn_cast<LinearCombine>(SW)) {
+    // DSA_INFO << "Linear Combination SCEV: " << LC ->toString();
+    for (unsigned int i = 0; i < LC->Coef.size(); ++i) // NOLINT 
+      if (std::stoi(LC->Coef[i]->toString()) != 0) 
+	Use *= std::stoi(LC->TripCount[i]->toString());
+  }
+  return Use;
+}
+
+
 } // namespace analysis
-} // namespace dsa
+} // namespace dsia
