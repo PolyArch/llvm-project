@@ -1,3 +1,4 @@
+#include "DFGEntry.h"
 #include "Util.h"
 #include "dsa/arch/model.h"
 #include "dsa/core/singleton.h"
@@ -8,6 +9,7 @@
 #include "./StreamAnalysis.h"
 
 #include "llvm/ADT/iterator_range.h"
+#include "llvm/Analysis/ScalarEvolutionExpressions.h"
 #include "llvm/IR/Instruction.h"
 #include "llvm/Support/Casting.h"
 #include <string>
@@ -1970,23 +1972,45 @@ int getLoopNestTripCount(DFGLoopInfo &DLI) {
   int TripCount = 1;
   for (auto *TCE : DLI.TripCount) 
     // DSA_INFO << "Trip count of this level in loop nest: " << TCE->toString();
-    TripCount *= std::stoi(TCE->toString());  
+    if (auto *SC = dyn_cast<SCEVConstant>(TCE->Raw))
+      TripCount *= SC->getAPInt().getSExtValue();  
   return TripCount; 
 }
 
+bool reuseAtLoopLevel(LinearCombine *LC, int &C, int &TC, unsigned int Level) {
+  bool Reuse = false;
+  for (unsigned int i = 0; i < LC->Coef.size(); ++i) { // NOLINT
+    if (i == Level) // NOLINT
+      continue;
+    if (auto *OtherC = dyn_cast<SCEVConstant>(LC->Coef[i]->Raw))
+      if (OtherC->getAPInt().getSExtValue() == C)
+        if (auto *OtherT = dyn_cast<SCEVConstant>(LC->TripCount[i]->Raw))
+          if (TC < OtherT->getAPInt().getSExtValue()) {
+            Reuse = true;
+            break;
+          }
+  }
+  return Reuse;
+}
 
 int analyzePortUse(DFGEntry *DE, xform::CodeGenContext &CGC, DFGAnalysisResult &DAR) {
   int Use = 1;
   SEWrapper *SW = DAR.affineMemoryAccess(DE, CGC.SE, false);
   if (auto *LC = dyn_cast<LinearCombine>(SW)) {
     // DSA_INFO << "Linear Combination SCEV: " << LC ->toString();
-    for (unsigned int i = 0; i < LC->Coef.size(); ++i) // NOLINT 
-      if (std::stoi(LC->Coef[i]->toString()) != 0) 
-	Use *= std::stoi(LC->TripCount[i]->toString());
-  }
+    for (unsigned int i = 0; i < LC->Coef.size(); ++i) // NOLINT
+      if (auto *C = dyn_cast<SCEVConstant>(LC->Coef[i]->Raw)) {
+        int CurrC = C->getAPInt().getSExtValue();
+        if (CurrC)
+          if (auto *TC = dyn_cast<SCEVConstant>(LC->TripCount[i]->Raw)) {
+            int CurrTC = TC->getAPInt().getSExtValue(); 
+            if (!reuseAtLoopLevel(LC, CurrC, CurrTC, i))
+              Use *= CurrTC;
+          }
+      }
+    }
   return Use;
 }
-
 
 } // namespace analysis
 } // namespace dsa

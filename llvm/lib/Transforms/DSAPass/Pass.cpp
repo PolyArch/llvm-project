@@ -108,17 +108,17 @@ bool StreamSpecialize::runOnFunction(Function &F) {
       DAR.initAffineCache(DF, CGC.SE);
       // REUSE ANALYSIS /BEGIN
       DSA_LOG(PASS) << i << ": Beginning reuse analysis...";
-      for (unsigned int j = 0; j < DF.DFGs.size(); ++j) { 
+      for (unsigned int j = 0; j < DF.DFGs.size(); ++j) { // NOLINT 
         int Trips = dsa::analysis::getLoopNestTripCount(DAR.DLI[j]);
  	DSA_INFO << i <<  ": Loop nest trip count: " << Trips;
  	std::vector<MemPort *> MP = DF.DFGs[j]->EntryFilter<MemPort>(); 
         std::vector<PortMem *> PM = DF.DFGs[j]->EntryFilter<PortMem>();
-     	for (unsigned int m = 0; m < MP.size(); ++m) { 
+     	for (unsigned int m = 0; m < MP.size(); ++m) { // NOLINT 
 	  int PortUse = dsa::analysis::analyzePortUse(MP[m], CGC, DAR);
 	  int Reuse = Trips / PortUse;
 	  DSA_INFO << i  << ": MemPort " << m << " reuse: " << Reuse; 	      
 	}
-        for (unsigned int p = 0; p < PM.size(); ++p) { 
+        for (unsigned int p = 0; p < PM.size(); ++p) { //NOLINT 
 	  int PortUse = dsa::analysis::analyzePortUse(PM[p], CGC, DAR);
 	  int Reuse = (int) roundf((float) Trips / PortUse);
 	  DSA_INFO << i << ": PortMem " << p << " reuse: " << Reuse; 	      

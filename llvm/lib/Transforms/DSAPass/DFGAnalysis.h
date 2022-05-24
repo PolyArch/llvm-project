@@ -530,6 +530,11 @@ extractStreamIntrinsics(DFGEntry *DE, xform::CodeGenContext &CGC, DFGAnalysisRes
 int getLoopNestTripCount(DFGLoopInfo &DLI);
 
 /*
+ * \brief Is there reuse at a particular loop level?
+ */
+bool reuseAtLoopLevel(LinearCombine *LC, int &C, int &TC, unsigned int Level); 
+
+/*
  * \brief Analyze use of a given port
  */
 int analyzePortUse(DFGEntry *DE, xform::CodeGenContext &CGC, DFGAnalysisResult &DAR);
