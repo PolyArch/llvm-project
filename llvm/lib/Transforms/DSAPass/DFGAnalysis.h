@@ -524,21 +524,11 @@ const SCEV *productTripCount(std::vector<analysis::SEWrapper*> &TC, ScalarEvolut
 xform::DataStream *
 extractStreamIntrinsics(DFGEntry *DE, xform::CodeGenContext &CGC, DFGAnalysisResult &DAR);
 
-/*
- * \brief Use DFG loop nest to get trip count
- */
-int getLoopNestTripCount(DFGLoopInfo &DLI);
 
-/*
- * \brief Is there reuse at a particular loop level?
- */
-bool reuseAtLoopLevel(LinearCombine *LC, int &C, int &TC, unsigned int Level); 
+float getDFGDataTraffic(DFGLoopInfo &DLI);
 
-/*
- * \brief Analyze use of a given port
- */
-int analyzePortUse(DFGEntry *DE, xform::CodeGenContext &CGC, DFGAnalysisResult &DAR);
+float getReuseAtLevel(LinearCombine *LC, int Lvl);
 
- 
+float getPortReuse(DFGEntry *DE, xform::CodeGenContext &CGC, DFGAnalysisResult &DAR); 
 } // namespace analysis
 } // namespace dsa

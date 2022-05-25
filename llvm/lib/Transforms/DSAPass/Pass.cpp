@@ -105,26 +105,7 @@ bool StreamSpecialize::runOnFunction(Function &F) {
       DSA_LOG(PASS) << i << ": Analyzing loop trip counts...";
       dsa::analysis::analyzeDFGLoops(DF, CGC, DAR);
       DSA_LOG(PASS) << i << ": Analyzing affine memory access...";
-      DAR.initAffineCache(DF, CGC.SE);
-      // REUSE ANALYSIS /BEGIN
-      DSA_LOG(PASS) << i << ": Beginning reuse analysis...";
-      for (unsigned int j = 0; j < DF.DFGs.size(); ++j) { // NOLINT 
-        int Trips = dsa::analysis::getLoopNestTripCount(DAR.DLI[j]);
- 	DSA_INFO << i <<  ": Loop nest trip count: " << Trips;
- 	std::vector<MemPort *> MP = DF.DFGs[j]->EntryFilter<MemPort>(); 
-        std::vector<PortMem *> PM = DF.DFGs[j]->EntryFilter<PortMem>();
-     	for (unsigned int m = 0; m < MP.size(); ++m) { // NOLINT 
-	  int PortUse = dsa::analysis::analyzePortUse(MP[m], CGC, DAR);
-	  int Reuse = Trips / PortUse;
-	  DSA_INFO << i  << ": MemPort " << m << " reuse: " << Reuse; 	      
-	}
-        for (unsigned int p = 0; p < PM.size(); ++p) { //NOLINT 
-	  int PortUse = dsa::analysis::analyzePortUse(PM[p], CGC, DAR);
-	  int Reuse = (int) roundf((float) Trips / PortUse);
-	  DSA_INFO << i << ": PortMem " << p << " reuse: " << Reuse; 	      
-	}
-      }
-      // REUSE ANALYSIS /END 
+      DAR.initAffineCache(DF, CGC.SE); 
       if (dsa::utils::ModuleContext().SLP_STREAM) {
         DSA_LOG(PASS) << i << ": Coalescing SLP memories...";
         dsa::analysis::gatherMemoryCoalescing(DF, *SE, DAR);
@@ -134,7 +115,24 @@ bool StreamSpecialize::runOnFunction(Function &F) {
       if (dsa::utils::ModuleContext().FUSE_STREAM) {
         DSA_LOG(PASS) << i << ": Fusing affined dimensions...";
         DAR.fuseAffineDimensions(CGC.SE);
+      } 
+      // REUSE ANALYSIS BEGINS HERE
+      DSA_LOG(PASS) << i << ": Beginning reuse analysis..."; 
+      for (unsigned int j = 0; j < DF.DFGs.size(); ++j) { // NOLINT
+        float DFGTraffic = dsa::analysis::getDFGDataTraffic(DAR.DLI[j]);
+        DSA_INFO << "Overall DFG Data Traffic: " << DFGTraffic;
+        std::vector<MemPort *> MP = DF.DFGs[j]->EntryFilter<MemPort>();
+        std::vector<PortMem *> PM = DF.DFGs[j]->EntryFilter<PortMem>();
+        for (unsigned int m = 0; m < MP.size(); ++m) { // NOLINT
+          float MemPortReuse = dsa::analysis::getPortReuse(MP[m], CGC, DAR);
+          DSA_INFO << "Reuse of MemPort " << m << ": " << MemPortReuse;
+        }
+        for (unsigned int p = 0; p < PM.size(); ++p) { // NOLINT
+          float PortMemReuse = dsa::analysis::getPortReuse(PM[p], CGC, DAR);
+          DSA_INFO << "Reuse of PortMem " << p << ": " << PortMemReuse;
+        }
       }
+      // REUSE ANALYSIS ENDS HERE
       DSA_LOG(PASS) << i << ": Extracting SPAD...";
       dsa::analysis::extractSpadFromScope(DF, CGC, DAR);
       DSA_LOG(PASS) << i << ": Emitting DFG...";

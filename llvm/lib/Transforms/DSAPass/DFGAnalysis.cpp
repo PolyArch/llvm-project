@@ -1968,48 +1968,53 @@ gatherLinearOverride(IntrinsicInst *Start, IntrinsicInst *End, xform::CodeGenCon
 }
 
 
-int getLoopNestTripCount(DFGLoopInfo &DLI) {
-  int TripCount = 1;
-  for (auto *TCE : DLI.TripCount) 
-    // DSA_INFO << "Trip count of this level in loop nest: " << TCE->toString();
-    if (auto *SC = dyn_cast<SCEVConstant>(TCE->Raw))
-      TripCount *= SC->getAPInt().getSExtValue();  
-  return TripCount; 
-}
 
-bool reuseAtLoopLevel(LinearCombine *LC, int &C, int &TC, unsigned int Level) {
-  bool Reuse = false;
-  for (unsigned int i = 0; i < LC->Coef.size(); ++i) { // NOLINT
-    if (i == Level) // NOLINT
-      continue;
-    if (auto *OtherC = dyn_cast<SCEVConstant>(LC->Coef[i]->Raw))
-      if (OtherC->getAPInt().getSExtValue() == C)
-        if (auto *OtherT = dyn_cast<SCEVConstant>(LC->TripCount[i]->Raw))
-          if (TC < OtherT->getAPInt().getSExtValue()) {
-            Reuse = true;
-            break;
-          }
+float getDFGDataTraffic(DFGLoopInfo &DLI) {
+  float Traffic = 1.0;
+  for (auto *TC : DLI.TripCount) {
+    if (auto *SC = dyn_cast<SCEVConstant>(TC->Raw)) {
+      Traffic *= SC->getAPInt().getSExtValue();
+    }
   }
-  return Reuse;
+  return Traffic;
 }
 
-int analyzePortUse(DFGEntry *DE, xform::CodeGenContext &CGC, DFGAnalysisResult &DAR) {
-  int Use = 1;
-  SEWrapper *SW = DAR.affineMemoryAccess(DE, CGC.SE, false);
-  if (auto *LC = dyn_cast<LinearCombine>(SW)) {
-    // DSA_INFO << "Linear Combination SCEV: " << LC ->toString();
-    for (unsigned int i = 0; i < LC->Coef.size(); ++i) // NOLINT
-      if (auto *C = dyn_cast<SCEVConstant>(LC->Coef[i]->Raw)) {
-        int CurrC = C->getAPInt().getSExtValue();
-        if (CurrC)
-          if (auto *TC = dyn_cast<SCEVConstant>(LC->TripCount[i]->Raw)) {
-            int CurrTC = TC->getAPInt().getSExtValue(); 
-            if (!reuseAtLoopLevel(LC, CurrC, CurrTC, i))
-              Use *= CurrTC;
+
+float getReuseAtLevel(LinearCombine *LC, int Lvl) {
+  float LvlReuse = 1.0;
+  if (auto *SCEVInnerStride = dyn_cast<SCEVConstant>(LC->Coef[Lvl]->Raw)) {
+    if (auto *SCEVInnerTripCount = dyn_cast<SCEVConstant>(LC->Coef[Lvl]->Raw)) {
+      if (auto *SCEVOuterStride = dyn_cast<SCEVConstant>(LC->Coef[Lvl + 1]->Raw)) {
+        int InnerStride = SCEVInnerStride->getAPInt().getSExtValue();
+        int InnerTripCount = SCEVInnerTripCount->getAPInt().getSExtValue();
+        int OuterStride = SCEVOuterStride->getAPInt().getSExtValue();
+        if (OuterStride < (InnerTripCount * InnerStride)) {
+          if (OuterStride == 0) {
+            if (auto* SCEVOuterTripCount = dyn_cast<SCEVConstant>(LC->TripCount[Lvl + 1]->Raw)) {
+              LvlReuse = static_cast <float> (SCEVOuterTripCount->getAPInt().getSExtValue());
+            }
           }
+          else
+            LvlReuse = (static_cast <float> (InnerTripCount) * InnerStride) / OuterStride;
+        }
       }
     }
-  return Use;
+  }
+  return LvlReuse;
+}
+
+float getPortReuse(DFGEntry *DE, xform::CodeGenContext &CGC, DFGAnalysisResult &DAR) {
+  float Reuse = 1.0;
+  SEWrapper *SW = DAR.affineMemoryAccess(DE, CGC.SE, false);
+  if (auto *LC = dyn_cast<LinearCombine>(SW)) {
+    if (LC->Coef.size() == 1) {
+      return Reuse; 
+    }
+    for (unsigned int lvl = 0; lvl < LC->Coef.size() - 1; ++lvl) { // NOLINT
+      Reuse *= getReuseAtLevel(LC, lvl);
+    }
+  }
+  return Reuse;
 }
 
 } // namespace analysis
