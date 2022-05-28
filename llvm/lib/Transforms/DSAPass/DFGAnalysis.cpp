@@ -1990,8 +1990,10 @@ float getReuseAtLevel(LinearCombine *LC, int Lvl) {
         int OuterStride = SCEVOuterStride->getAPInt().getSExtValue();
         if (OuterStride < (InnerTripCount * InnerStride)) {
           if (OuterStride == 0) {
-            if (auto* SCEVOuterTripCount = dyn_cast<SCEVConstant>(LC->TripCount[Lvl + 1]->Raw)) {
-              LvlReuse = static_cast <float> (SCEVOuterTripCount->getAPInt().getSExtValue());
+            if (auto *SCEVOuterTripCount = dyn_cast<SCEVConstant>(LC->TripCount[Lvl + 1]->Raw)) {
+              if (SCEVOuterTripCount->getAPInt().getSExtValue()) {
+                LvlReuse = static_cast <float> (SCEVOuterTripCount->getAPInt().getSExtValue());
+              }
             }
           }
           else
