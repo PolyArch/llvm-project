@@ -61,7 +61,7 @@ bool StreamSpecialize::runOnModule(Module &M) {
 
 bool StreamSpecialize::runOnFunction(Function &F) {
   DSA_LOG(PASS) << "Processing Function: " << F.getName();
- 
+
   if (!dsa::utils::ModuleContext().TEMPORAL) {
     dsa::xform::eliminateTemporal(F);
   }
@@ -79,7 +79,7 @@ bool StreamSpecialize::runOnFunction(Function &F) {
     return false;
   }
   DSA_LOG(PASS) << "Transforming " << F.getName();
-  SCEVExpander SEE(*SE, F.getParent()->getDataLayout(), ""); 
+  SCEVExpander SEE(*SE, F.getParent()->getDataLayout(), "");
   dsa::xform::CodeGenContext CGC(&IB, DSARegs, *SE, SEE, DT, LI, BFI);
   bool GlobalSuccessSchedule = true;
   for (int i = 0, N = ScopePairs.size(); i < N; ++i) { // NOLINT
@@ -118,18 +118,20 @@ bool StreamSpecialize::runOnFunction(Function &F) {
       } 
       // REUSE ANALYSIS BEGINS HERE
       DSA_LOG(PASS) << i << ": Beginning reuse analysis..."; 
-      for (unsigned int j = 0; j < DF.DFGs.size(); ++j) { // NOLINT
-        float DFGTraffic = dsa::analysis::getDFGDataTraffic(DAR.DLI[j]);
-        DSA_INFO << "Overall DFG Data Traffic: " << DFGTraffic;
+      for (unsigned int j = 0; j < DF.DFGs.size(); ++j) { // NOLINT 
         std::vector<MemPort *> MP = DF.DFGs[j]->EntryFilter<MemPort>();
         std::vector<PortMem *> PM = DF.DFGs[j]->EntryFilter<PortMem>();
         for (unsigned int m = 0; m < MP.size(); ++m) { // NOLINT
-          float MemPortReuse = dsa::analysis::getPortReuse(MP[m], CGC, DAR);
-          DSA_INFO << "Reuse of MemPort " << m << ": " << MemPortReuse;
+          float PortDType = MP[m]->Load->getType()->getScalarSizeInBits() / 8.0f;
+          std::pair<float, float> MemPortReuse = dsa::analysis::getPortReuse(MP[m], CGC, DAR, PortDType);
+          DSA_INFO << "Reuse rate of data at MemPort " << m << ": " << MemPortReuse.first;
+          DSA_INFO << "Data traffic at MemPort " << m << ": " << MemPortReuse.second << "B."; 
         }
         for (unsigned int p = 0; p < PM.size(); ++p) { // NOLINT
-          float PortMemReuse = dsa::analysis::getPortReuse(PM[p], CGC, DAR);
-          DSA_INFO << "Reuse of PortMem " << p << ": " << PortMemReuse;
+          float PortDType = PM[p]->Store->getValueOperand()->getType()->getScalarSizeInBits() / 8.0f;
+          std::pair<float, float> PortMemReuse = dsa::analysis::getPortReuse(PM[p], CGC, DAR, PortDType);
+          DSA_INFO << "Reuse rate of data at PortMem " << p << ": " << PortMemReuse.first;
+          DSA_INFO << "Data traffic at PortMem " << p << ": " << PortMemReuse.second << "B.";  
         }
       }
       // REUSE ANALYSIS ENDS HERE

@@ -1968,21 +1968,27 @@ gatherLinearOverride(IntrinsicInst *Start, IntrinsicInst *End, xform::CodeGenCon
 }
 
 
-
-float getDFGDataTraffic(DFGLoopInfo &DLI) {
-  float Traffic = 1.0;
-  for (auto *TC : DLI.TripCount) {
-    if (auto *SC = dyn_cast<SCEVConstant>(TC->Raw)) {
-      Traffic *= SC->getAPInt().getSExtValue();
+float getPortDataTraffic(LinearCombine *LC) {
+  float Traffic = 1.0f;
+  for (auto *TC : LC->TripCount) { //NOLINT 
+    if (auto *SCEVTripCount = dyn_cast<SCEVConstant>(TC->Raw)) {
+      Traffic *= SCEVTripCount->getAPInt().getSExtValue();
+    }
+    else {
+      Traffic = 0.0f;
+      break;
     }
   }
   return Traffic;
 }
 
 
-float getReuseAtLevel(LinearCombine *LC, int Lvl) {
-  float LvlReuse = 1.0;
+float getReuseAtLevel(LinearCombine *LC, int Lvl, float PortDataTraffic, float PortDType) {
+  float LvlReuseRate = 0.0f;
   if (auto *SCEVInnerStride = dyn_cast<SCEVConstant>(LC->Coef[Lvl]->Raw)) {
+    if (SCEVInnerStride->getAPInt().getSExtValue() != PortDType) {
+      return LvlReuseRate;
+    }
     if (auto *SCEVInnerTripCount = dyn_cast<SCEVConstant>(LC->Coef[Lvl]->Raw)) {
       if (auto *SCEVOuterStride = dyn_cast<SCEVConstant>(LC->Coef[Lvl + 1]->Raw)) {
         int InnerStride = SCEVInnerStride->getAPInt().getSExtValue();
@@ -1990,33 +1996,41 @@ float getReuseAtLevel(LinearCombine *LC, int Lvl) {
         int OuterStride = SCEVOuterStride->getAPInt().getSExtValue();
         if (OuterStride < (InnerTripCount * InnerStride)) {
           if (OuterStride == 0) {
-            if (auto *SCEVOuterTripCount = dyn_cast<SCEVConstant>(LC->TripCount[Lvl + 1]->Raw)) {
-              if (SCEVOuterTripCount->getAPInt().getSExtValue()) {
-                LvlReuse = static_cast <float> (SCEVOuterTripCount->getAPInt().getSExtValue());
-              }
-            }
+            float ReuseTraffic = InnerTripCount * InnerStride;
+            LvlReuseRate = (PortDataTraffic - ReuseTraffic) / PortDataTraffic;  
           }
-          else
-            LvlReuse = (static_cast <float> (InnerTripCount) * InnerStride) / OuterStride;
+          else {
+            if (auto *SCEVOuterTripCount = dyn_cast<SCEVConstant>(LC->TripCount[Lvl + 1]->Raw)) {
+              int OuterTripCount = SCEVOuterTripCount->getAPInt().getSExtValue();
+              float ReuseTraffic = static_cast <float> (OuterStride) * (OuterTripCount - 1) + (InnerStride * InnerTripCount);
+              LvlReuseRate = (PortDataTraffic - ReuseTraffic) / PortDataTraffic;
+            } 
+          }
         }
       }
     }
   }
-  return LvlReuse;
+  return LvlReuseRate;
 }
 
-float getPortReuse(DFGEntry *DE, xform::CodeGenContext &CGC, DFGAnalysisResult &DAR) {
-  float Reuse = 1.0;
+std::pair<float, float> getPortReuse(DFGEntry *DE, xform::CodeGenContext &CGC, DFGAnalysisResult &DAR, float PortDType) { 
+  std::pair<float, float> RRAT(0.0f, 0.0f);
   SEWrapper *SW = DAR.affineMemoryAccess(DE, CGC.SE, false);
   if (auto *LC = dyn_cast<LinearCombine>(SW)) {
+    float PortDataTraffic = getPortDataTraffic(LC);
+    if (!PortDataTraffic) {
+      return RRAT;
+    }
+    RRAT.second = PortDataTraffic * PortDType;
     if (LC->Coef.size() == 1) {
-      return Reuse; 
+      return RRAT;
     }
-    for (unsigned int lvl = 0; lvl < LC->Coef.size() - 1; ++lvl) { // NOLINT
-      Reuse *= getReuseAtLevel(LC, lvl);
-    }
+    for (unsigned int lvl = 0; lvl < LC->Coef.size() - 1; ++lvl) { // NOLINT    
+      float ReuseRateAtLevel = getReuseAtLevel(LC, lvl, RRAT.second, PortDType);
+      RRAT.first = ReuseRateAtLevel;
+    }   
   }
-  return Reuse;
+  return RRAT;
 }
 
 } // namespace analysis
