@@ -125,13 +125,13 @@ bool StreamSpecialize::runOnFunction(Function &F) {
           float PortDType = MP[m]->Load->getType()->getScalarSizeInBits() / 8.0f;
           std::pair<float, float> MemPortReuse = dsa::analysis::getPortReuse(MP[m], CGC, DAR, PortDType);
           DSA_INFO << "Reuse rate of data at MemPort " << m << ": " << MemPortReuse.first;
-          DSA_INFO << "Data traffic at MemPort " << m << ": " << MemPortReuse.second << "B."; 
+          DSA_INFO << "Reuse traffic at MemPort " << m << ": " << MemPortReuse.second << "B."; 
         }
         for (unsigned int p = 0; p < PM.size(); ++p) { // NOLINT
           float PortDType = PM[p]->Store->getValueOperand()->getType()->getScalarSizeInBits() / 8.0f;
           std::pair<float, float> PortMemReuse = dsa::analysis::getPortReuse(PM[p], CGC, DAR, PortDType);
           DSA_INFO << "Reuse rate of data at PortMem " << p << ": " << PortMemReuse.first;
-          DSA_INFO << "Data traffic at PortMem " << p << ": " << PortMemReuse.second << "B.";  
+          DSA_INFO << "Reuse traffic at PortMem " << p << ": " << PortMemReuse.second << "B.";  
         }
       }
       // REUSE ANALYSIS ENDS HERE

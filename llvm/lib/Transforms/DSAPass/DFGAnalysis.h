@@ -527,11 +527,11 @@ extractStreamIntrinsics(DFGEntry *DE, xform::CodeGenContext &CGC, DFGAnalysisRes
 /*
  * \brief Use DFG Loop Nest to figure out overall DFG Traffic
  */ 
-float getPortDataTraffic(LinearCombine *LC); 
+float getPortDataTraffic(LinearCombine *LC, float PortDType); 
 /*
  * \brief Find the reuse at a given level
  */
-float getReuseAtLevel(LinearCombine *LC, int Lvl, float PortDataTraffic, float PortDType);
+float getReuseTrafficAtLevel(LinearCombine *LC, int Lvl, float BaseStream);
 
 /*
  * \brief Fint the reuse of a given port
