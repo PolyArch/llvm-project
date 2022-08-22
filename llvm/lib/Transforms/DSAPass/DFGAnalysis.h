@@ -338,6 +338,8 @@ struct DFGAnalysisResult {
    * \brief
    */
   void fuseAffineDimensions(ScalarEvolution &SE);
+
+  void injectAnalyzedArrayHint(DFGFile &DF, dsa::xform::CodeGenContext &CGC);
 };
 
 

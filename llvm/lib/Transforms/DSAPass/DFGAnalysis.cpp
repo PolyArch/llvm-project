@@ -35,6 +35,43 @@ std::vector<std::pair<IntrinsicInst *, IntrinsicInst *>> gatherConfigScope(Funct
   return Res;
 }
 
+void DFGAnalysisResult::injectAnalyzedArrayHint(DFGFile &DF, dsa::xform::CodeGenContext &CGC) {
+  for (int i = 0; i < (int) DF.DFGs.size(); ++i) { // NOLINT
+    auto &Entries = DF.DFGs[i]->Entries;
+    Instruction *Inst = nullptr;
+    for (int j = 0; j < (int) Entries.size(); ++j) { // NOLINT
+      auto *Entry = Entries[j];
+      int DType = -1;
+      if (auto *MP = dyn_cast<MemPort>(Entry)) {
+        DType = MP->Load->getType()->getScalarSizeInBits() / 8;
+        Inst = MP->Load;
+      } else if (auto *PM = dyn_cast<PortMem>(Entry)) {
+        DType = PM->Store->getValueOperand()->getType()->getScalarSizeInBits() / 8;
+        Inst = PM->Store;
+      } else if (auto *SMP = dyn_cast<SLPMemPort>(Entry)) {
+        DType = SMP->Coal[0]->Load->getType()->getScalarSizeInBits() / 8;
+        Inst = SMP->Coal[0]->Load;
+      } else if (auto *SPM = dyn_cast<SLPPortMem>(Entry)) { 
+        DType = SPM->Coal[0]->Store->getValueOperand()->getType()->getScalarSizeInBits() / 8;
+        Inst = SPM->Coal[0]->Store;
+      }
+      if (DType != -1) {
+        std::pair<float, float> PortMemReuse = dsa::analysis::getPortReuse(Entry, CGC, *this, DType);
+        auto *Array = findArrayInvolved(Inst, ArraySize, SI);
+        auto *Hint = ArraySize[Array];
+        DSA_INFO << *Hint;
+        if (auto *Reuse = dyn_cast<ConstantFP>(Hint->getOperand(2))) {
+          auto DReuse = Reuse->getValueAPF().convertToDouble();
+          if (std::fabs(DReuse + 1) < 1e-5) {
+            DSA_LOG(ARRAY_HINT) << "Injecting analyzed hint for ph: " << *Hint;
+            Hint->setOperand(2, ConstantFP::get(CGC.IB->getContext(), APFloat((double) PortMemReuse.second)));
+            DSA_LOG(ARRAY_HINT) << "Injected hint: " << *Hint;
+          }
+        }
+      }
+    }
+  }
+}
 
 void gatherArraySizeHints(DFGFile &DF, dsa::xform::CodeGenContext &CGC, DFGAnalysisResult &DAR) {
   auto *Start = DF.Config;

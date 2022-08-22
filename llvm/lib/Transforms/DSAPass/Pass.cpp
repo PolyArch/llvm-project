@@ -105,7 +105,7 @@ bool StreamSpecialize::runOnFunction(Function &F) {
       DSA_LOG(PASS) << i << ": Analyzing loop trip counts...";
       dsa::analysis::analyzeDFGLoops(DF, CGC, DAR);
       DSA_LOG(PASS) << i << ": Analyzing affine memory access...";
-      DAR.initAffineCache(DF, CGC.SE); 
+      DAR.initAffineCache(DF, CGC.SE);
       if (dsa::utils::ModuleContext().SLP_STREAM) {
         DSA_LOG(PASS) << i << ": Coalescing SLP memories...";
         dsa::analysis::gatherMemoryCoalescing(DF, *SE, DAR);
@@ -116,25 +116,8 @@ bool StreamSpecialize::runOnFunction(Function &F) {
         DSA_LOG(PASS) << i << ": Fusing affined dimensions...";
         DAR.fuseAffineDimensions(CGC.SE);
       } 
-      // REUSE ANALYSIS BEGINS HERE
       DSA_LOG(PASS) << i << ": Beginning reuse analysis..."; 
-      for (unsigned int j = 0; j < DF.DFGs.size(); ++j) { // NOLINT 
-        std::vector<MemPort *> MP = DF.DFGs[j]->EntryFilter<MemPort>();
-        std::vector<PortMem *> PM = DF.DFGs[j]->EntryFilter<PortMem>();
-        for (unsigned int m = 0; m < MP.size(); ++m) { // NOLINT
-          float PortDType = MP[m]->Load->getType()->getScalarSizeInBits() / 8.0f;
-          std::pair<float, float> MemPortReuse = dsa::analysis::getPortReuse(MP[m], CGC, DAR, PortDType);
-          DSA_INFO << "Reuse rate of data at MemPort " << m << ": " << MemPortReuse.first;
-          DSA_INFO << "Reuse traffic at MemPort " << m << ": " << MemPortReuse.second << "B."; 
-        }
-        for (unsigned int p = 0; p < PM.size(); ++p) { // NOLINT
-          float PortDType = PM[p]->Store->getValueOperand()->getType()->getScalarSizeInBits() / 8.0f;
-          std::pair<float, float> PortMemReuse = dsa::analysis::getPortReuse(PM[p], CGC, DAR, PortDType);
-          DSA_INFO << "Reuse rate of data at PortMem " << p << ": " << PortMemReuse.first;
-          DSA_INFO << "Reuse traffic at PortMem " << p << ": " << PortMemReuse.second << "B.";  
-        }
-      }
-      // REUSE ANALYSIS ENDS HERE
+      DAR.injectAnalyzedArrayHint(DF, CGC);
       DSA_LOG(PASS) << i << ": Extracting SPAD...";
       dsa::analysis::extractSpadFromScope(DF, CGC, DAR);
       DSA_LOG(PASS) << i << ": Emitting DFG...";
