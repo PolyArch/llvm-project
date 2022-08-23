@@ -59,12 +59,10 @@ void DFGAnalysisResult::injectAnalyzedArrayHint(DFGFile &DF, dsa::xform::CodeGen
         std::pair<float, float> PortMemReuse = dsa::analysis::getPortReuse(Entry, CGC, *this, DType);
         auto *Array = findArrayInvolved(Inst, ArraySize, SI);
         auto *Hint = ArraySize[Array];
-        DSA_INFO << *Hint;
         if (auto *Reuse = dyn_cast<ConstantFP>(Hint->getOperand(2))) {
           auto DReuse = Reuse->getValueAPF().convertToDouble();
           if (std::fabs(DReuse + 1) < 1e-5) {
-            DSA_LOG(ARRAY_HINT) << "Injecting analyzed hint for ph: " << *Hint;
-            Hint->setOperand(2, ConstantFP::get(CGC.IB->getContext(), APFloat((double) PortMemReuse.second)));
+            Hint->setOperand(2, ConstantFP::get(CGC.IB->getContext(), APFloat((double) PortMemReuse.first)));
             DSA_LOG(ARRAY_HINT) << "Injected hint: " << *Hint;
           }
         }
@@ -2042,6 +2040,7 @@ std::pair<float, float> getPortReuse(DFGEntry *DE, xform::CodeGenContext &CGC, D
   std::pair<float, float> RRAT(0.0f, 0.0f);
   SEWrapper *SW = DAR.affineMemoryAccess(DE, CGC.SE, false);
   if (auto *LC = dyn_cast<LinearCombine>(SW)) {
+    DSA_LOG(ARRAY_HINT) << LC->toString();
     float PortDataTraffic = getPortDataTraffic(LC, PortDType);
     if (PortDataTraffic == 0.0f) {
       return RRAT;
