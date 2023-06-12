@@ -22,6 +22,8 @@ using namespace llvm;
 #define DEBUG_TYPE "stream-specialize"
 
 bool StreamSpecialize::runOnModule(Module &M) {
+  // Get the flags for this pass.
+  // These flags can be encoded in environment variables.
   auto &MC = dsa::utils::ModuleContext();
   auto &TP = MC.TP;
   TP.beginRoi();

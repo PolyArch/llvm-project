@@ -2142,7 +2142,7 @@ void eraseOffloadedInstructions(DFGFile &DF, CodeGenContext &CGC) {
       if (BarrierMD->getValue()->getUniqueInteger().getSExtValue()) {
         // Find the "break" finger, and inject the wait at the "break" finger
         // block's end
-        auto *OutBB = FindLoopPrologue(DD->LoopNest.back());
+        auto *OutBB = FindLoopEpilogue(DD->LoopNest.back());
         Instruction *I = &OutBB->back();
         for (; !isa<PHINode>(I); I = I->getPrevNode()) {
           bool Found = false;

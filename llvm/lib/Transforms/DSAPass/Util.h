@@ -25,6 +25,18 @@ namespace dsa {
 namespace utils {
 
 /*!
+ * \brief A time profiler to profile the time of each region of interest.
+ *        This profiler adopts a tree-style profiling. For example, if you have
+ *
+ *        tp.beginRoi();
+ *        // balah0..
+ *        tp.beginRoi();
+ *        // balah1..
+ *        tp.endRoi();
+ *        // balah2..
+ *        tp.endRoi();
+ *
+ *        You will have ((balah1: time) balah0+balah1+balah2: time)
  */
 struct TimeProfiler {
 
@@ -182,7 +194,7 @@ struct ModuleFlags {
 };
 
 /*!
- * \brief Return the features enabled.
+ * \brief Return the flags of this pass, a singlton.
  */
 ModuleFlags &ModuleContext();
 
@@ -252,7 +264,10 @@ const double Eps = 1e-5;
 const int ReservedPorts[] = {23, 24, 25, 26};
 const int MemScrPort = 23;
 
-/// Helper function to build a InlineAsm-Call
+/*
+ * \brief Legacy functions before I know IRBuilder.
+ */
+// {
 CallInst *createAssembleCall(Type *Ty, StringRef Inst, StringRef Operand,
                              ArrayRef<Value *> Args, Instruction *Before);
 
@@ -261,6 +276,7 @@ Constant *createConstant(LLVMContext &Context, uint64_t Val, int Bits = 64);
 Value *CeilDiv(Value *A, Value *B, Instruction *InsertBefore);
 
 Value *CeilDiv(Value *A, Value *B, IRBuilder<> *IB);
+// }
 
 Value *stripCast(Value *);
 
@@ -283,22 +299,43 @@ const std::map<std::string, std::string> &spatialIntrinics();
 
 std::string bitwiseRename(Instruction *Inst);
 
+/*
+ * \brief If the given value can be a DFG entry (i.e. instruction node).
+ */
 bool CanBeAEntry(Value *Inst);
 
+/*
+ * \brief If the given value is constant int one.
+ */
 bool isOne(Value *Val);
 
-void FindEquivPHIs(Instruction *, std::set<Instruction *> &);
+/*
+ * \brief For the given instruction, put all the PHI node that are essentially
+ *        the same values in the result set.
+ */
+void FindEquivPHIs(Instruction *inst, std::set<Instruction *> &res);
 
+/*
+ * \brief Convert the LLVM comparison predicate to our DFG integer.
+ * \param Pred The predicate to convert.
+ * \param TF TODO(@were): I do not remember this parameter.
+ * \param Reverse If the predicate is reversed.
+ *        For example, a > b pred will be converted to a < b when true.
+ */
 int PredicateToInt(ICmpInst::Predicate Pred, bool TF, bool Reverse);
 
-BasicBlock *FindLoopPrologue(Loop *L);
+/*
+ * \brief Find the exit block of the given loop.
+ */
+BasicBlock *FindLoopEpilogue(Loop *L);
 
 
 /*!
- * \brief
+ * \brief Starting with instruction `Start` ends with the block in which `End` is,
+ *        apply function `F` onto all the instructions between.
  */
 void traverseAndApply(Instruction *Start, Instruction *End, DominatorTree *DT,
-                      std::function<void(Instruction*)>);
+                      std::function<void(Instruction*)> F);
 
 class DFGEntry;
 

@@ -303,7 +303,7 @@ DedicatedDFG::DedicatedDFG(DFGFile *Parent_, Loop *LI, int Unroll) // NOLINT
                                        Parent->Query->LI, nullptr, false);
   }
 
-  auto *Prologue = FindLoopPrologue(LoopNest.back());
+  auto *Prologue = FindLoopEpilogue(LoopNest.back());
   assert(Prologue);
   PrologueIP = &Prologue->back();
 }

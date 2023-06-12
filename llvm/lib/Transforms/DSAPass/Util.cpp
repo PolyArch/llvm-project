@@ -203,7 +203,7 @@ int PredicateToInt(ICmpInst::Predicate Pred, bool TF, bool Reverse) {
   return TF ? Res : (~Res & 7);
 }
 
-BasicBlock *FindLoopPrologue(Loop *L) {
+BasicBlock *FindLoopEpilogue(Loop *L) {
   auto *Latch = L->getLoopLatch();
   assert(Latch);
   auto *BI = dyn_cast<BranchInst>(&Latch->back());
