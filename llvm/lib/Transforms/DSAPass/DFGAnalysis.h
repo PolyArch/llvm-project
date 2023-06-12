@@ -345,6 +345,7 @@ struct DFGAnalysisResult {
 
 /*!
  * \brief Enumerate the unrolling degree.
+ *        This is essentially an unroll iterator.
  */
 struct DFGUnroll {
 
@@ -427,7 +428,8 @@ gatherConfigScope(Function &F);
 void gatherArraySizeHints(DFGFile &DF, dsa::xform::CodeGenContext &CGC, DFGAnalysisResult &DAR);
 
 /*!
- * \brief
+ * \brief Our compiler allows you to override the memory access analysis with
+ *        a linear stream.
  */
 std::unordered_map<const SCEV*, const SCEV*>
 gatherLinearOverride(IntrinsicInst *, IntrinsicInst *, xform::CodeGenContext &CGC);

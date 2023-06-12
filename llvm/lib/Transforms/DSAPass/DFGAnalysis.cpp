@@ -19,6 +19,9 @@
 namespace dsa {
 namespace analysis {
 
+/*
+ * \brief Find all the pairs of ss.config.start() and ss.config.end()
+ */
 std::vector<std::pair<IntrinsicInst *, IntrinsicInst *>> gatherConfigScope(Function &F) {
   std::vector<std::pair<IntrinsicInst *, IntrinsicInst *>> Res;
   for (auto &BB : F) {
@@ -426,8 +429,10 @@ struct DFGEntryAnalyzer : DFGVisitor {
 
   /*!
    * \brief Starting with the given instructions, BFS out to find all
-   * instrucitons slices. \param Q The given starting instructions. \param
-   * Visited Push the found instruction.
+   *        instrucitons slices.
+   * \param Q The given starting instructions.
+   * \param Visited Push the found instruction, which is also the vector
+   *        of the instruction to be put in the DFG.
    */
   void gatherEntryInsts(std::queue<Instruction *> &Q,
                         std::vector<Instruction *> &Visited) {
@@ -436,26 +441,39 @@ struct DFGEntryAnalyzer : DFGVisitor {
       auto *Cur = Q.front();
       int Idx = std::find(Visited.begin(), Visited.end(), Cur) - Visited.begin();
       Q.pop();
+      // User is consumer.
       DSA_LOG(DFG) << "Analyze Users of: " << *Cur;
       for (auto *Elem : Cur->users()) {
         auto *Inst = dyn_cast<Instruction>(Elem);
+        // If this consumer is not an instruction, skip it.
         if (!Inst) {
           DSA_LOG(DFG) << "Not a Inst: " << *Elem;
           continue;
         }
+        // If this instruction is not in the scope of this DFG, skip it.
         if (!DB.Contains(Inst)) {
           DSA_LOG(DFG) << "Not in blocks: " << *Elem;
           continue;
         }
+        // If this instruction cannot fit in the DFG, e.g. PHI, skip it.
         if (!CanBeAEntry(Inst)) {
           DSA_LOG(DFG) << "Not a entry: " << *Elem;
           continue;
         }
+        // If this value is not put into the result yet,
         auto Iter = std::find(Visited.begin(), Visited.end(), Inst);
         if (Iter == Visited.end()) {
+          // put it in.
           Q.push(Inst);
           Visited.push_back(Inst);
         } else {
+          // o.w. reorder it to a later place to garantee the topological order.
+          //
+          // For example, c = a + b. It makes no sense to dump c before a & b.
+          // If we are inspecting `b`, and `c` is already put into the result
+          // vector (NOTE: Visited is also the result vector) by `a`, and here
+          // we are on `b`. If we do nothing, `c` is before `b`, which will
+          // cause topological issue.
           if (Iter - Visited.begin() < Idx) {
             Visited.erase(Iter);
             Q.push(Inst);
@@ -477,6 +495,8 @@ struct DFGEntryAnalyzer : DFGVisitor {
 
     bool IsAcc = false;
 
+    // For a branch instruction, inspect its condition, since spatial
+    // architecture already pre-buffers all the instructions.
     auto *ToOffload =
         !isa<BranchInst>(Inst)
             ? Inst
@@ -489,6 +509,7 @@ struct DFGEntryAnalyzer : DFGVisitor {
         DSA_LOG(DFG) << "Already-in skip!";
         continue;
       }
+      // Accumulator
       if (auto *Phi = dyn_cast<PHINode>(Operand)) {
 
         std::queue<PHINode *> Q;
@@ -515,8 +536,10 @@ struct DFGEntryAnalyzer : DFGVisitor {
         // of detecting a accumulation by checking the BFS successors.
         DSA_CHECK(IsAcc) << "Phi should be an accumulator! " << *Phi;
 
+      // Handle indirect memory access.
       } else if (auto *Load = dyn_cast<LoadInst>(Operand)) {
         DB.Entries.push_back(differentiateMemoryStream(Load));
+      // Handle stream-in values.
       } else if (auto *Consumee = dyn_cast<Instruction>(Operand)) {
         DSA_LOG(DFG) << "Not in this Nest: " << DB.Contains(Consumee);
         if (!DB.Contains(Consumee)) {
@@ -528,6 +551,7 @@ struct DFGEntryAnalyzer : DFGVisitor {
             DSA_LOG(DFG) << "Outer loop invariant: " << *Consumee;
           }
         }
+      // Handle constant values.
       } else if (!isa<Constant>(Operand)) {
         DB.Entries.push_back(new InputConst(&DB, Operand));
         DSA_LOG(DFG) << "Other non const: " << *Operand;
@@ -648,33 +672,40 @@ struct DFGEntryAnalyzer : DFGVisitor {
     }
   }
 
+  /*
+   * \brief The entrance of analysing the entries of a dedicated DFG.
+   */
   void Visit(DedicatedDFG *DDPtr) override {
     std::vector<Instruction *> Visited;
     DBPtr = DDPtr;
     auto &DD = *DDPtr;
     std::queue<Instruction *> Q;
 
+    // Inspect all the blocks of the inner most loop.
     for (auto *BB : DD.InnerMost()->getBlocks()) {
 
-      // I am not sure if this is a safe assumption: All the blocks have its own
-      // immediate dom.
+      // This is to handle the predication based execution.
+      // For each code block, if its immediate dominator is within this
+      // inner most loop, use the dominator's considiton as the predicate
+      // of this block. Therefore, we need to inspect this condition
+      // instruction.
       auto *DomBB = DT->getNode(BB)->getIDom()->getBlock();
-
-      // Is the assumption too strong here?
-      // A intruction with a idom conditional instruction which does not belong
-      // to this DFG indicates the predicate is always true.
       if (DD.InnerMost()->getBlocksSet().count(DomBB)) {
         auto *BI = dyn_cast<BranchInst>(&DomBB->back());
         if (BI->isConditional()) {
           Visited.push_back(BI);
         }
       }
+      // Starting with load instructions,
+      // find all their consumers to build the DFG.
       for (auto &Inst : *BB) {
         if (auto *Load = dyn_cast<LoadInst>(&Inst)) {
           Visited.push_back(Load);
           Q.push(Load);
         }
       }
+      // Use a breadth first search to traverse all the consumers, to build
+      // the DFG.
       gatherEntryInsts(Q, Visited);
     }
 
@@ -709,10 +740,24 @@ struct DFGEntryAnalyzer : DFGVisitor {
     }
     gatherEntryInsts(Q, Visited);
 
+    // Besides the traverse, the input operands and the consumers should
+    // also be inspected again for special cases.
     for (auto *Inst : Visited) {
       if (!isa<LoadInst>(Inst)) {
+        // 1. For constant coefficients, these values are not instructions
+        //    at all. If we do not inspect them here, they have no chance
+        //    to be further inspected.
+        // 2. For accumulators, their consumers are PHI node, which should be
+        //    treated as a special case.
+        // 3. For an indirect stream, its input operand can be another level
+        //    of memory access, which also involves special rules.
+        // 4. Look at consumers below, this is the consumer side of the story.
+        //    We need to expose a in-port for the values to stream in.
         inspectOperands(Inst);
-        std::set<Instruction *> Equiv;
+        // The current DFG is the producer, and this value can be consumed
+        // by external DFG. The consumer instruction will not
+        // be considered as a part of this DFG, but we still
+        // need to expose a port for these inter-DFG communication.
         inspectConsumers(Inst);
       }
     }
@@ -843,17 +888,32 @@ void extractDFGFromScope(DFGFile &DF, dsa::xform::CodeGenContext &CGC) {
   auto *DT = CGC.DT;
   auto *LI = CGC.LI;
   // Extract the sketch of dedicated and temporal DFGs respectively.
-  // The instruction entries in each DFG cannot be instantiated until all the
-  // sketches are extracted, because we need this to analyze inter-DFG
-  // communication in one pass.
+
+  // This is something like a 2-pass analysis. The first pass get the blocks
+  // involved in the DFG. The second pass fill in the instructions involved
+  // in the DFG.
+  //
+  // We need a 2-pass analysis because we do not want to run into the
+  // chicken-egg paradox: say DFG 1 and DFG 2 communicates through
+  // an instruction value, but when analyzing DFG 1 the DFG 2
+  // does not exist yet. Therefore, we first gather all the blocks of
+  // each DFG. Then, when analysing DFG 1, if we find one instruction value
+  // belongs to DFG 1 also used in DFG 2, this can be later handled.
+
+  // Pass 1: Rule out all the blocks should not be involved in.
+
+  // Get all the blocks dominated by the end intrinsic. They anyways should not
+  // be in the DFG.
   std::set<BasicBlock *> OutOfBound;
   for (auto *BBN : breadth_first(DT->getNode(End->getParent()))) {
     if (BBN->getBlock() == End->getParent())
       continue;
     OutOfBound.insert(BBN->getBlock());
   }
+
   for (auto *NestedLoop : *LI) {
     for (auto *SubLoop : breadth_first(NestedLoop)) {
+      // Filter out all the loops not involved in this DFG.
       if (!DT->dominates(Start, SubLoop->getBlocks()[0]))
         continue;
       if (!SubLoop->getLoopID() || SubLoop->getLoopID()->getNumOperands() == 0)
@@ -865,6 +925,7 @@ void extractDFGFromScope(DFGFile &DF, dsa::xform::CodeGenContext &CGC) {
       }
       if (!InBound)
         continue;
+      // Get the unrolling degree.
       if (MDNode *MD = GetUnrollMetadata(SubLoop->getLoopID(),
                                          "llvm.loop.ss.dedicated")) {
         auto *MDFactor = dyn_cast<ConstantAsMetadata>(MD->getOperand(1));
@@ -878,6 +939,7 @@ void extractDFGFromScope(DFGFile &DF, dsa::xform::CodeGenContext &CGC) {
       }
     }
   }
+  // Gather all the blocks wrapped by temporal.begin/end.
   for (auto *BBN : breadth_first(DT->getNode(Start->getParent()))) {
     auto *BB = BBN->getBlock();
     auto Range = make_range(
@@ -909,6 +971,7 @@ void extractDFGFromScope(DFGFile &DF, dsa::xform::CodeGenContext &CGC) {
       break;
     }
   }
+  // Pass 2: After all the blocks are gathered, fill in the instructions.
   auto DFGs = DF.DFGFilter<DFGBase>();
   // All the sketches are extracted. Fill in the entries.
   for (int i = 0; i < (int) DFGs.size(); ++i) { // NOLINT
@@ -1982,9 +2045,23 @@ std::unordered_map<const SCEV*, const SCEV*>
 gatherLinearOverride(IntrinsicInst *Start, IntrinsicInst *End, xform::CodeGenContext &CGC) {
   std::unordered_map<const SCEV*, const SCEV*> Res;
   std::vector<IntrinsicInst*> ToRemove;
+  // Consider the loop nest below, it will generate a[0:n] instead of a[0:m].
+  //
+  // #prgma ss dfg fifo(a:n)
+  // for (int i = 0; i < m; ++i) {
+  //   // use a[i]
+  // }
+  //
+  // The clang frontend will encode and embed this hint in a ss_fifo intrinsic.
+  // This function below is to extract these hints.
+  // The hints will be put into a <k,v> map.
+  // The key is the array pointer, i.e. a in this case,
+  // and the value is the size of the array, i.e. n in this case.
   auto F = [&Res, &ToRemove, &CGC](Instruction *I) {
     auto &SE = CGC.SE;
+    // The parser already encodes 
     if (auto *II = dyn_cast<IntrinsicInst>(I)) {
+      // If it is ss_fifo, gather the hint.
       if (II->getIntrinsicID() == Intrinsic::ss_fifo) {
         Value *Stripped = II->getOperand(0);
         if (auto *BCI = dyn_cast<BitCastInst>(Stripped)) {
@@ -1997,9 +2074,11 @@ gatherLinearOverride(IntrinsicInst *Start, IntrinsicInst *End, xform::CodeGenCon
       }
     }
   };
+  // This function designates the scope of the instructions to be traversed.
+  // All the instructions between the config.start/end.
   traverseAndApply(Start, End, CGC.DT, F);
+  // Remove all the hint intrinsics.
   for (auto *Elem : ToRemove) {
-    // Elem->replaceAllUsesWith(UndefValue::get(Elem->getType()));
     Elem->eraseFromParent();
   }
   return Res;

@@ -102,7 +102,9 @@ bool StreamSpecialize::runOnFunction(Function &F) {
   IRBuilder<> IB(F.getContext());
   IBPtr = &IB;
 
+  // Find all pairs of config.start/end to transform.
   auto ScopePairs = dsa::analysis::gatherConfigScope(F);
+  // If no pairs, skip this function.
   if (!ScopePairs.empty()) {
     if (!dsa::utils::ModuleContext().EXTRACT) {
       // DSARegs = dsa::xform::injectDSARegisterFile(F);
@@ -143,19 +145,23 @@ bool StreamSpecialize::runOnFunction(Function &F) {
       dsa::xform::eliminateTemporal(F);
     }
     for (int i = 0; i < (int) ScopePairs.size(); ++i) { // NOLINT
+      // Profile the time of transforming each region.
       if (!dsa::utils::ModuleContext().EXTRACT) {
         dsa::utils::ModuleContext().TP.beginRoi();
       }
       auto *Start = ScopePairs[i].first;
       auto *End = ScopePairs[i].second;
+      // Gather the linear override information.
       auto LinearOverride = dsa::analysis::gatherLinearOverride(Start, End, CGC);
-
+      // Construct the data structure of a DFG file.
       DFGFile DF(Start, End, this);
       DF.ID = i;
       DSA_LOG(PASS) << i << ": Extracting DFG IR from "
         << *ScopePairs[i].first << " " << *ScopePairs[i].second;
+      // Extract the DFGs and put them into this file.
       dsa::analysis::extractDFGFromScope(DF, CGC);
       DSA_LOG(PASS) << DF.DFGs.size() << " DFGs extracted...";
+      // Explore the space of unrolling.
       dsa::analysis::DFGUnroll DU(DF, CGC);
       bool LocalSuccessSchedule = false;
       while (DU.hasNext()) {

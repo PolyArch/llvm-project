@@ -31,6 +31,10 @@ std::vector<utils::StickyRegister> injectDSARegisterFile(Function &F);
  */
 void emitDFG(raw_ostream &OS, DFGFile *DFG, analysis::DFGAnalysisResult &DAR, CodeGenContext &CGC);
 
+/*!
+ * \brief The data structure that holds all the LLVM analysis results for
+ *        the compiler transformation.
+ */
 struct CodeGenContext {
   /*!
    * \brief The IR injection wrapper.
