@@ -335,7 +335,18 @@ struct DFGAnalysisResult {
    */
   void overrideStream(DFGEntry *DE, SEWrapper *SW) { AffineInfoCache[DE] = SW; }
   /*!
-   * \brief
+   * \brief Fuse the memory access dimensions. Consider the example below:
+   *        {
+   *          for i in 0..n
+   *            for j in 0..n
+   *              a[i*n+j]
+   *        }
+   *        `i`, `j` are actually continous, and it will have better memory
+   *        bandwidth utilization if we have them in one dimension:
+   *        {
+   *          for ij in 0..n*n
+   *            a[ij]
+   *        }
    */
   void fuseAffineDimensions(ScalarEvolution &SE);
 
@@ -457,7 +468,8 @@ void extractSpadFromScope(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisRe
 void extractDFGFromScope(DFGFile &DF, dsa::xform::CodeGenContext &CGC);
 
 /*!
- * \brief Extract the port number from the generated schedule.
+ * \brief Extract the port number from the generated schedule by parsing
+ *        the scheduler-generated *.dfg.h file.
  * \param Ports Write the result in the allocated vector buffer.
  * \param CMIs The coalesced memory.
  */

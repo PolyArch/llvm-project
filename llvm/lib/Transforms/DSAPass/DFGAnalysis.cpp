@@ -1885,6 +1885,14 @@ void DFGAnalysisResult::fuseAffineDimensions(ScalarEvolution &SE) {
       CutOff = cutoffLevel(SMP, DAR);
       SLP = true;
 
+      // TODO(@were): Revisit this later. I did not remember the exact workload.
+      // This is to handle such a case:
+      // for i in 0..n
+      //   for j in 0..m
+      //     for k is coalseced (say 0..4)
+      //       access a[i,k]
+      // In this case, we are essentially fusing dimension `i` and `k`.
+      // Therefore, here we reorder `j` and `k`.
       if (const auto *LI0 = dyn_cast<LoopInvariant>(LC->TripCount[0])) {
         if (auto *PortWidth = LI0->constInt()) {
           DSA_CHECK(*PortWidth == SMP->Coal.size()); // Port is this wide.
@@ -1931,6 +1939,8 @@ void DFGAnalysisResult::fuseAffineDimensions(ScalarEvolution &SE) {
         DSA_LOG(FUSE) << "Fuse Delta: " << Delta;
         DSA_LOG(FUSE) << IP->dump();
         // Fix the accumulator signal associated with this port.
+        // After inner dimensions are gone, the reset level and produce level
+        // should alos be decreased. We adopt a from-inner-to-outer order.
         if (!IP->Tagged.empty()) {
           for (auto *Acc : IP->Tagged) {
             auto &Entry = AI[Acc];
