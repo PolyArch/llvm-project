@@ -464,7 +464,17 @@ void extractDFGFromScope(DFGFile &DF, dsa::xform::CodeGenContext &CGC);
 ConfigInfo extractDFGPorts(DFGFile &DF, SpadInfo &SI, bool Schedule);
 
 /*!
- * \brief Analyze the information of accumulator.
+ * \brief Analyze the tag information of accumulator.
+ *        In our architecture, we control the accumulator from a linear access
+ *        tag. Our linear access streams also returns a meta-information about
+ *        entering or leaving a loop.
+ *        {
+ *          acc = 0;
+ *          for i in 0..n:
+ *            acc += a[i];
+ *          // use acc
+ *        }
+ *        This pass is to associate this `a[i]` stream with the accumulator.
  * \param DF The DFG file to be analyzed.
  * \param CGC The context required for the analysis.
  * \param DAR The result to be written to.

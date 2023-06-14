@@ -1667,6 +1667,16 @@ void analyzeAccumulatorTags(DFGFile &DF, xform::CodeGenContext &CGC,
       for (auto *Acc : DD->EntryFilter<Accumulator>()) {
         // Insert it into DAR.
         DAR.AI.operator[](Acc);
+        // For an accumulator there are two key loop levels involved:
+        // for i in 0..n
+        //   acc = 0 // reset level
+        //   for j in 0..n
+        //     acc += ...
+        //   use acc // produce level
+        // In this case, `acc` is reset when entering loop `j`,
+        // and produced when exiting loop `j`.
+        //
+        // This pass first finds the loop produce and reset the accumulator.
         {
           std::set<Instruction*> Insts;
           FindEquivPHIs(Acc->Operation, Insts);
@@ -1700,6 +1710,12 @@ void analyzeAccumulatorTags(DFGFile &DF, xform::CodeGenContext &CGC,
             DSA_LOG(ACC) << Loops.size() << " reset when exiting!";
           }
         }
+        // Then this pass uses a BFS to find a memory access that is used
+        // throughout the expression that is used to accumulate,
+        // associate this memory access with this accumulator.
+        //
+        // If the memory access already has an accumulator, the compiler
+        // tends to associate more accumulators with it.
         auto V = analysis::bfsOperands(DD, Acc->Operation, nullptr).first;
         InputPort *Tag = nullptr;
         auto F = [&Tag, &Acc] (InputPort *IP) {
@@ -1741,6 +1757,8 @@ void analyzeAccumulatorTags(DFGFile &DF, xform::CodeGenContext &CGC,
             }
           }
         }
+        // This finds the produce level. The produce level means the accumulated
+        // value is finalized and used at that level.
         if (Tag) {
           for (auto *OP : Acc->Parent->EntryFilter<OutputPort>()) {
             if (!OP->Output) continue;
@@ -1806,6 +1824,13 @@ void analyzeAccumulatorTags(DFGFile &DF, xform::CodeGenContext &CGC,
         }
       }
     }
+    // If the associated memory access is a coalesced memory access, we need
+    // to add the level of reset and produce by 1, because of
+    // the extra dimension appended.
+    //
+    // Similar thing also happens to dimension fusion. The fused dimension
+    // cannot be higher than the tag level. If fused, we lose the information
+    // of leaving and entering a loop. (2)
     for (auto *IP : Graphs[i]->EntryFilter<InputPort>()) {
       if (!IP->Tagged.empty()) {
         DSA_LOG(ACC) << IP->dump(); 
@@ -1830,6 +1855,10 @@ void analyzeAccumulatorTags(DFGFile &DF, xform::CodeGenContext &CGC,
 }
 
 int cutoffLevel(InputPort *IP, DFGAnalysisResult &DAR) {
+  // As mentioned at (2), The fused dimension cannot be higher than
+  // the tag level. If fused, we lose the information of
+  // leaving and entering a loop.
+
   auto FRed = [&DAR](int X, Accumulator *A) {
     return std::min(X, std::min(DAR.AI[A].ResetLevel, DAR.AI[A].ProduceLevel));
   };
