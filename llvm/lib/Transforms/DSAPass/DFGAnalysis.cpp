@@ -117,7 +117,12 @@ void gatherArraySizeHints(DFGFile &DF, dsa::xform::CodeGenContext &CGC, DFGAnaly
   }
 }
 
-
+/*
+ * \brief Traverse all the downstream instructions from the `From` instruction.
+ * \return {Visited, OutBound}: `Visited` is the set of instructions that are
+ *                              within the scope of this DFG, `OutBound` is the
+ *                              set of instructions that are out of the scope.
+ */
 std::pair<std::set<Instruction *>, std::set<Instruction *>>
 bfsOperands(DFGBase *DB, Instruction *From, DominatorTree *DT) {
   std::set<Instruction *> Visited, OutBound;
@@ -259,15 +264,28 @@ struct DFGEntryAnalyzer : DFGVisitor {
     return nullptr;
   }
 
+  /*!
+   * TODO(@were): We can make this even more aggressive.
+   *              Make index a general expression, and offload it
+   *              to compute fabric.
+   *              For now, only one level of load is supported.
+   * \brief Differentiate this memory load is linear or indirect.
+   */
   DFGEntry *differentiateMemoryStream(LoadInst *Load) {
     auto &DB = *DBPtr;
+    // Analyze the pointer operand to see if it is indirect or conditional.
+    // By conditional, this is currently very adhoc to kv-join.
     if (auto *GEP = dyn_cast<GetElementPtrInst>(Load->getPointerOperand())) {
-
+      // Traverse back from the pointer operand.
+      // Gather all the upstream instructions.
       auto BFSBack = bfsOperands(DBPtr, GEP, DT);
 
+      // Return the indirect memory access node, if it is determined
+      // as indirect. If not, return null.
       auto FLoad = [Load, BFSBack, &DB](Value *Val) -> DFGEntry * {
         LoadInst *IdxLoad = nullptr;
         for (auto *Elem : BFSBack.first) {
+          // If another level of load is involved, it is indirect.
           if (auto *ThisLoad = dyn_cast<LoadInst>(Elem)) {
             DSA_CHECK(!IdxLoad)
               << "For now only one level indirect supported!"
@@ -281,6 +299,7 @@ struct DFGEntryAnalyzer : DFGVisitor {
         return nullptr;
       };
 
+      // This is to analyze the conditional memory access.
       auto FGather = [Load, GEP, this, &DB](Value *Val) -> DFGEntry * {
         auto *DD = dyn_cast<DedicatedDFG>(&DB);
 
@@ -294,6 +313,7 @@ struct DFGEntryAnalyzer : DFGVisitor {
 
 
         {
+          // If constant or indirect, skip analysis.
           auto *IdxSE = SE.getSCEV(Load->getPointerOperand());
           if (isa<SCEVAddRecExpr>(IdxSE) || isa<SCEVConstant>(IdxSE)) {
             return nullptr;
@@ -318,6 +338,8 @@ struct DFGEntryAnalyzer : DFGVisitor {
 
         Value *TripCount = nullptr;
         SmallVector<std::pair<ICmpInst *, bool>, 0> Conditions;
+        // Gather all the predications of this pointer, and the condition
+        // of moving the pointer forward.
         for (auto *Elem : Equiv) {
           if (auto *PHI = dyn_cast<PHINode>(Elem)) {
             for (auto &Essense : PHI->incoming_values()) {
@@ -355,6 +377,8 @@ struct DFGEntryAnalyzer : DFGVisitor {
               }
             }
           }
+          // This is very adhoc to analyze the trip count.
+          // It finds the `n` of `i<n`, where `i` is NOT a canonical loop.
           if (DD && Elem->getParent() == DD->InnerMost()->getLoopLatch()) {
             DSA_LOG(DFG) << "Latch" << *Elem;
             for (auto *User : Elem->users()) {
@@ -374,6 +398,8 @@ struct DFGEntryAnalyzer : DFGVisitor {
             }
           }
         }
+        // If we have the trip count, and the controlled conditions,
+        // it is determined as a conditional memory access.
         if (TripCount && !Conditions.empty()) {
 
           int Mask = 0;
@@ -401,8 +427,7 @@ struct DFGEntryAnalyzer : DFGVisitor {
 
           DSA_LOG(DFG) << "Forward mask: " << Mask;
           // FIXME: GEP for not is good enough, but we need a better way to
-          // figure out the start
-          //        pointer later.
+          //        figure out the start pointer later.
           return new CtrlMemPort(&DB, Load, GEP->getOperand(0), TripCount, Pred,
                                  Mask);
         }
@@ -423,6 +448,9 @@ struct DFGEntryAnalyzer : DFGVisitor {
         }
       }
     }
+
+    // If it is neither a indirect load nor a conditional load,
+    // it is a normal linear load.
     auto *MP = new MemPort(&DB, Load);
     return MP;
   }
@@ -560,6 +588,8 @@ struct DFGEntryAnalyzer : DFGVisitor {
 
     DFGEntry *Entry = nullptr;
     if (!IsAcc) {
+      // If this instruction is conditionally executed, associate it with
+      // the DFG node.
       if (auto *BI = dyn_cast<BranchInst>(Inst)) {
         assert(BI->isConditional());
         if (ICmpInst *Cmp = dyn_cast<ICmpInst>(BI->getCondition())) {
@@ -577,14 +607,14 @@ struct DFGEntryAnalyzer : DFGVisitor {
         }
         Entry = DB.Entries.back();
       } else {
+        // Normal instruction.
         auto *CB = new ComputeBody(&DB, Inst);
         DB.Entries.push_back(CB);
         Entry = CB;
         DSA_LOG(DFG) << "Plain Inst: " << *Inst;
       }
     } else {
-      // assert(Inst->getOpcode() == BinaryOperator::Add ||
-      //        Inst->getOpcode() == BinaryOperator::FAdd);
+      // Accumulation.
       auto *Acc = new Accumulator(&DB, Inst);
       DB.Entries.push_back(Acc);
       Entry = Acc;
@@ -609,7 +639,7 @@ struct DFGEntryAnalyzer : DFGVisitor {
         DSA_LOG(DFG) << "User: " << *User;
         if (auto *Store = dyn_cast<StoreInst>(User)) {
           LoadInst *Load = nullptr;
-
+          // This is for data move, a[i] = b[i].
           if (auto *GEP = dyn_cast<GetElementPtrInst>(Store->getPointerOperand())) {
             auto BFSBack = bfsOperands(DBPtr, GEP, DT);
             for (auto *Elem : BFSBack.first) {
@@ -618,7 +648,7 @@ struct DFGEntryAnalyzer : DFGVisitor {
               }
             }
           }
-
+          // This is for atomic analysis, a[b[i]] += c[i].
           if (Load && DB.Contains(Load)) {
             if (auto *BO = dyn_cast<BinaryOperator>(Store->getValueOperand())) {
               bool IsUpdate = false;
@@ -646,13 +676,13 @@ struct DFGEntryAnalyzer : DFGVisitor {
             }
             DSA_LOG(DFG) << "AtomicMem: " << *Inst;
           } else {
+            // Write to memory normally.
             auto *Out = new PortMem(&DB, Store);
             Entries.push_back(Out);
             DSA_LOG(DFG) << "PortMem: " << *Inst;
           }
         } else if (CanBeAEntry(User) && DB.BelongOtherDFG(dyn_cast<Instruction>(User))) {
-          // Understand this, why this cannot be an assertion?
-          // Support downstream data consumption
+          // Support downstream data consumption, stream out.
           auto *Consume = dyn_cast<Instruction>(User);
           auto *Out = new StreamOutPort(&DB, Inst);
           Entries.push_back(Out);
@@ -660,9 +690,7 @@ struct DFGEntryAnalyzer : DFGVisitor {
         } else if (auto *UserInst = dyn_cast<Instruction>(User)) {
           if (isa<PHINode>(UserInst))
             continue;
-          // DSA_LOG(DFG) << DB.InThisDFG(UserInst);
-          // DSA_LOG(DFG) << DB.BelongOtherDFG(UserInst);
-          // DSA_LOG(DFG) << DB.Contains(UserInst);
+          // Write this value to register not memory.
           if (!DB.BelongOtherDFG(UserInst) && !DB.InThisDFG(UserInst) && !DB.Contains(UserInst)) {
             Entries.push_back(new OutputPort(&DB, Inst));
             DSA_LOG(DFG) << "Write to register: " << *Inst;
@@ -716,6 +744,7 @@ struct DFGEntryAnalyzer : DFGVisitor {
       }
     }
 
+    // Inspect a[i] = b[i], and a[b[i]] ?= c[i].
     if (DD.Entries.empty()) {
       DSA_CHECK(Visited.size() == 1 && isa<LoadInst>(Visited[0]));
       DD.Entries.push_back(differentiateMemoryStream(dyn_cast<LoadInst>(Visited[0])));
@@ -771,6 +800,9 @@ void extractSpadFromScope(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisRe
   Instruction *End = DF.Fence;
   auto &Offset = DAR.SI.Offset;
   auto &Total = DAR.SI.Total;
+  // Compactly map memory addresses to scratchpad addresses.
+  // NOTE: This is just a allocate pass, no code replacement is done.
+  //       Code replacement will be done in stream generation.
   for (auto *BB : breadth_first(Start->getParent())) {
     iterator_range<BasicBlock::InstListType::iterator> Range(BB->begin(), BB->end());
     if (BB == Start->getParent()) {
@@ -796,23 +828,30 @@ void extractSpadFromScope(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisRe
     }
   }
 
-    // for (auto &I : Range) {
-    //   if (auto *CI = dyn_cast<CallInst>(&I)) {
-    //     if (auto *CF = CI->getCalledFunction()) {
-    //       if (CF->getName() == "arrayhint") {
-    //         auto *BCI = dyn_cast<BitCastInst>(CI->getOperand(0));
-    //         DSA_CHECK(BCI) << *CI->getOperand(0);
-    //         DSA_CHECK(isa<ConstantInt>(CI->getOperand(1))) << *CI->getOperand(1);
-    //         DSA_CHECK(isa<ConstantFP>(CI->getOperand(2))) << *CI->getOperand(2);
-    //         DAR.ArraySize[BCI->getOperand(0)] = CI;
-    //       }
-    //     }
-    //   }
-    // }
+  // for (auto &I : Range) {
+  //   if (auto *CI = dyn_cast<CallInst>(&I)) {
+  //     if (auto *CF = CI->getCalledFunction()) {
+  //       if (CF->getName() == "arrayhint") {
+  //         auto *BCI = dyn_cast<BitCastInst>(CI->getOperand(0));
+  //         DSA_CHECK(BCI) << *CI->getOperand(0);
+  //         DSA_CHECK(isa<ConstantInt>(CI->getOperand(1))) << *CI->getOperand(1);
+  //         DSA_CHECK(isa<ConstantFP>(CI->getOperand(2))) << *CI->getOperand(2);
+  //         DAR.ArraySize[BCI->getOperand(0)] = CI;
+  //       }
+  //     }
+  //   }
+  // }
 
+  // If DOUBLE_BUFFER flag is not enabled, skip the buffet analysis.
   if (!utils::ModuleContext().DOUBLE_BUFFER) {
     return;
   }
+  // Buffet analysis basically support such a 3-d pattern:
+  // for i in 0..ext.i
+  //   for j in 0..ext.j
+  //     for k in 0..ext.k
+  //       which means it is reused across j and will move forward on i
+  //       access a[i,k]
   auto DFGs = DF.DFGFilter<DFGBase>();
   for (int i = 0; i < (int) DFGs.size(); ++i) { // NOLINT
     auto *DFG = DFGs[i];
@@ -833,6 +872,7 @@ void extractSpadFromScope(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisRe
           if (auto *CIS2D = dyn_cast<SCEVConstant>(Stride[1])) {
             if (auto *CIN1D = dyn_cast<SCEVConstant>(N[0])) {
               if (auto *CIS3D = dyn_cast<SCEVConstant>(Stride[2])) {
+                // which is the j above.
                 if (CIS2D->getAPInt().getSExtValue() == 0 && CIS3D->getAPInt().getSExtValue() != 0) {
                   int DType = Ty->getScalarSizeInBits() / 8;
                   int BufferSize = (CIN1D->getAPInt().getSExtValue()) * 2 * DType;
