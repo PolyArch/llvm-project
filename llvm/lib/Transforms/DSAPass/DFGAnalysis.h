@@ -323,15 +323,15 @@ struct DFGAnalysisResult {
    */
   std::unordered_map<const SCEV*, const SCEV*> LinearOverride;
   /*!
-   * \brief
+   * \brief Analyze linear memory access.
    */
   SEWrapper *affineMemoryAccess(DFGEntry *DE, ScalarEvolution &SE, bool AllowNull);
   /*!
-   * \brief
+   * \brief Analyze all the dfg nodes with affine access.
    */
   void initAffineCache(DFGFile &DF, ScalarEvolution &SE);
   /*!
-   * \brief
+   * \brief Override the stream analysis.
    */
   void overrideStream(DFGEntry *DE, SEWrapper *SW) { AffineInfoCache[DE] = SW; }
   /*!

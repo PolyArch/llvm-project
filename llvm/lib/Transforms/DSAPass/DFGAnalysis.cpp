@@ -39,6 +39,8 @@ std::vector<std::pair<IntrinsicInst *, IntrinsicInst *>> gatherConfigScope(Funct
 }
 
 void DFGAnalysisResult::injectAnalyzedArrayHint(DFGFile &DF, dsa::xform::CodeGenContext &CGC) {
+  // All the information gathered in the function `gatherArraySizeHints` will
+  // be injected into the DFG data structure.
   for (int i = 0; i < (int) DF.DFGs.size(); ++i) { // NOLINT
     auto &Entries = DF.DFGs[i]->Entries;
     Instruction *Inst = nullptr;
@@ -77,6 +79,16 @@ void DFGAnalysisResult::injectAnalyzedArrayHint(DFGFile &DF, dsa::xform::CodeGen
 }
 
 void gatherArraySizeHints(DFGFile &DF, dsa::xform::CodeGenContext &CGC, DFGAnalysisResult &DAR) {
+  // In the dumped DFG, each port sourced from or destinated to memory can have
+  // a set of meta-data to indicate the size of the array and the reuse rate
+  // of the data.
+  //
+  // This is left to programmers to annotate in the intrinsic `arrayhint`.
+  // Because in LLVM IR, no matter how you implement the function signature,
+  // either `foo(int *a)` or `foo(int a[100])`, it will all be translated to
+  // something like `function @foo(i32 *%a)`, which loses the information of
+  // array size. Automatically doing this will require a complicated array-wise
+  // alias and footprint analysis, which imposes excessive compiler work.
   auto *Start = DF.Config;
   auto *End = DF.Fence;
   auto *DT = CGC.DT;
@@ -1245,15 +1257,20 @@ ConfigInfo extractDFGPorts(DFGFile &DF, SpadInfo &SI, bool Schedule) {
 
 void analyzeDFGLoops(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisResult &DAR) {
   struct DFGLoopAnalyzer : DFGVisitor {
+    // For now, we only assume dedidated regions require excessive computing
+    // power, so we only specialize and analyze loops for dedicated regions.
     void Visit(DedicatedDFG *DD) override {
       auto &LoopNest = DD->LoopNest;
       DLI.LoopNest = LoopNest;
       for (int i = (int) LoopNest.size() - 1; i >= 0; --i) { // NOLINT
+        // This returns the times of the backedge is branched, which is `n-1`.
         auto *NSCEV = SE.getBackedgeTakenCount(LoopNest[i]);
+        // If the loop bound is not analyzable at all, skip it.
         if (isa<SCEVCouldNotCompute>(NSCEV)) {
           DLI.TripCount.emplace_back();
           DSA_WARNING << "Trip count of Loop " << *LoopNest[i] << " could not compute!";
         } else {
+          // Add one, to offset the back edge taken count.
           NSCEV = SE.getAddExpr(NSCEV, SE.getConstant(APInt(64, 1, true)));
           if (const auto *MME = dyn_cast<SCEVMinMaxExpr>(NSCEV)) {
             DSA_CHECK(isa<SCEVUMaxExpr>(MME) || isa<SCEVSMaxExpr>(MME));
@@ -1263,6 +1280,8 @@ void analyzeDFGLoops(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisResult 
               }
             }
           }
+          // Analyze if the loop bound is a linear combination of
+          // the loop variables above.
           DSA_LOG(AFFINE) << *NSCEV;
           auto LoopSlice = std::vector<Loop*>(LoopNest.begin() + i + 1, LoopNest.end());
           DSA_LOG(AFFINE) << LoopSlice.size() << " loops above";
@@ -1272,6 +1291,8 @@ void analyzeDFGLoops(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisResult 
           DSA_LOG(AFFINE) << i << ": " << DLI.TripCount.back()->toString();
         }
       }
+      // We analyze from outer to inner, but we use them
+      // for the codegen from inner to outer.
       std::reverse(DLI.TripCount.begin(), DLI.TripCount.end());
     }
 
@@ -1373,6 +1394,7 @@ SEWrapper *DFGAnalysisResult::affineMemoryAccess(DFGEntry *DE, ScalarEvolution &
             }
             return false;
           };
+          // Remove all the inner loops un-related to save dimensions. (1)
           if (!Uses(MP->Load)) {
             LC->Coef.erase(LC->Coef.begin());
             LC->TripCount.erase(LC->TripCount.begin());
@@ -1386,6 +1408,8 @@ SEWrapper *DFGAnalysisResult::affineMemoryAccess(DFGEntry *DE, ScalarEvolution &
       analyze(PM->Store->getPointerOperand(), PM);
       DSA_CHECK(SW);
       if (auto *LC = dyn_cast<LinearCombine>(SW)) {
+        // Remove all the inner loops un-related to save dimensions.
+        // This branch should serve the same functionality as (1) above.
         auto PI = LC->partialInvariant();
         LC->Coef.erase(LC->Coef.begin(), LC->Coef.begin() + PI);
         LC->TripCount.erase(LC->TripCount.begin(), LC->TripCount.begin() + PI);
@@ -1417,12 +1441,18 @@ SEWrapper *DFGAnalysisResult::affineMemoryAccess(DFGEntry *DE, ScalarEvolution &
   };
 
   auto &AI = AffineInfoCache;
+  // If it is already analyzed, return the result.
   auto Iter = AI.find(DE);
   if (Iter != AI.end()) {
     return Iter->second;
   }
+  // If not, analyze it.
   AffineExtractor AE(*this, SE);
   DE->accept(&AE);
+  // TODO(@were): Revisit this later.
+  // I did not remember why I allow null result.
+  // It seems all the call sites do not allow null except memory coalescing
+  // analysis.
   if (!AllowNull) {
     DSA_CHECK(AE.SW) << DE->dump();
   }
@@ -1454,6 +1484,15 @@ void gatherMemoryCoalescingImpl(std::vector<DFGEntry*> &Entries, ScalarEvolution
             }
             int DBits = PtrA->getType()->getPointerElementType()->getScalarSizeInBits();
             DSA_LOG(SLP) << *PtrA << " - " << *PtrB << ": " << Offset;
+            // If we find two memory access, whose offset is the same as their
+            // data types, coalsece them. We iteratively coalsece them and
+            // use a DSU to represent the result of coalescing.
+            //
+            // DSU is disjoint set union. At the very beginning, each node
+            // belongs to their own set and each set has transitive
+            // unioned. Say `a[i+0]` and `a[i+1]` are coalesced, and `a[i+1]`
+            // and `a[i+2]` are coalesced, then `a[i+0]` and `a[i+2]` should
+            // also be coalesced. DSU does this easily.
             if (Offset == DBits / 8) {
               DSA_LOG(SLP) << "Coalesce!";
               if (utils::DSUGetSet(i, DSU) != utils::DSUGetSet(j, DSU)) {
@@ -1473,6 +1512,8 @@ void constructCoalescedMemory(DFGBase *DB, std::vector<DFGEntry*> &Entries,
                               std::vector<int> &DSU, std::vector<int> &DSize,
                               ScalarEvolution &SE, DFGAnalysisResult &DAR,
                               std::vector<int> &Remove) {
+  // For each DSU element, if dsu[i] == i, it is the master of this DSU.
+  // Therefore, we use this node to construct coalsece.
   for (int j = 0; j < (int) Entries.size(); ++j) { // NOLINT
     if (auto *Entry = dyn_cast<TEntry>(Entries[j])) {
       int DSet = utils::DSUGetSet(j, DSU);
@@ -1483,6 +1524,8 @@ void constructCoalescedMemory(DFGBase *DB, std::vector<DFGEntry*> &Entries,
       }
     }
   }
+  // If we recursively climb up the DSU tree, we will find the master of
+  // each set, and coalsece this node to the mater.
   for (int j = 0; j < (int) Entries.size(); ++j) { // NOLINT
     if (auto *Entry = dyn_cast<TEntry>(Entries[j])) {
       int DSet = utils::DSUGetSet(j, DSU);
@@ -1504,6 +1547,9 @@ void constructCoalescedMemory(DFGBase *DB, std::vector<DFGEntry*> &Entries,
         auto KeyB = indexPairOffset(SW0, DAR.affineMemoryAccess(B, SE, false), SE, true);
         return KeyA < KeyB;
       };
+      // This is to sort the coalseced memory accesses.
+      // Say we have a[i+1], a[i+0], a[i+3], a[i+2],
+      // they should be represented in the order of 0,1,2,3.
       std::sort(V.begin(), V.end(), FCmp);
       for (int j = 0; j < (int) V.size(); ++j) { // NOLINT
         V[j]->ID = j;
@@ -1516,6 +1562,12 @@ void constructCoalescedMemory(DFGBase *DB, std::vector<DFGEntry*> &Entries,
         L = LI->toLinearCombine(&SE);
       }
       DSA_CHECK(L);
+      // Append another dimension to the linear combine.
+      // Say before, we have a[i*4+0], a[i*4+1], a[i*4+2], a[i*4+3],
+      // For the first one, the memory access analyzed is
+      // (a+0) + (i*4) where `i` goes n/4 iterations.
+      // Now, we append a fake `j` after `i`, and the memory access
+      // (a+0) + (i*4) + j, where `i` stays the same, and `j` goes 4 iterations.
       L = new LinearCombine(*L);
       auto Ptr = Entry->Coal[0]->underlyingInst()->getOperand(TEntry::PtrOperandIdx);
       int DBits = Ptr->getType()->getPointerElementType()->getScalarSizeInBits();
@@ -1549,6 +1601,7 @@ void gatherMemoryCoalescing(DFGFile &DF, ScalarEvolution &SE, DFGAnalysisResult 
     for (int j = 0; j < (int) Entries.size(); ++j) { // NOLINT
       DSU[j] = j;
     }
+    // Analyze the memory accesses that should be coalesced.
     gatherMemoryCoalescingImpl<MemPort>(Entries, SE, DSU, DAR);
     gatherMemoryCoalescingImpl<PortMem>(Entries, SE, DSU, DAR);
     // TODO(@were): Make too wide port splitted later.
@@ -1557,6 +1610,7 @@ void gatherMemoryCoalescing(DFGFile &DF, ScalarEvolution &SE, DFGAnalysisResult 
       ++DSize[utils::DSUGetSet(j, DSU)];
     }
     std::vector<int> Remove;
+    // Coalesce the analyzed accesses.
     constructCoalescedMemory<SLPMemPort, MemPort>(DFGs[i], Entries, DSU, DSize, SE, DAR, Remove);
     constructCoalescedMemory<SLPPortMem, PortMem>(DFGs[i], Entries, DSU, DSize, SE, DAR, Remove);
     std::sort(Remove.begin(), Remove.end());

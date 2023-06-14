@@ -166,6 +166,7 @@ bool StreamSpecialize::runOnFunction(Function &F) {
       bool LocalSuccessSchedule = false;
       while (DU.hasNext()) {
         DU.next(true);
+        // This is the data structure of all the dsa-related analysis results.
         dsa::analysis::DFGAnalysisResult &DAR = DU.DAR.back();
         DSA_LOG(PASS) << i << ": Gather array size hints";
         dsa::analysis::gatherArraySizeHints(DF, CGC, DAR);
