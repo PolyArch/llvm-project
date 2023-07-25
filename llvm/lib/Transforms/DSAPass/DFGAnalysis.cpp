@@ -1,9 +1,9 @@
-#include "DFGEntry.h"
-#include "Util.h"
 // #include "dsa/arch/model.h"
 // #include "dsa/core/singleton.h"
 #include "dsa/debug.h"
 
+#include "./DFGEntry.h"
+#include "./Util.h"
 #include "./CodeXform.h"
 #include "./DFGAnalysis.h"
 #include "./StreamAnalysis.h"
@@ -13,7 +13,7 @@
 #include "llvm/IR/Instruction.h"
 #include "llvm/Support/Casting.h"
 #include <string>
-
+#include <typeinfo>
 #define DEBUG_TYPE "dfg-analysis"
 
 namespace dsa {
@@ -654,23 +654,23 @@ struct DFGEntryAnalyzer : DFGVisitor {
     auto &DD = *DDPtr;
     std::queue<Instruction *> Q;
 
-    for (auto *BB : DD.InnerMost()->getBlocks()) {
+    for (llvm::BasicBlock *BB : DD.InnerMost()->getBlocks()) {
 
       // I am not sure if this is a safe assumption: All the blocks have its own
       // immediate dom.
-      auto *DomBB = DT->getNode(BB)->getIDom()->getBlock();
+      llvm::BasicBlock *DomBB = DT->getNode(BB)->getIDom()->getBlock();
 
       // Is the assumption too strong here?
       // A intruction with a idom conditional instruction which does not belong
       // to this DFG indicates the predicate is always true.
       if (DD.InnerMost()->getBlocksSet().count(DomBB)) {
-        auto *BI = dyn_cast<BranchInst>(&DomBB->back());
+        BranchInst *BI = dyn_cast<BranchInst>(&DomBB->back());
         if (BI->isConditional()) {
           Visited.push_back(BI);
         }
       }
-      for (auto &Inst : *BB) {
-        if (auto *Load = dyn_cast<LoadInst>(&Inst)) {
+      for (llvm::Instruction &Inst : *BB) {
+        if (LoadInst *Load = dyn_cast<LoadInst>(&Inst)) {
           Visited.push_back(Load);
           Q.push(Load);
         }
@@ -678,7 +678,7 @@ struct DFGEntryAnalyzer : DFGVisitor {
       gatherEntryInsts(Q, Visited);
     }
 
-    for (auto *Inst : Visited) {
+    for (llvm::Instruction *Inst : Visited) {
       if (!isa<LoadInst>(Inst)) {
         inspectOperands(Inst);
         inspectConsumers(Inst);
@@ -686,7 +686,18 @@ struct DFGEntryAnalyzer : DFGVisitor {
     }
 
     if (DD.Entries.empty()) {
+      if (Visited.size() > 1) {
+        DSA_INFO << "Multiple Instructions: ";
+        for (auto *Inst : Visited) {
+          DSA_INFO <<  llvm::Instruction::getOpcodeName(Inst->getOpcode());
+        }
+        DSA_CHECK(Visited.size() == 1);
+      }
+
+      DSA_INFO << Visited[0] << " "<< Visited.size() << "\n";
       DSA_CHECK(Visited.size() == 1 && isa<LoadInst>(Visited[0]));
+
+
       DD.Entries.push_back(differentiateMemoryStream(dyn_cast<LoadInst>(Visited[0])));
       inspectConsumers(Visited[0]);
     }
@@ -838,10 +849,10 @@ void extractSpadFromScope(DFGFile &DF, xform::CodeGenContext &CGC, DFGAnalysisRe
 }
 
 void extractDFGFromScope(DFGFile &DF, dsa::xform::CodeGenContext &CGC) {
-  auto *Start = DF.Config;
-  auto *End = DF.Fence;
-  auto *DT = CGC.DT;
-  auto *LI = CGC.LI;
+  Instruction *Start = DF.Config;
+  Instruction *End = DF.Fence;
+  DominatorTree *DT = CGC.DT;
+  LoopInfo *LI = CGC.LI;
   // Extract the sketch of dedicated and temporal DFGs respectively.
   // The instruction entries in each DFG cannot be instantiated until all the
   // sketches are extracted, because we need this to analyze inter-DFG
@@ -852,32 +863,43 @@ void extractDFGFromScope(DFGFile &DF, dsa::xform::CodeGenContext &CGC) {
       continue;
     OutOfBound.insert(BBN->getBlock());
   }
-  for (auto *NestedLoop : *LI) {
-    for (auto *SubLoop : breadth_first(NestedLoop)) {
+  for (Loop *NestedLoop : *LI) {
+    for (Loop *SubLoop : breadth_first(NestedLoop)) {
       if (!DT->dominates(Start, SubLoop->getBlocks()[0]))
         continue;
       if (!SubLoop->getLoopID() || SubLoop->getLoopID()->getNumOperands() == 0)
         continue;
       bool InBound = true;
-      for (auto *BB : SubLoop->getBlocks()) {
+      for (BasicBlock *BB : SubLoop->getBlocks()) {
         if (OutOfBound.count(BB))
           InBound = false;
       }
       if (!InBound)
         continue;
+
       if (MDNode *MD = GetUnrollMetadata(SubLoop->getLoopID(),
                                          "llvm.loop.ss.dedicated")) {
-        auto *MDFactor = dyn_cast<ConstantAsMetadata>(MD->getOperand(1));
+        ConstantAsMetadata *MDFactor = dyn_cast<ConstantAsMetadata>(MD->getOperand(1));
         DSA_CHECK(MDFactor);
         int Factor = (int)MDFactor->getValue()->getUniqueInteger().getSExtValue();
         if (Factor == 0) {
           Factor = 1;
         }
-        auto *DD = new DedicatedDFG(&DF, SubLoop, Factor);
+        DedicatedDFG *DD = new DedicatedDFG(&DF, SubLoop, Factor);
+        DF.addDFG(DD);
+      } else if (SubLoop->getSubLoops().empty()) {
+        DSA_WARNING << "No ss_dfg found, falling-back to innermost loop";
+        DedicatedDFG *DD = new DedicatedDFG(&DF, SubLoop, -1);
         DF.addDFG(DD);
       }
     }
   }
+  
+  if (DF.DFGs.size() == 0) {
+    DSA_INFO << "No dedicated DFG found\n";
+    DSA_CHECK(false);
+  }
+
   for (auto *BBN : breadth_first(DT->getNode(Start->getParent()))) {
     auto *BB = BBN->getBlock();
     auto Range = make_range(
@@ -1899,7 +1921,9 @@ DFGUnroll::DFGUnroll(DFGFile &DF, xform::CodeGenContext &CGC) : DF(DF) {
 }
 
 bool DFGUnroll::hasNext() {
-  DSA_CHECK(!Idx.empty());
+  if (Idx.empty()) {
+    return false;
+  }
   return Idx.back() < (int) Degrees.back().size();
 }
 

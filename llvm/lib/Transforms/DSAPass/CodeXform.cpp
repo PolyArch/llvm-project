@@ -851,8 +851,7 @@ struct DFGPrinter : dsa::DFGVisitor {
           CtrlBit.addControlledMemoryStream(i, EntryOp);
           if (auto *CMP = dyn_cast<CtrlMemPort>(EntryOp)) {
             CMP->ForPredicate = true;
-          }
-        } else {
+          }        } else {
           OS << ValueToOperandText(Val);
         }
       }
