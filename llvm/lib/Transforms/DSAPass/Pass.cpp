@@ -156,6 +156,10 @@ bool StreamSpecialize::runOnFunction(Function &F) {
       DSA_LOG(PASS) << DF.DFGs.size() << " DFGs extracted...";
       dsa::analysis::DFGUnroll DU(DF, CGC);
       bool LocalSuccessSchedule = false;
+      if (!DU.hasNext()) {
+        DSA_CHECK(false) << "No DFGs extracted from " << *Start << " " << *End;
+      }
+
       while (DU.hasNext()) {
         DU.next(true);
         dsa::analysis::DFGAnalysisResult &DAR = DU.DAR.back();

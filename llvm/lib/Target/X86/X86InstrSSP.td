@@ -49,6 +49,19 @@ def SSP_STREAM_STEP
  * Notice that operands are reordered so register value comes first.
  * Use MRMXr to encode source register in R/M and not use R/O. 
  */
+def SSP_STREAM_STEP_AMNT
+  : ISSP<0x45,
+         MRMXr,
+         Imm8,
+         (outs),
+         (ins GR64:$amount, i64i8imm:$stream),
+         "ssp.stream.step_amnt\t{$stream, $amount|$stream, $amount}",
+         [(int_ssp_stream_step_amnt i64immSExt8:$stream, GR64:$amount)]>;
+
+/**
+ * Notice that operands are reordered so register value comes first.
+ * Use MRMXr to encode source register in R/M and not use R/O. 
+ */
 def SSP_STREAM_INPUT
   : ISSP<0x34,
          MRMXr,

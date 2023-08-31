@@ -113,6 +113,8 @@ bool CanBeAEntry(Value *Val) {
     auto Name = Call->getCalledFunction()->getName();
     if (spatialIntrinics().find(Name.str()) != spatialIntrinics().end()) {
       return true;
+    } else {
+      DSA_WARNING << Name << " is not a spatial intrinsic!";
     }
   }
   if (isa<CmpInst>(Inst)) {
