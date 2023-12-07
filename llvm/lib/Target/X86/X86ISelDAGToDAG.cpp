@@ -4565,6 +4565,18 @@ void X86DAGToDAGISel::Select(SDNode *Node) {
       ReplaceNode(Node, CNode);
       return;
     }
+    case Intrinsic::ssp_stream_tile_load: {
+      unsigned Opc = X86::P_SSP_STREAM_TILE_LOAD;
+      unsigned StreamId = Node->getConstantOperandVal(2);
+      SDValue StreamIdValue = getI64Imm(StreamId, dl);
+      unsigned TIndex = Node->getConstantOperandVal(3);
+      SDValue TReg = getI8Imm(TIndex, dl);
+      SDValue Chain = Node->getOperand(0);
+      SDValue Ops[] = { StreamIdValue, TReg, Chain };
+      MachineSDNode *CNode = CurDAG->getMachineNode(Opc, dl, MVT::Other, Ops);
+      ReplaceNode(Node, CNode);
+      return;
+    }
     }
     break;
   }

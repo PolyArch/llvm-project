@@ -1590,9 +1590,15 @@ def int_ssp_stream_end    : Intrinsic<[],
                                       [llvm_i64_ty],
                                       [IntrWillReturn]>;
 // Move a value from core SE to registers.
+// If the destination reg is multiple size of stream element, broadcast.
 def int_ssp_stream_load   : Intrinsic<[llvm_any_ty],
                                       [llvm_i64_ty],
                                       [IntrWillReturn]>;
+// Move a value from core SE to tile registers.
+// Used to implement AMX.
+def int_ssp_stream_tile_load : Intrinsic<[],
+                                         [llvm_i64_ty, llvm_i8_ty],
+                                         [IntrWillReturn]>;
 // Placeholder for core SE stores (value computed by core SE).
 def int_ssp_stream_store  : Intrinsic<[],
                                       [llvm_i64_ty],
@@ -1605,6 +1611,10 @@ def int_ssp_stream_atomic : Intrinsic<[llvm_any_ty],
 def int_ssp_stream_step   : Intrinsic<[],
                                       [llvm_i64_ty],
                                       [IntrWillReturn]>;
+// Steps a stream by some amount.
+def int_ssp_stream_step_amnt : Intrinsic<[],
+                                         [llvm_i64_ty, llvm_i64_ty],
+                                         [IntrWillReturn]>;
 
 //===----------------------------------------------------------------------===//
 // Target-specific intrinsics

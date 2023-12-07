@@ -33773,6 +33773,18 @@ X86TargetLowering::EmitInstrWithCustomInserter(MachineInstr &MI,
     MI.eraseFromParent(); // The pseudo is gone now.
     return BB;
   }
+  case X86::P_SSP_STREAM_TILE_LOAD: {
+    const DebugLoc &DL = MI.getDebugLoc();
+    unsigned Opc = X86::SSP_STREAM_TILE_LOAD;
+
+    MachineInstrBuilder MIB = BuildMI(*BB, MI, DL, TII->get(Opc));
+    MIB.addReg(TMMImmToTMMReg(MI.getOperand(1).getImm()),
+               RegState::Define); // tmm reg
+    MIB.add(MI.getOperand(0));    // stream id
+
+    MI.eraseFromParent(); // The pseudo is gone now.
+    return BB;
+  }
   }
 }
 
