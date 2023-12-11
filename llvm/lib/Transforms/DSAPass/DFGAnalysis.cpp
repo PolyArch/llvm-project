@@ -878,11 +878,8 @@ void extractDFGFromScope(DFGFile &DF, dsa::xform::CodeGenContext &CGC) {
     OutOfBound.insert(BBN->getBlock());
   }
 
+  // Condition on whether this loop level is "interesting"
   auto continueSearch = [](Loop* loop) -> bool {
-    // If there's no Loop ID, then it's not a loop
-    if (!loop->getLoopID())
-      return true;
-
     // If there's no operands, then it's not a loop
     if (loop->getLoopID()->getNumOperands() == 0)
       return true;
@@ -896,10 +893,8 @@ void extractDFGFromScope(DFGFile &DF, dsa::xform::CodeGenContext &CGC) {
     return loop->getSubLoops().size() == 1;
   };
 
-
-
-  auto getSubLoops = [continueSearch](Loop* loop) -> Loop* {
-
+  // Continue searching until reach a level that is interesting
+  auto searchLoop = [continueSearch](Loop* loop) -> Loop* {
     while (continueSearch(loop)) {
       loop = loop->getSubLoops()[0];
     }
@@ -909,6 +904,7 @@ void extractDFGFromScope(DFGFile &DF, dsa::xform::CodeGenContext &CGC) {
 
   std::queue<std::pair<Loop*, MDNode*>> toCheck;
 
+  // Push all the loops to search
   for (Loop *NestedLoop : *LI) {
     toCheck.push(std::make_pair(NestedLoop, nullptr));
   }
@@ -916,13 +912,17 @@ void extractDFGFromScope(DFGFile &DF, dsa::xform::CodeGenContext &CGC) {
   while (!toCheck.empty()) {
     Loop *loop = toCheck.front().first;
     MDNode *meta = toCheck.front().second;
+
+    // Check if this loop has meta-data that we should add
     if (MDNode *MD = GetUnrollMetadata(loop->getLoopID(), "llvm.loop.ss.dedicated")) {
       meta = MD;
     }
 
-    if (loop->getSubLoops().empty()) {
+    // If this is an inner-loop that has computation, then we should add it as a DFG
+    if (loop->getSubLoops().empty() && loop->getLoopID()->getNumOperands() > 0) {
       int unroll_factor = -1;
 
+      // As we have it explicitly referenced, we should use it to get the different factors
       if (meta) {
         ConstantAsMetadata *MDFactor = dyn_cast<ConstantAsMetadata>(meta->getOperand(1));
         DSA_CHECK(MDFactor) << "Can't find Unroll Factor as given";
@@ -932,64 +932,18 @@ void extractDFGFromScope(DFGFile &DF, dsa::xform::CodeGenContext &CGC) {
         }
       }
 
+      // Add this as a DFG, as it's an inner-loop
       DedicatedDFG *DD = new DedicatedDFG(&DF, loop, unroll_factor);
       DF.addDFG(DD);
     } else {
-      // Get DFG for innerloop
+      // Search the interior loops
       for (Loop *subloop : loop->getSubLoops()) {
-        toCheck.push(std::make_pair(getSubLoops(subloop), meta));
+        toCheck.push(std::make_pair(searchLoop(subloop), meta));
       }
     }
 
     toCheck.pop();
   }
-
-
-
-  /*
-  for (Loop *NestedLoop : *LI) {
-    for (Loop *SubLoop : breadth_first(NestedLoop)) {
-      if (!DT->dominates(Start, SubLoop->getBlocks()[0]))
-        continue;
-      if (!SubLoop->getLoopID() || SubLoop->getLoopID()->getNumOperands() == 0)
-        continue;
-      bool InBound = true;
-      for (BasicBlock *BB : SubLoop->getBlocks()) {
-        if (OutOfBound.count(BB))
-          InBound = false;
-      }
-      if (!InBound)
-        continue;
-
-      
-      auto getInnerLoop = [](Loop* loop) {
-        while (loop->getSubLoops().size() == 1) {
-          loop = loop->getSubLoops()[0];
-        }
-        return loop;
-      };
-      
-      // Explicitly Stated DFG for innermost loop
-      if (MDNode *MD = GetUnrollMetadata(SubLoop->getLoopID(),
-                                         "llvm.loop.ss.dedicated")) {
-        ConstantAsMetadata *MDFactor = dyn_cast<ConstantAsMetadata>(MD->getOperand(1));
-        DSA_CHECK(MDFactor) << "Can't find Unroll Factor";
-        int Factor = (int)MDFactor->getValue()->getUniqueInteger().getSExtValue();
-        if (Factor == 0) {
-          Factor = 1;
-        }
-
-        DedicatedDFG *DD = new DedicatedDFG(&DF, SubLoop, Factor);
-        DF.addDFG(DD);
-      } else if (SubLoop->getSubLoops().empty()) {
-        // 
-        DSA_WARNING << "No ss_dfg found, falling-back to innermost loop";
-        DedicatedDFG *DD = new DedicatedDFG(&DF, SubLoop, -1);
-        DF.addDFG(DD);
-      }
-    }
-  }
-  */
   
   if (DF.DFGs.size() == 0) {
     DSA_INFO << "No dedicated DFG found\n";
