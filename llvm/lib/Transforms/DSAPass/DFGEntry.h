@@ -281,7 +281,7 @@ struct SLPIO : TBase {
   inline void accept(dsa::DFGEntryVisitor *DEV) override;
 
   Instruction *underlyingInst() override {
-    DSA_CHECK(false) << "This node for sure has multiple instructions!";
+    //DSA_CHECK(false) << "This node for sure has multiple instructions!";
     return nullptr;
   }
 

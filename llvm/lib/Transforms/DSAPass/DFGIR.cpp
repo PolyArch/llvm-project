@@ -721,7 +721,8 @@ void DFGBase::accept(dsa::DFGVisitor *Visitor) { Visitor->Visit(this); }
 void DedicatedDFG::accept(dsa::DFGVisitor *Visitor) { Visitor->Visit(this); }
 void TemporalDFG::accept(dsa::DFGVisitor *Visitor) { Visitor->Visit(this); }
 
-std::string DFGBase::nameOf(Value *Val, int VecIdx) {
+std::string DFGBase::nameOf(Value *Val, int VecIdx) {  
+  DSA_CHECK(Val) << "Value is null! " << VecIdx;
   auto *Entry = InThisDFG(Val);
   DSA_CHECK(Entry) << "CANNOT find entry for " << Val << ": " << *Val;
   auto Vs = Entry->underlyingValues();

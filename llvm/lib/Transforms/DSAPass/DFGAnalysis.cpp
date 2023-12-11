@@ -257,10 +257,10 @@ struct DFGEntryAnalyzer : DFGVisitor {
   }
 
   DFGEntry *differentiateMemoryStream(LoadInst *Load) {
-    auto &DB = *DBPtr;
-    if (auto *GEP = dyn_cast<GetElementPtrInst>(Load->getPointerOperand())) {
+    DFGBase& DB = *DBPtr;
+    if (llvm::GetElementPtrInst *GEP = dyn_cast<GetElementPtrInst>(Load->getPointerOperand())) {
+      std::pair<std::set<llvm::Instruction *>, std::set<llvm::Instruction *>> BFSBack = bfsOperands(DBPtr, GEP, DT);
 
-      auto BFSBack = bfsOperands(DBPtr, GEP, DT);
 
       auto FLoad = [Load, BFSBack, &DB](Value *Val) -> DFGEntry * {
         LoadInst *IdxLoad = nullptr;
@@ -406,15 +406,17 @@ struct DFGEntryAnalyzer : DFGVisitor {
         return nullptr;
       };
 
+
       // TODO(@were): Can I hoist BFSOperands out here?
+      
       for (size_t I = 1; I < GEP->getNumOperands(); ++I) {
-        if (auto *Res = FLoad(GEP->getOperand(I)))
+        if (DFGEntry *Res = FLoad(GEP->getOperand(I)))
           return Res;
-        if (auto *Res = FGather(GEP->getOperand(I)))
+        if (DFGEntry *Res = FGather(GEP->getOperand(I)))
           return Res;
-        if (auto *Cast = dyn_cast<CastInst>(GEP->getOperand(I))) {
+        if (CastInst *Cast = dyn_cast<CastInst>(GEP->getOperand(I))) {
           for (size_t J = 0; J < Cast->getNumOperands(); ++J) {
-            if (auto *Res = FGather(Cast->getOperand(J)))
+            if (DFGEntry *Res = FGather(Cast->getOperand(J)))
               return Res;
           }
         }
@@ -677,7 +679,8 @@ struct DFGEntryAnalyzer : DFGVisitor {
       }
       gatherEntryInsts(Q, Visited);
     }
-
+    
+    // Inspect all non-load instructions.
     for (llvm::Instruction *Inst : Visited) {
       if (!isa<LoadInst>(Inst)) {
         inspectOperands(Inst);
@@ -685,7 +688,16 @@ struct DFGEntryAnalyzer : DFGVisitor {
       }
     }
 
+    // Inspect all load instructions.
     if (DD.Entries.empty()) {
+      for (llvm::Instruction *Inst : Visited) {
+        if (isa<LoadInst>(Inst)) {
+          DD.Entries.push_back(differentiateMemoryStream(dyn_cast<LoadInst>(Inst)));
+          inspectConsumers(Inst);
+        }
+      }
+
+      /*
       if (Visited.size() > 1) {
         DSA_INFO << "Multiple Instructions: ";
         for (auto *Inst : Visited) {
@@ -700,6 +712,7 @@ struct DFGEntryAnalyzer : DFGVisitor {
 
       DD.Entries.push_back(differentiateMemoryStream(dyn_cast<LoadInst>(Visited[0])));
       inspectConsumers(Visited[0]);
+      */
     }
 
     DSA_CHECK(!DD.Entries.empty());
@@ -859,10 +872,81 @@ void extractDFGFromScope(DFGFile &DF, dsa::xform::CodeGenContext &CGC) {
   // communication in one pass.
   std::set<BasicBlock *> OutOfBound;
   for (auto *BBN : breadth_first(DT->getNode(End->getParent()))) {
+    DSA_CHECK(BBN) << "Cannot find the node from " << *Start << " to " << *End;
     if (BBN->getBlock() == End->getParent())
       continue;
     OutOfBound.insert(BBN->getBlock());
   }
+
+  auto continueSearch = [](Loop* loop) -> bool {
+    // If there's no Loop ID, then it's not a loop
+    if (!loop->getLoopID())
+      return true;
+
+    // If there's no operands, then it's not a loop
+    if (loop->getLoopID()->getNumOperands() == 0)
+      return true;
+    
+    // Check if there's unroll metadata
+    if (GetUnrollMetadata(loop->getLoopID(), "llvm.loop.ss.dedicated")) {
+      DSA_INFO << "Found unroll metadata" << *loop;
+      return false;
+    }
+
+    return loop->getSubLoops().size() == 1;
+  };
+
+
+
+  auto getSubLoops = [continueSearch](Loop* loop) -> Loop* {
+
+    while (continueSearch(loop)) {
+      loop = loop->getSubLoops()[0];
+    }
+    
+    return loop;
+  };
+
+  std::queue<std::pair<Loop*, MDNode*>> toCheck;
+
+  for (Loop *NestedLoop : *LI) {
+    toCheck.push(std::make_pair(NestedLoop, nullptr));
+  }
+
+  while (!toCheck.empty()) {
+    Loop *loop = toCheck.front().first;
+    MDNode *meta = toCheck.front().second;
+    if (MDNode *MD = GetUnrollMetadata(loop->getLoopID(), "llvm.loop.ss.dedicated")) {
+      meta = MD;
+    }
+
+    if (loop->getSubLoops().empty()) {
+      int unroll_factor = -1;
+
+      if (meta) {
+        ConstantAsMetadata *MDFactor = dyn_cast<ConstantAsMetadata>(meta->getOperand(1));
+        DSA_CHECK(MDFactor) << "Can't find Unroll Factor as given";
+        unroll_factor = (int)MDFactor->getValue()->getUniqueInteger().getSExtValue();
+        if (unroll_factor == 0) {
+          unroll_factor = 1;
+        }
+      }
+
+      DedicatedDFG *DD = new DedicatedDFG(&DF, loop, unroll_factor);
+      DF.addDFG(DD);
+    } else {
+      // Get DFG for innerloop
+      for (Loop *subloop : loop->getSubLoops()) {
+        toCheck.push(std::make_pair(getSubLoops(subloop), meta));
+      }
+    }
+
+    toCheck.pop();
+  }
+
+
+
+  /*
   for (Loop *NestedLoop : *LI) {
     for (Loop *SubLoop : breadth_first(NestedLoop)) {
       if (!DT->dominates(Start, SubLoop->getBlocks()[0]))
@@ -877,23 +961,35 @@ void extractDFGFromScope(DFGFile &DF, dsa::xform::CodeGenContext &CGC) {
       if (!InBound)
         continue;
 
+      
+      auto getInnerLoop = [](Loop* loop) {
+        while (loop->getSubLoops().size() == 1) {
+          loop = loop->getSubLoops()[0];
+        }
+        return loop;
+      };
+      
+      // Explicitly Stated DFG for innermost loop
       if (MDNode *MD = GetUnrollMetadata(SubLoop->getLoopID(),
                                          "llvm.loop.ss.dedicated")) {
         ConstantAsMetadata *MDFactor = dyn_cast<ConstantAsMetadata>(MD->getOperand(1));
-        DSA_CHECK(MDFactor);
+        DSA_CHECK(MDFactor) << "Can't find Unroll Factor";
         int Factor = (int)MDFactor->getValue()->getUniqueInteger().getSExtValue();
         if (Factor == 0) {
           Factor = 1;
         }
+
         DedicatedDFG *DD = new DedicatedDFG(&DF, SubLoop, Factor);
         DF.addDFG(DD);
       } else if (SubLoop->getSubLoops().empty()) {
+        // 
         DSA_WARNING << "No ss_dfg found, falling-back to innermost loop";
         DedicatedDFG *DD = new DedicatedDFG(&DF, SubLoop, -1);
         DF.addDFG(DD);
       }
     }
   }
+  */
   
   if (DF.DFGs.size() == 0) {
     DSA_INFO << "No dedicated DFG found\n";

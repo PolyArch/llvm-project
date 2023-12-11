@@ -620,19 +620,20 @@ struct DFGPrinter : dsa::DFGVisitor {
       }
       Visit(cast<DFGEntry>(IP));
       {
+        // Emit extra Metadata attached to Port
         using dfg::MetaPort;
         auto &Meta = IP->Meta;
         if (Meta.source != MetaPort::Data::Unknown) {
-          OS << "#pragma src=" << dfg::MetaDataText[(int)Meta.source]
-             << "\n";
+          OS << "#pragma src=" << dfg::MetaDataText[(int)Meta.source] << "\n";
         }
+
         if (Meta.dest != MetaPort::Data::Unknown) {
-          OS << "#pragma dest=" << dfg::MetaDataText[(int)Meta.dest]
-             << "\n";
+          OS << "#pragma dest=" << dfg::MetaDataText[(int)Meta.dest] << "\n";
         }
         if (!Meta.dest_port.empty()) {
           OS << "#pragma dest=" << Meta.dest_port << "\n";
         }
+
         for (int i = 0; i < (int)MetaPort::Operation::Unknown; ++i) { // NOLINT
           if (Meta.op >> i & 1) {
             OS << "#pragma op=" << dfg::MetaOperationText[i] << "\n";
@@ -641,27 +642,41 @@ struct DFGPrinter : dsa::DFGVisitor {
         if (Meta.conc) {
           OS << "#pragma conc=" << Meta.conc << "\n";
         }
+        
         OS << "#pragma cmd=" << Meta.cmd << "\n";
         OS << "#pragma repeat=" << Meta.repeat << "\n";
         OS << "#pragma reuse=" << Meta.reuse << "\n";
       }
 
       int Granularity = dsa::utils::ModuleContext().GRANULARITY;
-      int DType = IP->underlyingInst()->getType()->getScalarSizeInBits();
-      Granularity = Granularity == -1 ? DType : Granularity;
-      DSA_CHECK(Granularity % DType == 0);
-      int Bits = std::max((int) DType, Granularity);
-      int GranCoal = Bits / DType;
-      DSA_CHECK(IP->Parent->getUnroll() % GranCoal == 0)
-        << IP->Parent->getUnroll() << " % " << GranCoal;
-      int AdjustedLanes = IP->Parent->getUnroll() / GranCoal;
+      int dtype = IP->underlyingInst()->getType()->getScalarSizeInBits();
+      
+      // Make Granularity Same as DType if it equals negative one
+      if (Granularity == -1) {
+        Granularity = dtype;
+      }
+      DSA_CHECK(Granularity % dtype == 0) << Granularity << " % " << dtype;
+
+      // Bits of Port is the max of granularity and DTYPE
+      int Bits = std::max((int) dtype, Granularity);
+
+      // Lanes is the Bits / DType
+      int lanes = Bits / dtype;
+      
+      DSA_CHECK(IP->Parent->getUnroll() % lanes == 0) << IP->Parent->getUnroll() << " % " << lanes;
+      int AdjustedLanes = IP->Parent->getUnroll() / lanes;
+
       OS << "Input" << Bits << ": " << IP->name();
       if (IP->shouldUnroll()) {
         OS << "[" << AdjustedLanes << "]";
       }
+
+      // Emit extra Metadata attached to Port
       if (!ExtraSrcDestInfo.empty()) {
         OS << " " << ExtraSrcDestInfo << " ";
       }
+
+      // Check if the Port is stated
       bool Signaled = false;
       if (!IP->Tagged.empty()) {
         if (isa<MemPort>(IP) || (isa<IndMemPort>(IP) && dsa::utils::ModuleContext().IND)) {
@@ -870,11 +885,13 @@ struct DFGPrinter : dsa::DFGVisitor {
 
     void Visit(OutputPort *OP) override {
       Visit(cast<DFGEntry>(OP));
+
       std::ostringstream OSS;
       OP->Meta.to_pragma(OSS);
       OS << OSS.str();
-      auto *Entry = OP->Parent->InThisDFG(OP->Output);
-      DSA_CHECK(Entry);
+      DFGEntry *Entry = OP->Parent->InThisDFG(OP->Output);
+
+      DSA_CHECK(Entry) << "Entry is null for " << *OP->Output;
       int N = (Entry->shouldUnroll() ? OP->Parent->getUnroll() : 1);
       int Granularity = dsa::utils::ModuleContext().GRANULARITY;
       int DType = (int) OP->Output->getType()->getScalarSizeInBits();
@@ -883,7 +900,9 @@ struct DFGPrinter : dsa::DFGVisitor {
       int Bits = std::max(DType, Granularity);
       int GranCoal = Granularity / DType;
       DSA_CHECK(OP->Parent->getUnroll() % GranCoal == 0);
+
       int AdjustedLanes = OP->Parent->getUnroll() / GranCoal;
+      
       for (int i = 0; i < N; i += GranCoal) { // NOLINT
         auto LHS = OP->name(i / GranCoal);
         auto RHS = Entry->name(i / GranCoal);
@@ -1130,7 +1149,7 @@ void emitDFG(raw_ostream &OS, DFGFile *DFG, analysis::DFGAnalysisResult &DAR,
   }
   for (int i = 0; i < (int)Graphs.size(); ++i) { // NOLINT
     DFGPrinter DP(OS, CGC, DAR);
-    auto *Elem = Graphs[i];
+    DFGBase *Elem = Graphs[i];
     if (utils::ModuleContext().NOARRAY) {
       if (i) {
         OS << "----\n";

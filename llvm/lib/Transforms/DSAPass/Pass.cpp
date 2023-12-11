@@ -114,14 +114,14 @@ bool StreamSpecialize::runOnFunction(Function &F) {
   dsa::xform::CodeGenContext CGC(&IB, DSARegs, *SE, SEE, DT, LI, BFI);
 
   // Store old temporal fallback option
-  int OldTF = dsa::utils::ModuleContext().TEMPORAL_FALLBACK;
+  int const OldTF = dsa::utils::ModuleContext().TEMPORAL_FALLBACK;
   std::vector<int> TemporalFallbackCand;
   // If we still use default fallback decision.
   if (OldTF == -1) {
     // without any temporal PE
     if (!dsa::utils::ModuleContext().TemporalFound) {
       // We first try fallback to dedicated PE
-      TemporalFallbackCand.push_back(1);
+      // TemporalFallbackCand.push_back(1);
       // If failed, we fallback to CPU
       TemporalFallbackCand.push_back(0);
     } else {

@@ -107,7 +107,21 @@ int DFGEntry::getAbstainBit() {
 }
 
 std::string DFGEntry::name(int Idx) {
-  return Parent->nameOf(underlyingValue(), Idx);
+  
+  // Check to see if there's just one underlying value.
+  llvm::Value *V = underlyingValue();
+  if (V) return Parent->nameOf(V, Idx);
+
+  // Otherwise, we have to build a comma-separated list of names.
+  std::ostringstream OSS;
+  std::vector<Value *> values = underlyingValues();
+
+  for (auto *Elem : values) {
+    OSS << Parent->nameOf(Elem, Idx);
+    if (Elem != values.back())
+      OSS << ", ";
+  }
+  return OSS.str();
 }
 
 std::string OutputPort::name(int VecIdx) {
