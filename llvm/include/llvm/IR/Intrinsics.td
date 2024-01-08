@@ -1610,9 +1610,6 @@ def int_ssp_stream_step_amnt : Intrinsic<[],
                                          [llvm_i64_ty, llvm_i64_ty],
                                          [IntrWillReturn]>;
 
-def int_ssp_stream_step_amnt   : Intrinsic<[],
-                                      [llvm_i64_ty, llvm_i64_ty],
-                                      [IntrWillReturn]>;
 
 
 //===----------------------------------------------------------------------===//
