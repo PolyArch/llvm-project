@@ -12,6 +12,8 @@ set(LLVM_OPTIONAL_SOURCES
   LLVMImportInterface.cpp
   ModuleTranslation.cpp
   ModuleImport.cpp
+  ModuleImportAttributes.cpp
+  ModuleImportConstants.cpp
   TypeToLLVM.cpp
   TypeFromLLVM.cpp
   )
@@ -69,6 +71,8 @@ add_mlir_translation_library(MLIRTargetLLVMIRImport
   DebugImporter.cpp
   LoopAnnotationImporter.cpp
   ModuleImport.cpp
+  ModuleImportAttributes.cpp
+  ModuleImportConstants.cpp
   LLVMImportInterface.cpp
   TypeFromLLVM.cpp
 
