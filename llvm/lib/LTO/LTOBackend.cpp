@@ -218,6 +218,29 @@ static void RegisterPassPlugins(const Config &Conf, PassBuilder &PB) {
     LoadedPlugin->registerPassBuilderCallbacks(PB);
 }
 
+static bool invokePreCodeGenCallbacks(const Config &Conf, Module &Mod,
+                                      TargetMachine &TM,
+                                      raw_pwrite_stream &OS) {
+#define HANDLE_EXTENSION(Ext)                                                  \
+  if (auto Callback = get##Ext##PluginInfo().PreCodeGenCallback)               \
+    if (Callback(Mod, TM, Conf.CGFileType, OS))                                \
+      return true;
+#include "llvm/Support/Extension.def"
+#undef HANDLE_EXTENSION
+
+  for (const std::string &Filename : Conf.PassPluginFilenames) {
+    auto Plugin = PassPlugin::Load(Filename);
+    if (!Plugin)
+      reportFatalUsageError(Plugin.takeError());
+    if (Plugin->invokePreCodeGenCallback(Mod, TM, Conf.CGFileType, OS))
+      return true;
+  }
+  for (const PassPlugin *Plugin : Conf.LoadedPassPlugins)
+    if (Plugin->invokePreCodeGenCallback(Mod, TM, Conf.CGFileType, OS))
+      return true;
+  return false;
+}
+
 static std::unique_ptr<TargetMachine>
 createTargetMachine(const Config &Conf, const Target *TheTarget, Module &M) {
   const Triple &TheTriple = M.getTargetTriple();
@@ -475,6 +498,14 @@ static void codegen(const Config &Conf, TargetMachine *TM,
     report_fatal_error(std::move(Err));
   std::unique_ptr<CachedFileStream> &Stream = *StreamOrErr;
   TM->Options.ObjectFilenameForDebug = Stream->ObjectPathName;
+
+  // The saved pre-codegen module and embedded bitcode retain the optimized IR.
+  // Plugins consume or replace native code generation only after those hooks.
+  if (invokePreCodeGenCallbacks(Conf, Mod, *TM, *Stream->OS)) {
+    if (Error Err = Stream->commit())
+      report_fatal_error(std::move(Err));
+    return;
+  }
 
   // Create the codegen pipeline in its own scope so it gets deleted before
   // Stream->commit() is called. The commit function of CacheStream deletes

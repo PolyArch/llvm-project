@@ -2,6 +2,9 @@
 ; RUN: llc < %s %loadnewpmbye | FileCheck %s --check-prefix=CHECK-ASM
 ; RUN: llc < %s %loadnewpmbye -last-words | FileCheck %s --check-prefix=CHECK-ACTIVE
 ; RUN: not llc < %s %loadnewpmbye -last-words -filetype=obj 2>&1 | FileCheck %s --check-prefix=CHECK-ERR
+; RUN: llvm-as %s -o %t.bc
+; RUN: llvm-lto2 run %t.bc -o %t.lto -filetype=asm %loadbye %loadnewpmbye -last-words -r=%t.bc,somefunk,px -r=%t.bc,junk,px
+; RUN: FileCheck %s --check-prefix=CHECK-ACTIVE --input-file=%t.lto.0
 ; REQUIRES: plugins, examples
 ; UNSUPPORTED: target={{.*windows.*}}
 ; Plugins are currently broken on AIX, at least in the CI.
