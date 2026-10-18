@@ -663,7 +663,8 @@ LogicalResult mlir::loopUnrollJamByFactor(scf::ForOp forOp,
   auto newStep = rewriter.createOrFold<arith::MulIOp>(
       forOp.getLoc(), forOp.getStep(),
       rewriter.createOrFold<arith::ConstantOp>(
-          forOp.getLoc(), rewriter.getIndexAttr(unrollJamFactor)));
+          forOp.getLoc(),
+          rewriter.getIntegerAttr(forOp.getStep().getType(), unrollJamFactor)));
   forOp.setStep(newStep);
   auto forOpIV = forOp.getInductionVar();
 
@@ -679,7 +680,7 @@ LogicalResult mlir::loopUnrollJamByFactor(scf::ForOp forOp,
       if (!forOpIV.use_empty()) {
         // iv' = iv + i * step, i = 1 to unrollJamFactor-1.
         auto ivTag = builder.createOrFold<arith::ConstantOp>(
-            forOp.getLoc(), builder.getIndexAttr(step * i));
+            forOp.getLoc(), builder.getIntegerAttr(forOpIV.getType(), step * i));
         auto ivUnroll =
             builder.createOrFold<arith::AddIOp>(forOp.getLoc(), forOpIV, ivTag);
         operandMaps[i - 1].map(forOpIV, ivUnroll);

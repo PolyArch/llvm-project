@@ -219,27 +219,27 @@ module attributes {transform.with_named_sequence} {
 
 // CHECK-LABEL: @loop_unroll_and_jam_op
 func.func @loop_unroll_and_jam_op() {
-  // CHECK:           %[[VAL_0:.*]] = arith.constant 0 : index
-  // CHECK:           %[[VAL_1:.*]] = arith.constant 40 : index
-  // CHECK:           %[[VAL_2:.*]] = arith.constant 2 : index
-  // CHECK:           %[[FACTOR:.*]] = arith.constant 4 : index
-  // CHECK:           %[[STEP:.*]] = arith.constant 8 : index
-  %c0 = arith.constant 0 : index
-  %c40 = arith.constant 40 : index
-  %c2 = arith.constant 2 : index
+  // CHECK:           %[[VAL_0:.*]] = arith.constant 0 : i64
+  // CHECK:           %[[VAL_1:.*]] = arith.constant 40 : i64
+  // CHECK:           %[[VAL_2:.*]] = arith.constant 2 : i64
+  // CHECK:           %[[FACTOR:.*]] = arith.constant 4 : i64
+  // CHECK:           %[[STEP:.*]] = arith.constant 8 : i64
+  %c0 = arith.constant 0 : i64
+  %c40 = arith.constant 40 : i64
+  %c2 = arith.constant 2 : i64
   // CHECK:           scf.for %[[VAL_5:.*]] = %[[VAL_0]] to %[[VAL_1]] step %[[STEP]] {
   scf.for %i = %c0 to %c40 step %c2 {
-  // CHECK:             %[[VAL_6:.*]] = arith.addi %[[VAL_5]], %[[VAL_5]] : index
-  // CHECK:             %[[VAL_7:.*]] = arith.constant 2 : index
-  // CHECK:             %[[VAL_8:.*]] = arith.addi %[[VAL_5]], %[[VAL_7]] : index
-  // CHECK:             %[[VAL_9:.*]] = arith.addi %[[VAL_8]], %[[VAL_8]] : index
-  // CHECK:             %[[VAL_10:.*]] = arith.constant 4 : index
-  // CHECK:             %[[VAL_11:.*]] = arith.addi %[[VAL_5]], %[[VAL_10]] : index
-  // CHECK:             %[[VAL_12:.*]] = arith.addi %[[VAL_11]], %[[VAL_11]] : index
-  // CHECK:             %[[VAL_13:.*]] = arith.constant 6 : index
-  // CHECK:             %[[VAL_14:.*]] = arith.addi %[[VAL_5]], %[[VAL_13]] : index
-  // CHECK:             %[[VAL_15:.*]] = arith.addi %[[VAL_14]], %[[VAL_14]] : index
-    arith.addi %i, %i : index
+  // CHECK:             %[[VAL_6:.*]] = arith.addi %[[VAL_5]], %[[VAL_5]] : i64
+  // CHECK:             %[[VAL_7:.*]] = arith.constant 2 : i64
+  // CHECK:             %[[VAL_8:.*]] = arith.addi %[[VAL_5]], %[[VAL_7]] : i64
+  // CHECK:             %[[VAL_9:.*]] = arith.addi %[[VAL_8]], %[[VAL_8]] : i64
+  // CHECK:             %[[VAL_10:.*]] = arith.constant 4 : i64
+  // CHECK:             %[[VAL_11:.*]] = arith.addi %[[VAL_5]], %[[VAL_10]] : i64
+  // CHECK:             %[[VAL_12:.*]] = arith.addi %[[VAL_11]], %[[VAL_11]] : i64
+  // CHECK:             %[[VAL_13:.*]] = arith.constant 6 : i64
+  // CHECK:             %[[VAL_14:.*]] = arith.addi %[[VAL_5]], %[[VAL_13]] : i64
+  // CHECK:             %[[VAL_15:.*]] = arith.addi %[[VAL_14]], %[[VAL_14]] : i64
+    arith.addi %i, %i : i64
   }
   return
 }
