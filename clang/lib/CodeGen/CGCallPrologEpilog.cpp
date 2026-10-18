@@ -11,12 +11,12 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "CGCall.h"
-#include "CGCallLowering.h"
 #include "ABIInfo.h"
 #include "ABIInfoImpl.h"
 #include "CGBlocks.h"
 #include "CGCXXABI.h"
+#include "CGCall.h"
+#include "CGCallLowering.h"
 #include "CGCleanup.h"
 #include "CGDebugInfo.h"
 #include "CGRecordLayout.h"
@@ -34,6 +34,7 @@
 #include "clang/Basic/DiagnosticFrontend.h"
 #include "clang/Basic/TargetInfo.h"
 #include "clang/CodeGen/CGFunctionInfo.h"
+#include "clang/CodeGen/SourceVariadicArguments.h"
 #include "clang/CodeGen/SwiftCallingConv.h"
 #include "llvm/ABI/FunctionInfo.h"
 #include "llvm/ABI/IRTypeMapper.h"
@@ -119,6 +120,8 @@ struct CopyBackSwiftError final : EHScopeStack::Cleanup {
 void CodeGenFunction::EmitFunctionProlog(const CGFunctionInfo &FI,
                                          llvm::Function *Fn,
                                          const FunctionArgList &Args) {
+  if (CGM.getCodeGenOpts().PreserveSourceVariadicArguments && Fn->isVarArg())
+    Fn->addFnAttr(SourceVariadicArguments::FunctionAttribute);
   if (CurCodeDecl && CurCodeDecl->hasAttr<NakedAttr>())
     // Naked functions don't have prologues.
     return;

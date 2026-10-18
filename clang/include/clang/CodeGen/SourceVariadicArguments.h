@@ -22,6 +22,13 @@ namespace clang::CodeGen::SourceVariadicArguments {
 /// are no physical register or stack-layout fields.
 inline constexpr llvm::StringLiteral CallBundle = "clang.source.varargs";
 
+/// The function body was generated with complete source variadic preservation.
+/// Consumers must not infer that fact from a preserved caller: a separately
+/// compiled callee may already have erased its va_arg operations into ABI
+/// loads.
+inline constexpr llvm::StringLiteral FunctionAttribute =
+    "clang.source.varargs.preserved";
+
 /// A source read is a void call taking the evaluated va_list address and its
 /// result storage. Its bundle contains the i64 source byte size and the
 /// local native reader function with the same void(ptr, ptr) signature.
