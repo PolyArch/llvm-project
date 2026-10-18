@@ -227,8 +227,8 @@ func.func @loop_unroll_and_jam_op() {
   %c0 = arith.constant 0 : i64
   %c40 = arith.constant 40 : i64
   %c2 = arith.constant 2 : i64
-  // CHECK:           scf.for %[[VAL_5:.*]] = %[[VAL_0]] to %[[VAL_1]] step %[[STEP]] {
-  scf.for %i = %c0 to %c40 step %c2 {
+  // CHECK:           scf.for %[[VAL_5:.*]] = %[[VAL_0]] to %[[VAL_1]] step %[[STEP]] : i64 {
+  scf.for %i = %c0 to %c40 step %c2 : i64 {
   // CHECK:             %[[VAL_6:.*]] = arith.addi %[[VAL_5]], %[[VAL_5]] : i64
   // CHECK:             %[[VAL_7:.*]] = arith.constant 2 : i64
   // CHECK:             %[[VAL_8:.*]] = arith.addi %[[VAL_5]], %[[VAL_7]] : i64
