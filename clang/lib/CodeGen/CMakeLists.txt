@@ -69,6 +69,11 @@ add_clang_library(clangCodeGen
   CGCXX.cpp
   CGCXXABI.cpp
   CGCall.cpp
+  CGCallABI.cpp
+  CGCallArgs.cpp
+  CGCallAttributes.cpp
+  CGCallCoercion.cpp
+  CGCallPrologEpilog.cpp
   CGClass.cpp
   CGCleanup.cpp
   CGCoroutine.cpp
