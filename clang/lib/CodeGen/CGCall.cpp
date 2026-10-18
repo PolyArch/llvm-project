@@ -12,11 +12,11 @@
 //===----------------------------------------------------------------------===//
 
 #include "CGCall.h"
-#include "CGCallLowering.h"
 #include "ABIInfo.h"
 #include "ABIInfoImpl.h"
 #include "CGBlocks.h"
 #include "CGCXXABI.h"
+#include "CGCallLowering.h"
 #include "CGCleanup.h"
 #include "CGDebugInfo.h"
 #include "CGRecordLayout.h"
@@ -34,6 +34,7 @@
 #include "clang/Basic/DiagnosticFrontend.h"
 #include "clang/Basic/TargetInfo.h"
 #include "clang/CodeGen/CGFunctionInfo.h"
+#include "clang/CodeGen/SourceVariadicArguments.h"
 #include "clang/CodeGen/SwiftCallingConv.h"
 #include "llvm/ABI/FunctionInfo.h"
 #include "llvm/ABI/IRTypeMapper.h"
@@ -360,6 +361,34 @@ static unsigned getMaxVectorWidth(const llvm::Type *Ty) {
   return MaxVectorWidth;
 }
 
+static void appendSourceVariadicValue(CodeGenFunction &CGF, QualType Ty,
+                                      RValue Value,
+                                      SmallVectorImpl<llvm::Value *> &Values) {
+  using SourceVariadicArguments::Kind;
+  Kind ValueKind = Value.isAggregate() ? Kind::Aggregate
+                   : Value.isComplex() ? Kind::Complex
+                                       : Kind::Scalar;
+  if (ValueKind == Kind::Aggregate && !Value.getAggregateAddress().isValid())
+    ValueKind = Kind::Ignored;
+  Values.push_back(CGF.Builder.getInt8(static_cast<uint8_t>(ValueKind)));
+  Values.push_back(CGF.Builder.getInt64(
+      CGF.getContext().getTypeSizeInChars(Ty).getQuantity()));
+  switch (ValueKind) {
+  case Kind::Scalar:
+    Values.push_back(Value.getScalarVal());
+    break;
+  case Kind::Complex:
+    Values.push_back(Value.getComplexVal().first);
+    Values.push_back(Value.getComplexVal().second);
+    break;
+  case Kind::Aggregate:
+    Values.push_back(Value.getAggregateAddress().emitRawPointer(CGF));
+    break;
+  case Kind::Ignored:
+    break;
+  }
+}
+
 RValue CodeGenFunction::EmitCall(const CGFunctionInfo &CallInfo,
                                  const CGCallee &Callee,
                                  ReturnValueSlot ReturnValue,
@@ -370,6 +399,21 @@ RValue CodeGenFunction::EmitCall(const CGFunctionInfo &CallInfo,
   // FIXME: We no longer need the types from CallArgs; lift up and simplify.
 
   assert(Callee.isOrdinary() || Callee.isVirtual());
+
+  SmallVector<llvm::Value *, 8> SourceVariadicValues;
+  if (CGM.getCodeGenOpts().PreserveSourceVariadicArguments &&
+      CallInfo.isVariadic()) {
+    for (const CallArg &Arg :
+         llvm::drop_begin(CallArgs, CallInfo.getNumRequiredArgs())) {
+      RValue Value =
+          Arg.hasLValue()
+              ? RValue::getAggregate(Arg.getKnownLValue().getAddress(),
+                                     Arg.getKnownLValue().isVolatileQualified())
+              : Arg.getKnownRValue();
+      appendSourceVariadicValue(*this, Arg.getType(), Value,
+                                SourceVariadicValues);
+    }
+  }
 
   // Handle struct-return functions by passing a pointer to the
   // location that we would like to return into.
@@ -1048,6 +1092,11 @@ RValue CodeGenFunction::EmitCall(const CGFunctionInfo &CallInfo,
   SmallVector<llvm::OperandBundleDef, 1> BundleList =
       getBundlesForFunclet(CalleePtr);
 
+  if (CGM.getCodeGenOpts().PreserveSourceVariadicArguments &&
+      CallInfo.isVariadic())
+    BundleList.emplace_back(SourceVariadicArguments::CallBundle.str(),
+                            SourceVariadicValues);
+
   if (SanOpts.has(SanitizerKind::KCFI) &&
       !isa_and_nonnull<FunctionDecl>(TargetDecl))
     EmitKCFIOperandBundle(ConcreteCallee, BundleList);
@@ -1552,6 +1601,75 @@ CGCallee CGCallee::prepareConcreteCallee(CodeGenFunction &CGF) const {
 
 /* VarArg handling */
 
+static RValue emitNativeVAArg(CodeGenFunction &CGF, VAArgExpr *Expr,
+                              Address List, AggValueSlot Slot) {
+  const ABIInfo &ABI = CGF.CGM.getABIInfo();
+  if (Expr->isMicrosoftABI())
+    return ABI.EmitMSVAArg(CGF, List, Expr->getType(), Slot);
+  if (Expr->isZOSABI())
+    return ABI.EmitZOSVAArg(CGF, List, Expr->getType(), Slot);
+  return ABI.EmitVAArg(CGF, List, Expr->getType(), Slot);
+}
+
+static RValue emitSourceVAArg(CodeGenFunction &CGF, VAArgExpr *Expr,
+                              Address List, AggValueSlot Slot) {
+  CodeGenModule &CGM = CGF.CGM;
+  ASTContext &Context = CGF.getContext();
+  QualType Type = Expr->getType();
+  Address Result = !Slot.isIgnored()
+                       ? Slot.getAddress()
+                       : Address(CGF.CreateMemTemp(Type, "va_arg.result"));
+
+  auto *ListArg =
+      ImplicitParamDecl::Create(Context, nullptr, Expr->getExprLoc(), nullptr,
+                                Context.VoidPtrTy, ImplicitParamKind::Other);
+  auto *ResultArg =
+      ImplicitParamDecl::Create(Context, nullptr, Expr->getExprLoc(), nullptr,
+                                Context.VoidPtrTy, ImplicitParamKind::Other);
+  FunctionArgList Arguments{ListArg, ResultArg};
+  const auto &Info = CGM.getTypes().arrangeBuiltinFunctionDeclaration(
+      Context.VoidTy, Arguments);
+  auto *Native = llvm::Function::Create(
+      CGM.getTypes().GetFunctionType(Info), llvm::GlobalValue::InternalLinkage,
+      SourceVariadicArguments::NativeReadPrefix, CGM.getModule());
+  CGM.SetInternalFunctionAttributes(GlobalDecl(), Native, Info);
+  Native->addFnAttr(llvm::Attribute::NoUnwind);
+  CodeGenFunction Reader(CGM);
+  Reader.StartFunction(GlobalDecl(), Context.VoidTy, Native, Info, Arguments,
+                       Expr->getExprLoc(), Expr->getExprLoc());
+  Address NativeList(
+      Reader.Builder.CreateLoad(Reader.GetAddrOfLocalVar(ListArg)),
+      List.getElementType(), List.getAlignment());
+  Address NativeResult(
+      Reader.Builder.CreateLoad(Reader.GetAddrOfLocalVar(ResultArg)),
+      Result.getElementType(), Result.getAlignment());
+  AggValueSlot NativeSlot = AggValueSlot::forAddr(
+      NativeResult, Type.getQualifiers(), AggValueSlot::IsNotDestructed,
+      AggValueSlot::DoesNotNeedGCBarriers, AggValueSlot::IsNotAliased,
+      AggValueSlot::DoesNotOverlap);
+  RValue Value = emitNativeVAArg(Reader, Expr, NativeList, NativeSlot);
+  if (Value.isComplex())
+    Reader.EmitStoreOfComplex(Value.getComplexVal(),
+                              Reader.MakeAddrLValue(NativeResult, Type), true);
+  else if (Value.isScalar())
+    Reader.EmitStoreThroughLValue(Value,
+                                  Reader.MakeAddrLValue(NativeResult, Type));
+  Reader.FinishFunction();
+
+  auto Marker = CGM.getModule().getOrInsertFunction(
+      SourceVariadicArguments::ReadMarkerPrefix, Native->getFunctionType());
+  cast<llvm::Function>(Marker.getCallee())
+      ->addFnAttr(llvm::Attribute::NoUnwind);
+  auto Bundles = CGF.getBundlesForFunclet(Marker.getCallee());
+  SmallVector<llvm::Value *, 2> Description{
+      CGF.Builder.getInt64(Context.getTypeSizeInChars(Type).getQuantity()),
+      Native};
+  Bundles.emplace_back(SourceVariadicArguments::ReadBundle.str(), Description);
+  CGF.Builder.CreateCall(
+      Marker, {List.emitRawPointer(CGF), Result.emitRawPointer(CGF)}, Bundles);
+  return CGF.convertTempToRValue(Result, Type, Expr->getExprLoc());
+}
+
 RValue CodeGenFunction::EmitVAArg(VAArgExpr *VE, Address &VAListAddr,
                                   AggValueSlot Slot) {
   VAListAddr = VE->isMicrosoftABI()
@@ -1561,11 +1679,9 @@ RValue CodeGenFunction::EmitVAArg(VAArgExpr *VE, Address &VAListAddr,
   QualType Ty = VE->getType();
   if (Ty->isVariablyModifiedType())
     EmitVariablyModifiedType(Ty);
-  if (VE->isMicrosoftABI())
-    return CGM.getABIInfo().EmitMSVAArg(*this, VAListAddr, Ty, Slot);
-  if (VE->isZOSABI())
-    return CGM.getABIInfo().EmitZOSVAArg(*this, VAListAddr, Ty, Slot);
-  return CGM.getABIInfo().EmitVAArg(*this, VAListAddr, Ty, Slot);
+  if (CGM.getCodeGenOpts().PreserveSourceVariadicArguments)
+    return emitSourceVAArg(*this, VE, VAListAddr, Slot);
+  return emitNativeVAArg(*this, VE, VAListAddr, Slot);
 }
 
 DisableDebugLocationUpdates::DisableDebugLocationUpdates(CodeGenFunction &CGF)

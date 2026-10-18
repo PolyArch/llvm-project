@@ -543,6 +543,10 @@ CODEGENOPT(ZOSPPA1Name, 1, 1, Benign)
 /// FIXME: Make DebugOptions its own top-level .def file.
 #include "DebugOptions.def"
 
+/// Preserve evaluated source variadic value groups for an IR consumer. The
+/// consumer must remove the preservation calls and bundles before codegen.
+CODEGENOPT(PreserveSourceVariadicArguments, 1, 0, Benign)
+
 #undef CODEGENOPT
 #undef ENUM_CODEGENOPT
 #undef VALUE_CODEGENOPT
