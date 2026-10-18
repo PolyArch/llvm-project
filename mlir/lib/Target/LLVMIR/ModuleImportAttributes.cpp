@@ -1,4 +1,4 @@
-//===- ModuleImportAttributes.cpp - LLVM attribute and metadata import ---------------*- C++ -*-===//
+//===- ModuleImportAttributes.cpp - LLVM attribute import ---------*- C++ -*-===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -6,18 +6,19 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file implements LLVM attribute and metadata import into the LLVM dialect.
+// This file implements LLVM attribute and metadata import into the LLVM
+// dialect.
 //
 //===----------------------------------------------------------------------===//
 
-#include "mlir/Target/LLVMIR/ModuleImport.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/Target/LLVMIR/Import.h"
+#include "mlir/Target/LLVMIR/ModuleImport.h"
 
 #include "AttrKindDetail.h"
-#include "ModuleImportDetail.h"
 #include "DebugImporter.h"
 #include "LoopAnnotationImporter.h"
+#include "ModuleImportDetail.h"
 
 #include "mlir/Dialect/DLTI/DLTI.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
@@ -66,7 +67,7 @@ std::string mlir::LLVM::detail::diag(const llvm::Value &value) {
 // to emitError(). The module argument is needed to print the nodes
 // canonically numbered.
 std::string mlir::LLVM::detail::diagMD(const llvm::Metadata *node,
-                          const llvm::Module *module) {
+                                       const llvm::Module *module) {
   std::string str;
   llvm::raw_string_ostream os(str);
   node->print(os, module, /*IsForDebug=*/true);
@@ -1472,14 +1473,34 @@ void ModuleImport::convertArgAndResultAttrs(
 }
 
 template <typename Op>
-static LogicalResult convertCallBaseAttributes(llvm::CallBase *inst, Op op) {
+static LogicalResult convertCallBaseAttributes(llvm::CallBase *inst, Op op,
+                                               ModuleImport &moduleImport) {
   op.setCConv(convertCConvFromLLVM(inst->getCallingConv()));
+  if (inst->hasOperandBundles()) {
+    SmallVector<Value> operands;
+    SmallVector<int32_t> sizes;
+    SmallVector<Attribute> tags;
+    for (unsigned index = 0; index < inst->getNumOperandBundles(); ++index) {
+      llvm::OperandBundleUse bundle = inst->getOperandBundleAt(index);
+      sizes.push_back(bundle.Inputs.size());
+      tags.push_back(StringAttr::get(op.getContext(), bundle.getTagName()));
+      for (const llvm::Use &input : bundle.Inputs) {
+        FailureOr<Value> value = moduleImport.convertValue(input.get());
+        if (failed(value))
+          return failure();
+        operands.push_back(*value);
+      }
+    }
+    op.getOpBundleOperandsMutable().join().assign(operands);
+    op.setOpBundleSizesAttr(DenseI32ArrayAttr::get(op.getContext(), sizes));
+    op.setOpBundleTagsAttr(ArrayAttr::get(op.getContext(), tags));
+  }
   return success();
 }
 
 LogicalResult ModuleImport::convertInvokeAttributes(llvm::InvokeInst *inst,
                                                     InvokeOp op) {
-  return convertCallBaseAttributes(inst, op);
+  return convertCallBaseAttributes(inst, op, *this);
 }
 
 LogicalResult ModuleImport::convertCallAttributes(llvm::CallInst *inst,
@@ -1550,7 +1571,7 @@ LogicalResult ModuleImport::convertCallAttributes(llvm::CallInst *inst,
   convertNoBuiltinAttrs(op.getContext(), callAttrs.getFnAttrs(), op);
   convertAllocsizeAttr(op.getContext(), callAttrs.getFnAttrs(), op);
 
-  return convertCallBaseAttributes(inst, op);
+  return convertCallBaseAttributes(inst, op, *this);
 }
 
 FailureOr<SmallVector<AccessGroupAttr>>
@@ -1588,4 +1609,3 @@ ModuleImport::translateDereferenceableAttr(const llvm::MDNode *node,
 
   return derefAttr;
 }
-
