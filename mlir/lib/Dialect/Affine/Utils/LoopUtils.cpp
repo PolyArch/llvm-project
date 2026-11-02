@@ -1120,10 +1120,9 @@ LogicalResult mlir::affine::loopUnrollJamByFactor(AffineForOp forOp,
 
   // Collect loops with iter_args.
   SmallVector<AffineForOp, 4> loopsWithIterArgs;
-  forOp.walk([&](AffineForOp aForOp) {
+  for (AffineForOp aForOp : jbg.jammedLoops)
     if (aForOp.getNumIterOperands() > 0)
       loopsWithIterArgs.push_back(aForOp);
-  });
 
   // Get supported reductions to be used for creating reduction ops at the end.
   SmallVector<LoopReduction> reductions;

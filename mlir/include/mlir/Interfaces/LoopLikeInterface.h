@@ -57,11 +57,17 @@ struct JamBlockGatherer {
   // Store iterators to the first and last op of each sub-block found.
   SmallVector<std::pair<Block::iterator, Block::iterator>> subBlocks;
 
+  // The loops whose bodies are jammed, in postorder. Loops inside an
+  // opaque sub-block are cloned with that sub-block and are not jammed.
+  SmallVector<OpTy> jammedLoops;
+
   // This is a linear time walk.
   void walk(Operation *op) {
     for (Region &region : op->getRegions())
       for (Block &block : region)
         walk(block);
+    if (auto loop = dyn_cast<OpTy>(op))
+      jammedLoops.push_back(loop);
   }
 
   void walk(Block &block) {

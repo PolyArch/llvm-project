@@ -599,9 +599,9 @@ LogicalResult mlir::loopUnrollJamByFactor(scf::ForOp forOp,
   jbg.walk(forOp);
   auto &subBlocks = jbg.subBlocks;
 
-  // Collect inner loops.
-  SmallVector<scf::ForOp> innerLoops;
-  forOp.walk([&](scf::ForOp innerForOp) { innerLoops.push_back(innerForOp); });
+  // Only loops visited by the jam traversal share the widened iter_args.
+  // Loops inside opaque sub-blocks keep their original signature when cloned.
+  auto &innerLoops = jbg.jammedLoops;
 
   // `operandMaps[i - 1]` carries old->new operand mapping for the ith unrolled
   // iteration. There are (`unrollJamFactor` - 1) iterations.
